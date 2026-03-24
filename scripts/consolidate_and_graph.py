@@ -1424,6 +1424,33 @@ function nodeMatchesQuery(d, q) {{
   const aliasMatch = (d.aliases || []).some(a => (a || "").toLowerCase().includes(q));
   return labelMatch || aliasMatch;
 }}
+function contextNodeIdsForFocus(startNodeIds) {{
+  const contextIds = new Set();
+  const expandFromOrg = new Set();
+  startNodeIds.forEach(nodeId => {{
+    const node = nodeById.get(nodeId);
+    if (!node?._visible) return;
+    contextIds.add(nodeId);
+    (edgesByNodeId.get(nodeId) || []).forEach(e => {{
+      const otherId = e.source === nodeId ? e.target : e.source;
+      const otherNode = nodeById.get(otherId);
+      if (!otherNode?._visible) return;
+      contextIds.add(otherId);
+      if (node.kind === "address" && otherNode.kind === "organisation") {{
+        expandFromOrg.add(otherId);
+      }}
+    }});
+  }});
+  expandFromOrg.forEach(orgId => {{
+    (edgesByNodeId.get(orgId) || []).forEach(e => {{
+      const otherId = e.source === orgId ? e.target : e.source;
+      const otherNode = nodeById.get(otherId);
+      if (!otherNode?._visible) return;
+      contextIds.add(otherId);
+    }});
+  }});
+  return contextIds;
+}}
 function fontSize(d) {{
   if (d.kind === "seed") return 13;
   if (d.kind === "seed_alias") return 12;
@@ -1700,8 +1727,7 @@ pills.on("dblclick", (event, d) => {{
   focusContent.innerHTML = html;
   focusPanel.style.display = "block";
 
-  const connectedIds = new Set(edges.map(e => e.source === d.id ? e.target : e.source));
-  connectedIds.add(d.id);
+  const connectedIds = contextNodeIdsForFocus([d.id]);
 
   pills.attr("display", n => {{
     if (connectedIds.has(n.id)) return null;
@@ -1794,18 +1820,7 @@ function applyFilter() {{
         .filter(n => n._visible && nodeMatchesQuery(n, q))
         .map(n => n.id)
     );
-    const contextNodeIds = new Set();
-    matchedNodeIds.forEach(nodeId => {{
-      const node = nodeById.get(nodeId);
-      if (!node?._visible) return;
-      contextNodeIds.add(nodeId);
-      (edgesByNodeId.get(nodeId) || []).forEach(e => {{
-        const otherId = e.source === nodeId ? e.target : e.source;
-        const otherNode = nodeById.get(otherId);
-        if (!otherNode?._visible) return;
-        contextNodeIds.add(otherId);
-      }});
-    }});
+    const contextNodeIds = contextNodeIdsForFocus(matchedNodeIds);
     allNodes.forEach(n => {{
       n._visible = n._visible && contextNodeIds.has(n.id);
     }});
