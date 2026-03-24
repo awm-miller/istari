@@ -139,6 +139,8 @@ def _row_str(row, key: str) -> str:
 
 def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
+    if "named as a trustee" in phrase.lower():
+        return "is a trustee of"
     if phrase:
         return phrase
     rt = _row_str(edge, "role_type").lower()
@@ -151,6 +153,10 @@ def _role_phrase(edge) -> str:
     if "accountant" in rt or "examiner" in rt or "auditor" in rt:
         return "is listed in governance/finance docs for"
     return "is linked to"
+
+
+def _role_key(edge) -> tuple[int, str]:
+    return (int(edge["organisation_id"]), _role_phrase(edge))
 
 
 def _tag_sanctioned_nodes(nodes: list[dict]) -> None:
@@ -212,12 +218,12 @@ def consolidate_run(run_id: int) -> dict:
         group_id = f"person:{min(pid_set)}"
 
         org_ids: set[int] = set()
-        role_count = 0
+        role_keys: set[tuple[int, str]] = set()
         total_weight = 0.0
         for edge in raw_edges:
             if int(edge["person_id"]) in pid_set:
                 org_ids.add(int(edge["organisation_id"]))
-                role_count += 1
+                role_keys.add(_role_key(edge))
                 total_weight += float(edge["edge_weight"] or 0)
 
         consolidated.append({
@@ -226,7 +232,7 @@ def consolidate_run(run_id: int) -> dict:
             "aliases": sorted(set(e["name"] for e in entries)),
             "person_ids": sorted(pid_set),
             "org_count": len(org_ids),
-            "role_count": role_count,
+            "role_count": len(role_keys),
             "score": round(total_weight, 4),
             "is_seed_alias": are_aliases(seed_name, label),
         })
@@ -287,7 +293,7 @@ def consolidate_run(run_id: int) -> dict:
         role_type = str(edge["role_type"] or "link")
         role_label = str(edge["role_label"] or "")
         phrase = _role_phrase(edge)
-        key = (gid, org_id, role_type)
+        key = (gid, org_id, phrase)
         if key not in seen_po:
             seen_po.add(key)
             person_org_edges.append({
@@ -623,7 +629,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     person_entry_to_merged_id: dict[tuple[int, str], str] = {}
     merged_person_nodes: dict[str, dict] = {}
     merged_person_orgs: dict[str, set[str]] = defaultdict(set)
-    merged_person_role_count: dict[str, int] = defaultdict(int)
+    merged_person_role_keys: dict[str, set[tuple[str, str]]] = defaultdict(set)
     merged_person_score: dict[str, float] = defaultdict(float)
     merged_person_roles: dict[str, list[dict]] = defaultdict(list)
     merged_person_seeds: dict[str, set[str]] = defaultdict(set)
@@ -800,8 +806,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 merged_person_id = person_entry_to_merged_id.get((int(run["run_id"]), person_orig_id))
                 if not merged_person_id or merged_person_id not in merged_person_nodes:
                     continue
+                phrase = str(edge.get("phrase", "") or "")
                 merged_person_orgs[merged_person_id].add(org_id)
-                merged_person_role_count[merged_person_id] += 1
+                merged_person_role_keys[merged_person_id].add((org_id, phrase))
                 merged_person_score[merged_person_id] += float(edge.get("weight") or 0.35)
                 org_person_edges.append({
                     "source": org_id,
@@ -809,7 +816,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "kind": "role",
                     "role_type": edge.get("role_type", ""),
                     "role_label": edge.get("role_label", ""),
-                    "phrase": edge.get("phrase", ""),
+                    "phrase": phrase,
                     "source_provider": edge.get("source_provider", ""),
                     "confidence": edge.get("confidence", ""),
                     "weight": float(edge.get("weight") or 0.35),
@@ -818,15 +825,15 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 person_label = merged_person_nodes[merged_person_id]["label"]
                 org_people[org_id].append({
                     "person": person_label,
-                    "phrase": edge.get("phrase", ""),
+                    "phrase": phrase,
                 })
                 merged_person_roles[merged_person_id].append({
-                    "phrase": edge.get("phrase", ""),
+                    "phrase": phrase,
                     "org": org_nodes[org_id]["label"],
                 })
 
-    identity_org_edges = _dedupe_edges(identity_org_edges, ("source", "target", "role_type", "phrase"))
-    org_person_edges = _dedupe_edges(org_person_edges, ("source", "target", "role_type", "phrase"))
+    identity_org_edges = _dedupe_edges(identity_org_edges, ("source", "target", "phrase"))
+    org_person_edges = _dedupe_edges(org_person_edges, ("source", "target", "phrase"))
 
     for org_id, node in org_nodes.items():
         node["shared"] = len(org_seed_names.get(org_id, set())) > 1
@@ -854,7 +861,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     merged_people_consolidated: list[dict] = []
     for merged_id, node in merged_person_nodes.items():
         node["org_count"] = len(merged_person_orgs.get(merged_id, set()))
-        node["role_count"] = int(merged_person_role_count.get(merged_id, 0))
+        node["role_count"] = len(merged_person_role_keys.get(merged_id, set()))
         node["score"] = round(float(merged_person_score.get(merged_id, 0.0)), 4)
         tooltip = [f"<strong>{node['label']}</strong>"]
         if len(node.get("aliases") or []) > 1:
@@ -1045,6 +1052,10 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
     <input id="stage3-multi-org-only" type="checkbox" />
     <span>only show individuals connected to 2+ organisations</span>
   </label>
+  <label class="toggle">
+    <input id="org-multi-person-only" type="checkbox" />
+    <span>only show organisations connected to 2+ individuals</span>
+  </label>
   <div class="search-box">
     <input id="search" type="search" placeholder="Filter by name..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
@@ -1074,6 +1085,7 @@ const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const laneLabelsDiv = document.getElementById("lane-labels");
 const stage3MultiOrgToggle = document.getElementById("stage3-multi-org-only");
+const orgMultiPersonToggle = document.getElementById("org-multi-person-only");
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -1124,6 +1136,19 @@ allEdges.filter(e => e.kind === "role").forEach(e => {{
   personOrgIds.get(personId).add(orgId);
 }});
 
+// per-organisation individual count for org filter
+const orgPersonIds = new Map();
+allEdges.filter(e => e.kind === "role").forEach(e => {{
+  const sourceNode = nodeById.get(e.source);
+  const targetNode = nodeById.get(e.target);
+  const orgNode = sourceNode?.kind === "organisation" ? sourceNode : targetNode?.kind === "organisation" ? targetNode : null;
+  const personNode = sourceNode?.kind === "organisation" ? targetNode : sourceNode;
+  if (!orgNode || !personNode) return;
+  if (personNode.lane !== 1 && personNode.lane !== 4) return;
+  if (!orgPersonIds.has(orgNode.id)) orgPersonIds.set(orgNode.id, new Set());
+  orgPersonIds.get(orgNode.id).add(personNode.id);
+}});
+
 function activeIdentityIds() {{
   if (!multiSeed) return new Set(identityNodes.map(n => n.id));
   return new Set(identityNodes.filter(n => selectedIdentities.has(n.id)).map(n => n.id));
@@ -1171,6 +1196,15 @@ function visibleAddressIdsForVisibleOrgs(visibleOrgs) {{
     visibleAddresses.add(addressNode.id);
   }});
   return visibleAddresses;
+}}
+
+function orgIdsForVisiblePeople(visiblePeople) {{
+  const orgIds = new Set();
+  visiblePeople.forEach(personId => {{
+    const myOrgs = personOrgIds.get(personId) || new Set();
+    [...myOrgs].forEach(orgId => orgIds.add(orgId));
+  }});
+  return orgIds;
 }}
 
 function buildIdentityDropdown() {{
@@ -1501,7 +1535,13 @@ function closeFocusPanel() {{
   focusPanel.style.display = "none";
   focusedNodeId = null;
   pills.attr("opacity", d => d._visible ? 1 : 0);
+  pills.attr("display", d => d._visible ? null : "none");
   roleLine.attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : 0.45);
+  roleLine.attr("display", d => {{
+    const s = nodeById.get(d.source);
+    const t = nodeById.get(d.target);
+    return (s?._visible && t?._visible) ? null : "none";
+  }});
 }}
 focusClose.addEventListener("click", closeFocusPanel);
 
@@ -1544,10 +1584,21 @@ pills.on("dblclick", (event, d) => {{
   const connectedIds = new Set(edges.map(e => e.source === d.id ? e.target : e.source));
   connectedIds.add(d.id);
 
+  pills.attr("display", n => {{
+    if (connectedIds.has(n.id)) return null;
+    return n._visible ? null : "none";
+  }});
+
   pills.attr("opacity", n => {{
-    if (!n._visible) return 0;
     if (connectedIds.has(n.id)) return 1;
+    if (!n._visible) return 0;
     return 0.12;
+  }});
+  roleLine.attr("display", e => {{
+    if (e.source === d.id || e.target === d.id) return null;
+    const s = nodeById.get(e.source);
+    const t = nodeById.get(e.target);
+    return (s?._visible && t?._visible) ? null : "none";
   }});
   roleLine.attr("stroke-opacity", e => {{
     if (e.source === d.id || e.target === d.id) return 0.8;
@@ -1569,8 +1620,12 @@ function applyFilter() {{
 
   const activeIdentities = activeIdentityIds();
   const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
-  const visibleOrgs = new Set(candidateOrgIds);
-  const visibleAddresses = visibleAddressIdsForVisibleOrgs(visibleOrgs);
+  const visibleOrgs = new Set(
+    [...candidateOrgIds].filter(orgId => {{
+      if (!orgMultiPersonToggle?.checked) return true;
+      return (orgPersonIds.get(orgId)?.size || 0) >= 2;
+    }})
+  );
   const visiblePeople = new Set();
 
   allNodes.filter(n => n.lane === 4).forEach(n => {{
@@ -1586,6 +1641,14 @@ function applyFilter() {{
     n._visible = visible;
     if (visible) visiblePeople.add(n.id);
   }});
+
+  let addressOrgIds = visibleOrgs;
+  if (stage3MultiOrgToggle?.checked) {{
+    addressOrgIds = new Set(
+      [...orgIdsForVisiblePeople(visiblePeople)].filter(orgId => visibleOrgs.has(orgId))
+    );
+  }}
+  const visibleAddresses = visibleAddressIdsForVisibleOrgs(addressOrgIds);
 
   allNodes.filter(n => n.kind === "organisation").forEach(n => {{ n._visible = visibleOrgs.has(n.id); }});
   allNodes.filter(n => n.kind === "address").forEach(n => {{ n._visible = visibleAddresses.has(n.id); }});
@@ -1647,6 +1710,10 @@ searchInput.addEventListener("input", () => {{
   applyFilter();
 }});
 stage3MultiOrgToggle?.addEventListener("change", () => {{
+  buildPeopleDropdown();
+  applyFilter();
+}});
+orgMultiPersonToggle?.addEventListener("change", () => {{
   buildPeopleDropdown();
   applyFilter();
 }});

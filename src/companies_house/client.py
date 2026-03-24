@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -12,6 +13,9 @@ from urllib import error, parse, request
 from src.config import Settings
 
 log = logging.getLogger("istari.companies_house")
+
+_MIN_REQUEST_INTERVAL_SECONDS = 0.5
+_last_request_at = 0.0
 
 
 @dataclass(slots=True)
@@ -69,6 +73,7 @@ class CompaniesHouseClient:
         return payload if isinstance(payload, dict) else {}
 
     def _get_json(self, url: str) -> Any:
+        global _last_request_at
         cache_key = sha256(url.encode("utf-8")).hexdigest()
         cache_path = self.cache_dir / f"{cache_key}.json"
         if cache_path.exists():
@@ -76,6 +81,10 @@ class CompaniesHouseClient:
             return json.loads(cache_path.read_text(encoding="utf-8"))
 
         log.debug("CH API call: %s", url)
+        now = time.monotonic()
+        wait = _MIN_REQUEST_INTERVAL_SECONDS - (now - _last_request_at)
+        if wait > 0:
+            time.sleep(wait)
 
         api_key_bytes = f"{self.settings.companies_house_api_key}:".encode("utf-8")
         auth_header = base64.b64encode(api_key_bytes).decode("ascii")
@@ -90,7 +99,9 @@ class CompaniesHouseClient:
         try:
             with request.urlopen(req) as response:
                 payload = json.loads(response.read().decode("utf-8"))
+                _last_request_at = time.monotonic()
         except error.HTTPError as exc:
+            _last_request_at = time.monotonic()
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Companies House request failed: {exc.code} {body}") from exc
 
