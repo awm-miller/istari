@@ -17,6 +17,10 @@ _HONORIFICS = re.compile(
 )
 _NON_ALPHA = re.compile(r"[^a-z\s]")
 _MULTI_SPACE = re.compile(r"\s+")
+_PARTICLE_TOKENS = {"al", "el"}
+_TOKEN_CANONICAL = {
+    "majid": "majed",
+}
 
 
 def _normalize(name: str) -> str:
@@ -26,8 +30,40 @@ def _normalize(name: str) -> str:
     return _MULTI_SPACE.sub(" ", text).strip()
 
 
+def _canonical_token(token: str) -> str:
+    return _TOKEN_CANONICAL.get(token, token)
+
+
+def _expanded_tokens(name: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw_token in _normalize(name).split():
+        if not raw_token:
+            continue
+        token = _canonical_token(raw_token)
+        if token not in _PARTICLE_TOKENS:
+            tokens.add(token)
+        for particle in _PARTICLE_TOKENS:
+            if token.startswith(particle) and len(token) > len(particle) + 2:
+                tokens.add(token[len(particle) :])
+    return tokens
+
+
 def _token_set(name: str) -> frozenset[str]:
-    return frozenset(_normalize(name).split())
+    return frozenset(_expanded_tokens(name))
+
+
+def _token_match(query_tokens: frozenset[str], sdn_tokens: frozenset[str]) -> str | None:
+    if query_tokens == sdn_tokens:
+        return "exact"
+    if len(query_tokens) < 2 or len(sdn_tokens) < 2:
+        return None
+    if query_tokens <= sdn_tokens:
+        return "subset"
+    # Allow one extra token in the query for middle names,
+    # e.g. "Majed Khalil Al-Zeer" vs "AL-ZEER, Majed".
+    if sdn_tokens <= query_tokens and len(query_tokens - sdn_tokens) <= 1:
+        return "subset"
+    return None
 
 
 class OFACScreener:
@@ -113,11 +149,11 @@ class OFACScreener:
 
         if len(tokens) >= 2:
             for sdn_tokens, sdn_raw in self._token_sets.items():
-                if tokens == sdn_tokens or (tokens <= sdn_tokens and len(tokens) >= 2):
+                match_type = _token_match(tokens, sdn_tokens)
+                if match_type:
                     for entry in self._entries:
                         if entry["name"] == sdn_raw and entry["ent_num"] not in seen_ent:
                             seen_ent.add(entry["ent_num"])
-                            match_type = "exact" if tokens == sdn_tokens else "subset"
                             hits.append({"match_type": match_type, **entry})
 
         return hits

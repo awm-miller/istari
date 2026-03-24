@@ -924,7 +924,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         node["seed_names"] = seed_names
         node["appears_under_identities"] = identity_refs
         tooltip = list(node.get("tooltip_lines") or [f"<strong>{node['label']}</strong>"])
-        if len(seed_names) > 1:
+        if len(seed_names) > 1 and not identity_refs:
             tooltip.append(f"Appears under: {', '.join(seed_names)}")
         if identity_refs:
             tooltip.append("Appears under identities:")
@@ -955,7 +955,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         if len(node.get("aliases") or []) > 1:
             tooltip.append(f"Aliases: {', '.join(node['aliases'])}")
         tooltip.append(f"{node['org_count']} orgs, {node['role_count']} roles, score {node['score']}")
-        if len(merged_person_seeds.get(merged_id, set())) > 1:
+        if len(merged_person_seeds.get(merged_id, set())) > 1 and not identity_refs:
             tooltip.append(f"Appears under: {', '.join(sorted(merged_person_seeds[merged_id]))}")
         if identity_refs:
             tooltip.append("Appears under identities:")
@@ -1436,7 +1436,7 @@ function contextNodeIdsForFocus(startNodeIds) {{
       const otherNode = nodeById.get(otherId);
       if (!otherNode?._visible) return;
       contextIds.add(otherId);
-      if (node.kind === "address" && otherNode.kind === "organisation") {{
+      if ((node.kind === "address" || node.lane === 1) && otherNode.kind === "organisation") {{
         expandFromOrg.add(otherId);
       }}
     }});
@@ -1669,18 +1669,26 @@ const focusPanel = document.getElementById("focus-panel");
 const focusContent = document.getElementById("focus-content");
 const focusClose = document.getElementById("focus-close");
 let focusedNodeId = null;
+let focusContextNodeIds = null;
+
+function isNodeDisplayed(node) {{
+  return !!node && !!node._visible && (!focusContextNodeIds || focusContextNodeIds.has(node.id));
+}}
+
+function isEdgeDisplayed(edge) {{
+  const sourceNode = nodeById.get(edge.source);
+  const targetNode = nodeById.get(edge.target);
+  return isNodeDisplayed(sourceNode) && isNodeDisplayed(targetNode);
+}}
 
 function closeFocusPanel() {{
   focusPanel.style.display = "none";
   focusedNodeId = null;
-  pills.attr("opacity", d => d._visible ? 1 : 0);
-  pills.attr("display", d => d._visible ? null : "none");
-  roleLine.attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : 0.45);
-  roleLine.attr("display", d => {{
-    const s = nodeById.get(d.source);
-    const t = nodeById.get(d.target);
-    return (s?._visible && t?._visible) ? null : "none";
-  }});
+  focusContextNodeIds = null;
+  positionNodes();
+  updatePositions();
+  syncVisibility();
+  zoomToVisible();
 }}
 focusClose.addEventListener("click", closeFocusPanel);
 
@@ -1727,28 +1735,11 @@ pills.on("dblclick", (event, d) => {{
   focusContent.innerHTML = html;
   focusPanel.style.display = "block";
 
-  const connectedIds = contextNodeIdsForFocus([d.id]);
-
-  pills.attr("display", n => {{
-    if (connectedIds.has(n.id)) return null;
-    return n._visible ? null : "none";
-  }});
-
-  pills.attr("opacity", n => {{
-    if (connectedIds.has(n.id)) return 1;
-    if (!n._visible) return 0;
-    return 0.12;
-  }});
-  roleLine.attr("display", e => {{
-    if (e.source === d.id || e.target === d.id) return null;
-    const s = nodeById.get(e.source);
-    const t = nodeById.get(e.target);
-    return (s?._visible && t?._visible) ? null : "none";
-  }});
-  roleLine.attr("stroke-opacity", e => {{
-    if (e.source === d.id || e.target === d.id) return 0.8;
-    return 0.04;
-  }});
+  focusContextNodeIds = contextNodeIdsForFocus([d.id]);
+  positionNodes();
+  updatePositions();
+  syncVisibility();
+  zoomToVisible();
 }});
 
 svg.on("dblclick.focus", () => {{
@@ -1759,6 +1750,7 @@ svg.on("dblclick.focus", () => {{
 let searchTerm = "";
 
 function applyFilter() {{
+  if (focusedNodeId) closeFocusPanel();
   const q = searchTerm.toLowerCase();
 
   allNodes.forEach(n => {{ n._visible = false; }});
@@ -1828,13 +1820,8 @@ function applyFilter() {{
 
   positionNodes();
   updatePositions();
-
-  pills.attr("display", d => d._visible ? null : "none");
-  roleLine.attr("display", d => {{
-    const s = nodeById.get(d.source);
-    const t = nodeById.get(d.target);
-    return (s?._visible && t?._visible) ? null : "none";
-  }});
+  syncVisibility();
+  zoomToVisible();
 
   if (identityDropdownBtn && identityNodes.length) {{
     const selectedCount = identityNodes.filter(n => selectedIdentities.has(n.id)).length;
@@ -1876,19 +1863,32 @@ clearBtn.addEventListener("click", () => {{
 
 applyFilter();
 
-// initial zoom to fit
-const allX = allNodes.filter(n => n._visible).map(n => n.x);
-const allY = allNodes.filter(n => n._visible).map(n => n.y);
-const bounds = {{
-  x0: Math.min(...allX) - 60, x1: Math.max(...allX) + 60,
-  y0: Math.min(...allY) - 40, y1: Math.max(...allY) + 40,
-}};
-const bw = bounds.x1 - bounds.x0;
-const bh = bounds.y1 - bounds.y0;
-const scale = Math.min(W / bw, H / bh, 1.5) * 0.85;
-const tx = (W - bw * scale) / 2 - bounds.x0 * scale;
-const ty = (H - bh * scale) / 2 - bounds.y0 * scale;
-svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+function syncVisibility() {{
+  pills
+    .attr("display", d => isNodeDisplayed(d) ? null : "none")
+    .attr("opacity", d => isNodeDisplayed(d) ? 1 : 0);
+
+  roleLine
+    .attr("display", d => isEdgeDisplayed(d) ? null : "none")
+    .attr("stroke-opacity", d => isEdgeDisplayed(d) ? (d.kind === "alias" ? 0.8 : 0.45) : 0);
+}}
+
+function zoomToVisible() {{
+  const visibleNodes = allNodes.filter(isNodeDisplayed);
+  if (!visibleNodes.length) return;
+  const allX = visibleNodes.map(n => n.x);
+  const allY = visibleNodes.map(n => n.y);
+  const bounds = {{
+    x0: Math.min(...allX) - 60, x1: Math.max(...allX) + 60,
+    y0: Math.min(...allY) - 40, y1: Math.max(...allY) + 40,
+  }};
+  const bw = Math.max(1, bounds.x1 - bounds.x0);
+  const bh = Math.max(1, bounds.y1 - bounds.y0);
+  const scale = Math.min(W / bw, H / bh, 1.5) * 0.85;
+  const tx = (W - bw * scale) / 2 - bounds.x0 * scale;
+  const ty = (H - bh * scale) / 2 - bounds.y0 * scale;
+  svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}}
 </script>
 </body>
 </html>"""
