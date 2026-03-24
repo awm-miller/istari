@@ -128,6 +128,91 @@ class Repository:
             ).fetchone()
             return int(row["id"])
 
+    def upsert_address(
+        self,
+        *,
+        label: str,
+        normalized_key: str,
+        postcode: str | None = None,
+        country: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO addresses(
+                    label,
+                    normalized_key,
+                    postcode,
+                    country,
+                    metadata_json
+                ) VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(normalized_key) DO UPDATE SET
+                    label = excluded.label,
+                    postcode = excluded.postcode,
+                    country = excluded.country,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    label,
+                    normalized_key,
+                    postcode,
+                    country,
+                    json.dumps(metadata or {}),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT id
+                FROM addresses
+                WHERE normalized_key = ?
+                """,
+                (normalized_key,),
+            ).fetchone()
+            return int(row["id"])
+
+    def link_organisation_address(
+        self,
+        organisation_id: int,
+        address_id: int,
+        *,
+        source: str,
+        relationship_phrase: str = "is registered at",
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO organisation_addresses(
+                    organisation_id,
+                    address_id,
+                    source,
+                    relationship_phrase,
+                    metadata_json
+                ) VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(organisation_id, address_id) DO UPDATE SET
+                    source = excluded.source,
+                    relationship_phrase = excluded.relationship_phrase,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    organisation_id,
+                    address_id,
+                    source,
+                    relationship_phrase,
+                    json.dumps(metadata or {}),
+                ),
+            )
+            row = connection.execute(
+                """
+                SELECT id
+                FROM organisation_addresses
+                WHERE organisation_id = ? AND address_id = ?
+                """,
+                (organisation_id, address_id),
+            ).fetchone()
+            return int(row["id"])
+
     def link_run_organisation(
         self,
         run_id: int,
@@ -344,6 +429,45 @@ class Repository:
             ).fetchone()
             return int(row["id"])
 
+    def upsert_identity(
+        self,
+        canonical_name: str,
+        *,
+        source_run_id: int | None = None,
+        source_person_name: str | None = None,
+    ) -> int:
+        cleaned_name = " ".join(str(canonical_name).split()).strip()
+        if not cleaned_name:
+            raise ValueError("Identity name is required.")
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO identities(canonical_name, source_run_id, source_person_name)
+                VALUES(?, ?, ?)
+                ON CONFLICT(canonical_name) DO UPDATE SET
+                    source_run_id = COALESCE(identities.source_run_id, excluded.source_run_id),
+                    source_person_name = COALESCE(identities.source_person_name, excluded.source_person_name)
+                """,
+                (cleaned_name, source_run_id, source_person_name or cleaned_name),
+            )
+            row = connection.execute(
+                "SELECT id FROM identities WHERE canonical_name = ?",
+                (cleaned_name,),
+            ).fetchone()
+            return int(row["id"])
+
+    def list_identities(self, limit: int = 100) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                SELECT id, canonical_name, source_run_id, source_person_name, created_at
+                FROM identities
+                ORDER BY created_at DESC, canonical_name ASC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+
     def upsert_role(
         self,
         *,
@@ -400,6 +524,21 @@ class Repository:
                 "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
+
+    def get_latest_unique_run_ids(self) -> list[int]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT latest.id
+                FROM (
+                    SELECT MAX(id) AS id
+                    FROM runs
+                    GROUP BY seed_name
+                ) AS latest
+                ORDER BY latest.id ASC
+                """
+            ).fetchall()
+            return [int(row["id"]) for row in rows]
 
     def get_run_variant_names(self, run_id: int) -> list[str]:
         with self.connect() as connection:
@@ -560,6 +699,99 @@ class Repository:
                 JOIN scoped_orgs
                     ON scoped_orgs.organisation_id = organisations.id
                 ORDER BY person_org_roles.edge_weight DESC, people.canonical_name ASC, organisations.name ASC
+                """,
+                (run_id, run_id, run_id),
+            ).fetchall()
+
+    def get_run_scoped_organisations(self, run_id: int) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                WITH scoped_orgs AS (
+                    SELECT DISTINCT organisation_id
+                    FROM run_organisations
+                    WHERE run_id = ?
+                    UNION
+                    SELECT DISTINCT organisations.id AS organisation_id
+                    FROM resolution_decisions
+                    JOIN candidate_matches
+                        ON candidate_matches.id = resolution_decisions.candidate_match_id
+                    JOIN organisations
+                        ON organisations.registry_type = candidate_matches.registry_type
+                       AND organisations.registry_number = candidate_matches.registry_number
+                       AND organisations.suffix = candidate_matches.suffix
+                    WHERE resolution_decisions.run_id = ?
+                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM run_organisations
+                          WHERE run_id = ?
+                      )
+                )
+                SELECT
+                    organisations.id,
+                    organisations.registry_type,
+                    organisations.registry_number,
+                    organisations.suffix,
+                    organisations.organisation_number,
+                    organisations.name,
+                    organisations.status,
+                    organisations.metadata_json
+                FROM organisations
+                JOIN scoped_orgs
+                    ON scoped_orgs.organisation_id = organisations.id
+                ORDER BY organisations.name ASC, organisations.registry_type ASC, organisations.registry_number ASC
+                """,
+                (run_id, run_id, run_id),
+            ).fetchall()
+
+    def get_run_address_edges(self, run_id: int) -> list[sqlite3.Row]:
+        with self.connect() as connection:
+            return connection.execute(
+                """
+                WITH scoped_orgs AS (
+                    SELECT DISTINCT organisation_id
+                    FROM run_organisations
+                    WHERE run_id = ?
+                    UNION
+                    SELECT DISTINCT organisations.id AS organisation_id
+                    FROM resolution_decisions
+                    JOIN candidate_matches
+                        ON candidate_matches.id = resolution_decisions.candidate_match_id
+                    JOIN organisations
+                        ON organisations.registry_type = candidate_matches.registry_type
+                       AND organisations.registry_number = candidate_matches.registry_number
+                       AND organisations.suffix = candidate_matches.suffix
+                    WHERE resolution_decisions.run_id = ?
+                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM run_organisations
+                          WHERE run_id = ?
+                      )
+                )
+                SELECT
+                    organisations.id AS organisation_id,
+                    organisations.name AS organisation_name,
+                    organisations.registry_type,
+                    organisations.registry_number,
+                    organisations.suffix,
+                    addresses.id AS address_id,
+                    addresses.label AS address_label,
+                    addresses.normalized_key,
+                    addresses.postcode,
+                    addresses.country,
+                    organisation_addresses.source,
+                    organisation_addresses.relationship_phrase,
+                    organisation_addresses.metadata_json
+                FROM organisation_addresses
+                JOIN organisations
+                    ON organisations.id = organisation_addresses.organisation_id
+                JOIN addresses
+                    ON addresses.id = organisation_addresses.address_id
+                JOIN scoped_orgs
+                    ON scoped_orgs.organisation_id = organisations.id
+                ORDER BY organisations.name ASC, addresses.label ASC
                 """,
                 (run_id, run_id, run_id),
             ).fetchall()

@@ -113,11 +113,12 @@ class OFACScreener:
 
         if len(tokens) >= 2:
             for sdn_tokens, sdn_raw in self._token_sets.items():
-                if tokens == sdn_tokens:
+                if tokens == sdn_tokens or (tokens <= sdn_tokens and len(tokens) >= 2):
                     for entry in self._entries:
                         if entry["name"] == sdn_raw and entry["ent_num"] not in seen_ent:
                             seen_ent.add(entry["ent_num"])
-                            hits.append({"match_type": "token_set", **entry})
+                            match_type = "exact" if tokens == sdn_tokens else "subset"
+                            hits.append({"match_type": match_type, **entry})
 
         return hits
 

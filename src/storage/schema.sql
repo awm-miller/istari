@@ -33,6 +33,25 @@ CREATE TABLE IF NOT EXISTS organisations (
     UNIQUE(registry_type, registry_number, suffix)
 );
 
+CREATE TABLE IF NOT EXISTS addresses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL,
+    normalized_key TEXT NOT NULL UNIQUE,
+    postcode TEXT,
+    country TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS organisation_addresses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organisation_id INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+    address_id INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    relationship_phrase TEXT NOT NULL DEFAULT 'is registered at',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(organisation_id, address_id)
+);
+
 CREATE TABLE IF NOT EXISTS run_organisations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -46,6 +65,14 @@ CREATE TABLE IF NOT EXISTS run_organisations (
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     canonical_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS identities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_name TEXT NOT NULL UNIQUE,
+    source_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+    source_person_name TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS person_org_roles (
@@ -113,3 +140,5 @@ CREATE INDEX IF NOT EXISTS idx_roles_org_id ON person_org_roles(organisation_id)
 CREATE INDEX IF NOT EXISTS idx_roles_person_id ON person_org_roles(person_id);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_run_id ON run_organisations(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_org_id ON run_organisations(organisation_id);
+CREATE INDEX IF NOT EXISTS idx_org_addresses_org_id ON organisation_addresses(organisation_id);
+CREATE INDEX IF NOT EXISTS idx_org_addresses_address_id ON organisation_addresses(address_id);

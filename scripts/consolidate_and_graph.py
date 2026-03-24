@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import load_settings
+from src.ofac.screening import OFACScreener
 from src.resolution.features import person_name_similarity
 from src.search.queries import (
     _FUZZY_SWAPS,
@@ -86,6 +87,28 @@ def are_aliases(name_a: str, name_b: str) -> bool:
     return given_a.issubset(given_b) or given_b.issubset(given_a)
 
 
+def _load_screener() -> OFACScreener:
+    screener = OFACScreener()
+    sdn_path = Path(__file__).resolve().parents[1] / "data" / "sdn.csv"
+    if sdn_path.exists():
+        screener.load_csv(sdn_path)
+    return screener
+
+
+_screener: OFACScreener | None = None
+
+
+def get_screener() -> OFACScreener:
+    global _screener
+    if _screener is None:
+        _screener = _load_screener()
+    return _screener
+
+
+def is_sanctioned(name: str) -> bool:
+    return len(get_screener().screen_name(name)) > 0
+
+
 class UnionFind:
     def __init__(self) -> None:
         self._parent: dict[int, int] = {}
@@ -130,6 +153,19 @@ def _role_phrase(edge) -> str:
     return "is linked to"
 
 
+def _tag_sanctioned_nodes(nodes: list[dict]) -> None:
+    for node in nodes:
+        if node.get("kind") not in ("seed", "seed_alias", "person"):
+            continue
+        names = [node["label"], *(node.get("aliases") or [])]
+        if any(is_sanctioned(n) for n in names):
+            node["sanctioned"] = True
+            warning = "\u26a0\ufe0f <strong>SANCTIONED (OFAC SDN)</strong>"
+            tooltip_lines = list(node.get("tooltip_lines") or [])
+            if not tooltip_lines or tooltip_lines[0] != warning:
+                node["tooltip_lines"] = [warning, *tooltip_lines]
+
+
 def consolidate_run(run_id: int) -> dict:
     settings = load_settings()
     repository = Repository(
@@ -140,6 +176,7 @@ def consolidate_run(run_id: int) -> dict:
 
     ranked = repository.get_ranked_people_for_run(run_id, limit=500)
     raw_edges = repository.get_run_network_edges(run_id)
+    address_rows = repository.get_run_address_edges(run_id)
     run_row = repository.get_run(run_id)
     seed_name = str(run_row["seed_name"]) if run_row else "Seed"
 
@@ -212,6 +249,26 @@ def consolidate_run(run_id: int) -> dict:
                 "registry_type": str(edge["registry_type"] or ""),
                 "registry_number": str(edge["registry_number"] or ""),
             }
+
+    address_map: dict[int, dict] = {}
+    org_addresses: dict[str, list[dict]] = defaultdict(list)
+    for row in address_rows:
+        aid = int(row["address_id"])
+        if aid not in address_map:
+            address_map[aid] = {
+                "id": f"addr:{aid}",
+                "label": str(row["address_label"] or ""),
+                "postcode": str(row["postcode"] or ""),
+                "country": str(row["country"] or ""),
+            }
+        org_addresses[f"org:{int(row['organisation_id'])}"].append(
+            {
+                "address_id": aid,
+                "label": str(row["address_label"] or ""),
+                "phrase": str(row["relationship_phrase"] or "is registered at"),
+                "source": str(row["source"] or ""),
+            }
+        )
 
     # person→org edges with role detail
     person_org_edges: list[dict] = []
@@ -305,6 +362,16 @@ def consolidate_run(run_id: int) -> dict:
                 deduped.append(r)
         org_people[oid] = deduped
 
+    for oid in org_addresses:
+        seen = set()
+        deduped = []
+        for r in org_addresses[oid]:
+            key = (r["label"], r["phrase"])
+            if key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        org_addresses[oid] = deduped
+
     # --- assemble nodes ---
     nodes: list[dict] = []
 
@@ -340,6 +407,11 @@ def consolidate_run(run_id: int) -> dict:
         people_list = org_people.get(info["id"], [])
         tooltip = [f"<strong>{info['label']}</strong>"]
         tooltip.append(f"{info['registry_type']} {info['registry_number']}")
+        addresses = org_addresses.get(info["id"], [])
+        if addresses:
+            tooltip.append(f"{len(addresses)} linked addresses:")
+            for addr in addresses[:5]:
+                tooltip.append(f"  {addr['phrase']} <em>{addr['label']}</em>")
         tooltip.append(f"{len(people_list)} linked people:")
         for p in people_list[:20]:
             tooltip.append(f"  {p['person']} {p['phrase']}")
@@ -354,6 +426,24 @@ def consolidate_run(run_id: int) -> dict:
             "tooltip_lines": tooltip,
         })
 
+    for aid, info in address_map.items():
+        tooltip = [f"<strong>{info['label']}</strong>"]
+        if info["postcode"]:
+            tooltip.append(f"Postcode: {info['postcode']}")
+        if info["country"]:
+            tooltip.append(f"Country: {info['country']}")
+        nodes.append(
+            {
+                "id": info["id"],
+                "label": info["label"],
+                "kind": "address",
+                "lane": 3,
+                "postcode": info["postcode"],
+                "country": info["country"],
+                "tooltip_lines": tooltip,
+            }
+        )
+
     for entry in expanded_people:
         roles = person_roles.get(entry["group_id"], [])
         tooltip = [f"<strong>{entry['label']}</strong>"]
@@ -366,7 +456,7 @@ def consolidate_run(run_id: int) -> dict:
             "id": entry["group_id"],
             "label": entry["label"],
             "kind": "person",
-            "lane": 3,
+            "lane": 4,
             "aliases": entry.get("aliases", []),
             "org_count": entry["org_count"],
             "role_count": entry["role_count"],
@@ -403,6 +493,26 @@ def consolidate_run(run_id: int) -> dict:
             "tooltip": f"{p_label} {pe['phrase']} {o_label}",
         })
 
+    for row in address_rows:
+        graph_edges.append(
+            {
+                "source": f"org:{int(row['organisation_id'])}",
+                "target": f"addr:{int(row['address_id'])}",
+                "kind": "address_link",
+                "role_type": "organisation_address",
+                "role_label": "registered_address",
+                "phrase": str(row["relationship_phrase"] or "is registered at"),
+                "source_provider": str(row["source"] or ""),
+                "confidence": "high",
+                "weight": 0.8,
+                "tooltip": (
+                    f"{str(row['organisation_name'] or '')} "
+                    f"{str(row['relationship_phrase'] or 'is registered at')} "
+                    f"{str(row['address_label'] or '')}"
+                ).replace("  ", " "),
+            }
+        )
+
     for se in shared_org_edges:
         a_node = next((n for n in nodes if n["id"] == se["source"]), None)
         b_node = next((n for n in nodes if n["id"] == se["target"]), None)
@@ -416,6 +526,7 @@ def consolidate_run(run_id: int) -> dict:
             "tooltip": f"{a_label} & {b_label} share org: {se['shared_org']}",
         })
 
+    _tag_sanctioned_nodes(nodes)
     return {
         "seed_name": seed_name,
         "run_id": run_id,
@@ -464,11 +575,21 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     # Build per-run maps and gather lane-3 people for cross-run merging.
     run_contexts: list[dict] = []
     person_entries: list[dict] = []
+    address_nodes: dict[str, dict] = {}
+    org_address_edges: list[dict] = []
     for seed_index, run in enumerate(runs):
         node_map: dict[str, dict] = {str(node["id"]): node for node in run["nodes"]}
         identity_ids = {str(node["id"]) for node in run["nodes"] if node["kind"] == "seed_alias"}
         person_ids = {str(node["id"]) for node in run["nodes"] if node["kind"] == "person"}
         for node in run["nodes"]:
+            if node["kind"] == "address":
+                address_id = str(node["id"])
+                if address_id not in address_nodes:
+                    address_nodes[address_id] = {
+                        **node,
+                        "id": address_id,
+                        "lane": 3,
+                    }
             if node["kind"] != "person":
                 continue
             person_entries.append({
@@ -523,7 +644,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "id": merged_id,
             "label": label,
             "kind": "person",
-            "lane": 3,
+            "lane": 4,
             "aliases": all_aliases,
             "org_count": 0,
             "role_count": 0,
@@ -531,6 +652,23 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "shared": len({entry["seed_name"] for entry in entries}) > 1,
             "tooltip_lines": [],
         }
+
+    all_identity_names: set[str] = set()
+    for run in runs:
+        all_identity_names.add(run["seed_name"])
+        for node in run["nodes"]:
+            if node["kind"] == "seed_alias":
+                all_identity_names.add(str(node["label"]))
+                for alias in node.get("aliases", []):
+                    all_identity_names.add(str(alias))
+
+    pruned_ids: set[str] = set()
+    for mid, mnode in list(merged_person_nodes.items()):
+        names = [mnode["label"], *(mnode.get("aliases") or [])]
+        if any(are_aliases(n, idn) for n in names for idn in all_identity_names):
+            pruned_ids.add(mid)
+    for mid in pruned_ids:
+        del merged_person_nodes[mid]
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -600,6 +738,25 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 }
 
         for edge in run["edges"]:
+            if edge.get("kind") == "address_link":
+                org_id = str(edge["source"])
+                address_id = str(edge["target"])
+                if org_id in org_nodes and address_id in address_nodes:
+                    org_address_edges.append(
+                        {
+                            "source": org_id,
+                            "target": address_id,
+                            "kind": "address_link",
+                            "role_type": "organisation_address",
+                            "role_label": "registered_address",
+                            "phrase": edge.get("phrase", ""),
+                            "source_provider": edge.get("source_provider", ""),
+                            "confidence": edge.get("confidence", ""),
+                            "weight": float(edge.get("weight") or 0.8),
+                            "tooltip": edge.get("tooltip", ""),
+                        }
+                    )
+                continue
             if edge.get("kind") != "role":
                 continue
             source_id = str(edge["source"])
@@ -641,7 +798,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
 
             if person_orig_id in person_ids:
                 merged_person_id = person_entry_to_merged_id.get((int(run["run_id"]), person_orig_id))
-                if not merged_person_id:
+                if not merged_person_id or merged_person_id not in merged_person_nodes:
                     continue
                 merged_person_orgs[merged_person_id].add(org_id)
                 merged_person_role_count[merged_person_id] += 1
@@ -691,6 +848,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         node["tooltip_lines"] = tooltip
         nodes.append(node)
 
+    for node in address_nodes.values():
+        nodes.append(node)
+
     merged_people_consolidated: list[dict] = []
     for merged_id, node in merged_person_nodes.items():
         node["org_count"] = len(merged_person_orgs.get(merged_id, set()))
@@ -725,6 +885,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         })
 
     edges.extend(identity_org_edges)
+    edges.extend(org_address_edges)
     edges.extend(org_person_edges)
 
     consolidated: list[dict] = []
@@ -741,8 +902,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     consolidated.extend(merged_people_consolidated)
     consolidated.sort(key=lambda c: (-float(c["score"]), -int(c["org_count"]), c["label"]))
 
+    _tag_sanctioned_nodes(nodes)
     return {
-        "seed_name": " + ".join(seed_names),
+        "seed_name": "Istari",
         "run_id": "+".join(str(r) for r in run_ids),
         "seed_names": seed_names,
         "runs": runs,
@@ -775,7 +937,7 @@ def render_html(data: dict) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Istari Network: {seed_name}</title>
+<title>Istari</title>
 <style>
 :root {{
   --bg: #0c0e14; --surface: #141820; --border: #1e2430;
@@ -842,7 +1004,7 @@ body {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; backgroun
 }}
 .legend .row {{ display: flex; align-items: center; gap: 6px; }}
 .legend .dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
-#graph {{ width: 100%; height: calc(100vh - 48px); }}
+#graph {{ width: 100vw; height: calc(100vh - 48px); overflow: hidden; }}
 .tooltip {{
   position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
   padding: 12px 16px; font-size: 12px; line-height: 1.6; pointer-events: none; z-index: 100;
@@ -874,11 +1036,15 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
 </head>
 <body>
 <div class="topbar">
-  <h1>Istari &middot; {seed_name}</h1>
+  <h1>Istari</h1>
 {identity_dropdown_html}  <div class="org-dropdown" id="people-dropdown">
     <button class="org-dropdown-btn" id="people-dropdown-btn">People &#9662;</button>
     <div class="org-dropdown-menu" id="people-dropdown-menu"></div>
   </div>
+  <label class="toggle">
+    <input id="stage3-multi-org-only" type="checkbox" />
+    <span>only show individuals connected to 2+ organisations</span>
+  </label>
   <div class="search-box">
     <input id="search" type="search" placeholder="Filter by name..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
@@ -890,7 +1056,9 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
   <div class="row"><span class="dot" style="background:var(--red)"></span> Seed</div>
   <div class="row"><span class="dot" style="background:var(--amber)"></span> Seed identity</div>
   <div class="row"><span class="dot" style="background:var(--green)"></span> Organisation</div>
+  <div class="row"><span class="dot" style="background:var(--purple)"></span> Address</div>
   <div class="row"><span class="dot" style="background:var(--blue)"></span> Person</div>
+  <div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</div>
 </div>
 <div class="tooltip" id="tooltip"></div>
 <div class="focus-panel" id="focus-panel"><button class="close-btn" id="focus-close">&times;</button><div id="focus-content"></div></div>
@@ -905,17 +1073,21 @@ const tooltipEl = document.getElementById("tooltip");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const laneLabelsDiv = document.getElementById("lane-labels");
+const stage3MultiOrgToggle = document.getElementById("stage3-multi-org-only");
 
 const W = container.clientWidth;
 const H = container.clientHeight;
 
-const LANE_Y = {{ 0: 80, 1: 260, 2: 520, 3: 840 }};
-const LANE_NAMES = {{ 0: "Seed", 1: "Identity", 2: "Organisations", 3: "People" }};
+const LANE_Y = {{ 0: 80, 1: 260, 2: 520, 3: 760, 4: 980 }};
+const LANE_NAMES = {{ 0: "Seed", 1: "Identity", 2: "Organisations", 3: "Addresses", 4: "People" }};
 
-const svg = d3.select(container).append("svg").attr("width", W).attr("height", H);
+const svg = d3.select(container).append("svg")
+  .attr("width", "100%").attr("height", "100%")
+  .style("display", "block");
 const gRoot = svg.append("g");
-const zoom = d3.zoom().scaleExtent([0.15, 4]).on("zoom", (e) => gRoot.attr("transform", e.transform));
+const zoom = d3.zoom().scaleExtent([0.05, 6]).on("zoom", (e) => gRoot.attr("transform", e.transform));
 svg.call(zoom);
+svg.on("dblclick.zoom", null);
 
 const nodeById = new Map(allNodes.map(n => [n.id, n]));
 const edgesByNodeId = new Map();
@@ -932,7 +1104,7 @@ const identityNodes = allNodes
   .sort((a, b) => (a.seed_index - b.seed_index) || a.label.localeCompare(b.label));
 const selectedIdentities = new Set(identityNodes.map(n => n.id));
 
-const peopleNodes = allNodes.filter(n => n.lane === 3).sort((a, b) => a.label.localeCompare(b.label));
+const peopleNodes = allNodes.filter(n => n.lane === 4).sort((a, b) => a.label.localeCompare(b.label));
 const selectedPeople = new Set(peopleNodes.map(n => n.id));
 
 const identityDropdownBtn = document.getElementById("identity-dropdown-btn");
@@ -947,7 +1119,7 @@ allEdges.filter(e => e.kind === "role").forEach(e => {{
   const orgId = nodeById.get(e.source)?.kind === "organisation" ? e.source : e.target;
   const personNode = nodeById.get(personId);
   const orgNode = nodeById.get(orgId);
-  if (personNode?.lane !== 3 || orgNode?.kind !== "organisation") return;
+  if (personNode?.lane !== 4 || orgNode?.kind !== "organisation") return;
   if (!personOrgIds.has(personId)) personOrgIds.set(personId, new Set());
   personOrgIds.get(personId).add(orgId);
 }});
@@ -971,10 +1143,8 @@ function candidateOrgIdsForSelectedIdentities() {{
     if (!orgIdentityIds.has(orgNode.id)) orgIdentityIds.set(orgNode.id, new Set());
     orgIdentityIds.get(orgNode.id).add(identityNode.id);
   }});
-  const sharedOnly = activeIds.size > 1;
   return new Set(
     [...orgIdentityIds.entries()]
-      .filter(([, ids]) => !sharedOnly || ids.size > 1)
       .map(([orgId]) => orgId)
   );
 }}
@@ -982,10 +1152,25 @@ function candidateOrgIdsForSelectedIdentities() {{
 function visiblePeopleList() {{
   const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
   return peopleNodes.filter(n => {{
-    if ((n.org_count || 0) < 2) return false;
+    if (stage3MultiOrgToggle?.checked && (n.org_count || 0) < 2) return false;
     const myOrgs = personOrgIds.get(n.id) || new Set();
     return [...myOrgs].some(orgId => candidateOrgIds.has(orgId));
   }});
+}}
+
+function visibleAddressIdsForVisibleOrgs(visibleOrgs) {{
+  const visibleAddresses = new Set();
+  allEdges.forEach(e => {{
+    if (e.kind !== "address_link") return;
+    const sourceNode = nodeById.get(e.source);
+    const targetNode = nodeById.get(e.target);
+    const orgNode = sourceNode?.kind === "organisation" ? sourceNode : targetNode?.kind === "organisation" ? targetNode : null;
+    const addressNode = sourceNode?.kind === "address" ? sourceNode : targetNode?.kind === "address" ? targetNode : null;
+    if (!orgNode || !addressNode) return;
+    if (!visibleOrgs.has(orgNode.id)) return;
+    visibleAddresses.add(addressNode.id);
+  }});
+  return visibleAddresses;
 }}
 
 function buildIdentityDropdown() {{
@@ -1102,13 +1287,16 @@ function pillHeight(d) {{ return fontSize(d) + 12; }}
 function pillWidth(d) {{ return textWidth(nodeLabel(d), fontSize(d)) + 18; }}
 
 function nodeColor(d) {{
+  if (d.sanctioned) return "#ff2222";
   if (d.kind === "seed") return "var(--red)";
   if (d.kind === "seed_alias") return "var(--amber)";
   if (d.kind === "organisation") return "var(--green)";
+  if (d.kind === "address") return "var(--purple)";
   return "var(--blue)";
 }}
 function edgeStroke(d) {{
   if (d.kind === "alias") return "var(--amber)";
+  if (d.kind === "address_link") return "var(--purple)";
   const rt = (d.role_type || "").toLowerCase();
   if (rt.includes("trustee")) return "var(--blue)";
   if (rt.includes("director")) return "var(--purple)";
@@ -1117,10 +1305,10 @@ function edgeStroke(d) {{
 }}
 
 // -- position nodes --
-function layoutRow(list, y, xMin, xMax) {{
-  if (list.length === 0) return;
-  const spacing = 14;
-  const rowGap = 14;
+function layoutRow(list, yTop, xMin, xMax) {{
+  if (list.length === 0) return 0;
+  const spacing = 16;
+  const rowGap = 18;
   const pad = 18;
   const usableMin = xMin + pad;
   const usableMax = xMax - pad;
@@ -1145,12 +1333,11 @@ function layoutRow(list, y, xMin, xMax) {{
 
   const maxPillH = Math.max(...rows.flat().map(pillHeight));
   const rowStep = maxPillH + rowGap;
-  const totalRowsH = rowStep * (rows.length - 1);
 
   rows.forEach((row, rowIndex) => {{
     const rowW = row.reduce((sum, n) => sum + pillWidth(n), 0) + spacing * (row.length - 1);
     let cx = usableMin + Math.max(0, (maxRowW - rowW) / 2);
-    const rowY = y - (totalRowsH / 2) + (rowIndex * rowStep);
+    const rowY = yTop + rowIndex * rowStep;
     row.forEach(n => {{
       const pw = pillWidth(n);
       n.x = cx + pw / 2;
@@ -1158,29 +1345,41 @@ function layoutRow(list, y, xMin, xMax) {{
       cx += pw + spacing;
     }});
   }});
+  return rows.length * rowStep;
 }}
+
+const LANE_GAP = 50;
 
 function positionNodes() {{
   const visible = allNodes.filter(n => n._visible !== false);
+  let curY = 60;
   if (!multiSeed) {{
-    const lanes = {{ 0: [], 1: [], 2: [], 3: [] }};
-    visible.forEach(n => lanes[n.lane]?.push(n));
-    Object.entries(lanes).forEach(([lane, list]) => {{
-      layoutRow(list, LANE_Y[lane], 0, W);
+    const laneKeys = [0, 1, 2, 3, 4];
+    laneKeys.forEach(lane => {{
+      const list = visible.filter(n => n.lane === lane);
+      LANE_Y[lane] = curY;
+      const h = layoutRow(list, curY, 0, W);
+      curY += Math.max(h, 30) + LANE_GAP;
     }});
   }} else {{
-    const seedIndices = [...new Set(allNodes.filter(n => n.kind === "seed").map(n => n.seed_index || 0))].sort((a, b) => a - b);
-    const colW = W / Math.max(1, seedIndices.length);
-    seedIndices.forEach((seedIndex, ci) => {{
-      const xMin = ci * colW;
-      const xMax = (ci + 1) * colW;
-      const seeds = visible.filter(n => n.kind === "seed" && (n.seed_index || 0) === seedIndex);
-      const identities = visible.filter(n => n.lane === 1 && (n.seed_index || 0) === seedIndex);
-      layoutRow(seeds, LANE_Y[0], xMin, xMax);
-      layoutRow(identities, LANE_Y[1], xMin, xMax);
-    }});
-    layoutRow(visible.filter(n => n.kind === "organisation"), LANE_Y[2], 0, W);
-    layoutRow(visible.filter(n => n.lane === 3), LANE_Y[3], 0, W);
+    LANE_Y[0] = curY;
+    const seedH = layoutRow(visible.filter(n => n.kind === "seed"), curY, 0, W);
+    curY += Math.max(seedH, 30) + LANE_GAP;
+
+    LANE_Y[1] = curY;
+    const idH = layoutRow(visible.filter(n => n.lane === 1), curY, 0, W);
+    curY += Math.max(idH, 30) + LANE_GAP;
+
+    LANE_Y[2] = curY;
+    const orgH = layoutRow(visible.filter(n => n.kind === "organisation"), curY, 0, W);
+    curY += Math.max(orgH, 30) + LANE_GAP;
+
+    LANE_Y[3] = curY;
+    const addrH = layoutRow(visible.filter(n => n.kind === "address"), curY, 0, W);
+    curY += Math.max(addrH, 30) + LANE_GAP;
+
+    LANE_Y[4] = curY;
+    layoutRow(visible.filter(n => n.lane === 4), curY, 0, W);
   }}
 }}
 positionNodes();
@@ -1205,10 +1404,10 @@ pills.append("rect")
   .attr("width", pillWidth)
   .attr("height", pillHeight)
   .attr("fill", nodeColor)
-  .attr("fill-opacity", 0.18)
+  .attr("fill-opacity", d => d.sanctioned ? 0.35 : 0.18)
   .attr("stroke", nodeColor)
-  .attr("stroke-width", 1.2)
-  .attr("stroke-opacity", 0.7);
+  .attr("stroke-width", d => d.sanctioned ? 2.5 : 1.2)
+  .attr("stroke-opacity", d => d.sanctioned ? 1.0 : 0.7);
 
 pills.append("text")
   .text(nodeLabel)
@@ -1314,7 +1513,7 @@ pills.on("dblclick", (event, d) => {{
   const directRoles = [];
   const seenDirectConnections = new Set();
   edges
-    .filter(e => e.kind === "role" || e.kind === "alias")
+    .filter(e => e.kind === "role" || e.kind === "alias" || e.kind === "address_link")
     .forEach(e => {{
       const otherId = e.source === d.id ? e.target : e.source;
       const key = `${{e.kind}}:${{otherId}}`;
@@ -1370,13 +1569,15 @@ function applyFilter() {{
 
   const activeIdentities = activeIdentityIds();
   const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
+  const visibleOrgs = new Set(candidateOrgIds);
+  const visibleAddresses = visibleAddressIdsForVisibleOrgs(visibleOrgs);
   const visiblePeople = new Set();
 
-  allNodes.filter(n => n.lane === 3).forEach(n => {{
+  allNodes.filter(n => n.lane === 4).forEach(n => {{
     let visible = selectedPeople.has(n.id);
-    if (visible) visible = (n.org_count || 0) >= 2;
+    if (visible && stage3MultiOrgToggle?.checked) visible = (n.org_count || 0) >= 2;
     const myOrgs = personOrgIds.get(n.id) || new Set();
-    if (visible) visible = [...myOrgs].some(orgId => candidateOrgIds.has(orgId));
+    if (visible) visible = [...myOrgs].some(orgId => visibleOrgs.has(orgId));
     if (visible && q) {{
       const nameMatch = n.label.toLowerCase().includes(q);
       const aliasMatch = (n.aliases || []).some(a => a.toLowerCase().includes(q));
@@ -1386,19 +1587,8 @@ function applyFilter() {{
     if (visible) visiblePeople.add(n.id);
   }});
 
-  const visibleOrgs = new Set();
-  allEdges.forEach(e => {{
-    if (e.kind !== "role") return;
-    const sourceNode = nodeById.get(e.source);
-    const targetNode = nodeById.get(e.target);
-    const orgNode = sourceNode?.kind === "organisation" ? sourceNode : targetNode?.kind === "organisation" ? targetNode : null;
-    const personNode = sourceNode?.lane === 3 ? sourceNode : targetNode?.lane === 3 ? targetNode : null;
-    if (!orgNode || !personNode) return;
-    if (!candidateOrgIds.has(orgNode.id)) return;
-    if (!visiblePeople.has(personNode.id)) return;
-    visibleOrgs.add(orgNode.id);
-  }});
   allNodes.filter(n => n.kind === "organisation").forEach(n => {{ n._visible = visibleOrgs.has(n.id); }});
+  allNodes.filter(n => n.kind === "address").forEach(n => {{ n._visible = visibleAddresses.has(n.id); }});
 
   const visibleAliases = new Set();
   allEdges.forEach(e => {{
@@ -1456,6 +1646,10 @@ searchInput.addEventListener("input", () => {{
   searchTerm = searchInput.value.trim();
   applyFilter();
 }});
+stage3MultiOrgToggle?.addEventListener("change", () => {{
+  buildPeopleDropdown();
+  applyFilter();
+}});
 clearBtn.addEventListener("click", () => {{
   searchInput.value = "";
   searchTerm = "";
@@ -1501,7 +1695,7 @@ def main() -> None:
         data = consolidate_multi_run(args.run_ids)
 
     print(f"\n{'='*70}")
-    print(f"  Consolidated ranking for '{data['seed_name']}' (run {data['run_id']})")
+    print(f"  Consolidated ranking (run {data['run_id']})")
     print(f"{'='*70}\n")
     for rank, entry in enumerate(data["consolidated"], 1):
         aliases = ", ".join(entry["aliases"])

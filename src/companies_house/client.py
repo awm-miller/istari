@@ -32,6 +32,16 @@ class CompaniesHouseClient:
         )
         return self._get_json(url)
 
+    def search_companies(self, query: str, items_per_page: int = 20) -> dict[str, Any]:
+        self._ensure_api_key()
+        encoded_query = parse.quote(query)
+        url = (
+            f"{self.settings.companies_house_base_url}/search/companies"
+            f"?q={encoded_query}&items_per_page={items_per_page}"
+        )
+        payload = self._get_json(url)
+        return payload if isinstance(payload, dict) else {}
+
     def get_officer_appointments(self, officer_id: str, items_per_page: int = 25) -> dict[str, Any]:
         self._ensure_api_key()
         encoded_officer_id = parse.quote(officer_id, safe="")

@@ -181,19 +181,14 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                 explanation="This name is treated as a possible alias of the seed name.",
             )
 
+        scoped_org_rows = repository.get_run_scoped_organisations(run_id)
         org_ids_in_run: set[int] = set()
-        for row in candidate_org_rows:
-            candidate_name = str(row["candidate_name"] or "").strip()
-            if not candidate_name:
-                continue
-            candidate_id = f"cand:{_slug(candidate_name)}"
-            org_id_int = int(row["org_id"])
+        for row in scoped_org_rows:
+            org_id_int = int(row["id"])
             org_ids_in_run.add(org_id_int)
-            org_id = f"org:{org_id_int}"
-            org_name = str(row["org_name"] or "").strip() or "Unknown organisation"
             ensure_node(
-                org_id,
-                label=org_name,
+                f"org:{org_id_int}",
+                label=str(row["name"] or "").strip() or "Unknown organisation",
                 kind="organisation",
                 lane=2,
                 run_id=run_id,
@@ -203,6 +198,15 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                     "suffix": int(row["suffix"] or 0),
                 },
             )
+
+        for row in candidate_org_rows:
+            candidate_name = str(row["candidate_name"] or "").strip()
+            if not candidate_name:
+                continue
+            candidate_id = f"cand:{_slug(candidate_name)}"
+            org_id_int = int(row["org_id"])
+            org_id = f"org:{org_id_int}"
+            org_name = str(row["org_name"] or "").strip() or "Unknown organisation"
             confidence_value = float(row["confidence"] or 0.5)
             candidate_payload = json.loads(str(row["raw_payload_json"] or "{}"))
             relation_phrase = _candidate_relationship_phrase(
@@ -236,8 +240,40 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                 expanded_id,
                 label=person_name,
                 kind="expanded_person",
+                lane=4,
+                run_id=run_id,
+            )
+
+        for row in repository.get_run_address_edges(run_id):
+            org_id = int(row["organisation_id"])
+            if org_id not in org_ids_in_run:
+                continue
+            address_id = int(row["address_id"])
+            address_node_id = f"addr:{address_id}"
+            ensure_node(
+                address_node_id,
+                label=str(row["address_label"] or "").strip() or "Unknown address",
+                kind="address",
                 lane=3,
                 run_id=run_id,
+                meta={
+                    "postcode": str(row["postcode"] or ""),
+                    "country": str(row["country"] or ""),
+                },
+            )
+            add_edge(
+                f"orgaddr:{run_id}:org:{org_id}:{address_node_id}",
+                f"org:{org_id}",
+                address_node_id,
+                run_id=run_id,
+                role_type="organisation_address",
+                role_label="registered_address",
+                source=str(row["source"] or "organisation_address"),
+                explanation=(
+                    f"{str(row['organisation_name'] or '')} "
+                    f"{str(row['relationship_phrase'] or 'is registered at')} "
+                    f"{str(row['address_label'] or '')}."
+                ).replace("  ", " "),
             )
 
         for row in graph_rows:

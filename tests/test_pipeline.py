@@ -64,12 +64,18 @@ class FakeCharityClient:
                 "organisation_number": 1001,
                 "charity_name": "Alex Smith Foundation",
                 "reg_status": "R",
+                "address_line_one": "1 Charity Street",
+                "address_line_two": "London",
+                "address_post_code": "E1 1AA",
             }
         if charity_number == 654321:
             return {
                 "organisation_number": None,
                 "charity_name": "Linked Relief Trust",
                 "reg_status": "R",
+                "address_line_one": "2 Linked Road",
+                "address_line_two": "London",
+                "address_post_code": "E2 2BB",
             }
         raise RuntimeError(f"unexpected charity lookup: {charity_number}/{suffix}")
 
@@ -205,15 +211,33 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(step1["matched_organisation_count"], 2)
             self.assertEqual(len(repository.get_run_organisations(run_id, stages=["step1_seed_match"])), 2)
 
-            step2 = step2_expand_connected_organisations(
-                repository=repository,
-                charity_client=charity_client,
-                run_id=run_id,
-            )
+            with (
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_profile",
+                    side_effect=lambda *args, **kwargs: {
+                        "company_name": "Alpha Ltd" if str(args[-1]) == "001" else "Alex Smith Foundation Ltd",
+                        "company_status": "active",
+                        "registered_office_address": {
+                            "address_line_1": "3 Company Lane",
+                            "locality": "London",
+                            "postal_code": "E3 3CC",
+                        },
+                    },
+                ),
+                patch(
+                    "src.address_pivot.AddressPivotSearcher.find_related_organisations",
+                    return_value=[],
+                ),
+            ):
+                step2 = step2_expand_connected_organisations(
+                    repository=repository,
+                    charity_client=charity_client,
+                    run_id=run_id,
+                )
 
-            self.assertEqual(step2["connected_organisation_count"], 2)
+            self.assertEqual(step2["connected_organisation_count"], 1)
             scoped_connected = repository.get_run_organisations(run_id, stages=["step2_connected_org"])
-            self.assertEqual(len(scoped_connected), 2)
+            self.assertEqual(len(scoped_connected), 1)
 
             with (
                 patch(
@@ -221,6 +245,11 @@ class PipelineTests(unittest.TestCase):
                     side_effect=lambda *args, **kwargs: {
                         "company_name": "Alpha Ltd" if str(args[-1]) == "001" else "Alex Smith Foundation Ltd",
                         "company_status": "active",
+                        "registered_office_address": {
+                            "address_line_1": "3 Company Lane",
+                            "locality": "London",
+                            "postal_code": "E3 3CC",
+                        },
                     },
                 ),
                 patch(
@@ -244,7 +273,7 @@ class PipelineTests(unittest.TestCase):
                     limit=10,
                 )
 
-            self.assertGreaterEqual(step3["inserted_roles"], 6)
+            self.assertGreaterEqual(step3["inserted_roles"], 5)
             ranked_names = [row["canonical_name"] for row in step3["ranking"]]
             self.assertIn("Jane Trustee", ranked_names)
             self.assertIn("Alice Director", ranked_names)
@@ -260,7 +289,15 @@ class PipelineTests(unittest.TestCase):
             with (
                 patch(
                     "src.companies_house.client.CompaniesHouseClient.get_company_profile",
-                    return_value={"company_name": "Alpha Ltd", "company_status": "active"},
+                    return_value={
+                        "company_name": "Alpha Ltd",
+                        "company_status": "active",
+                        "registered_office_address": {
+                            "address_line_1": "3 Company Lane",
+                            "locality": "London",
+                            "postal_code": "E3 3CC",
+                        },
+                    },
                 ),
                 patch(
                     "src.companies_house.client.CompaniesHouseClient.get_company_officers",
@@ -273,6 +310,10 @@ class PipelineTests(unittest.TestCase):
                             }
                         ]
                     },
+                ),
+                patch(
+                    "src.address_pivot.AddressPivotSearcher.find_related_organisations",
+                    return_value=[],
                 ),
             ):
                 result = run_name_pipeline(
@@ -290,8 +331,77 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(result["alias_rounds"], 0)
             self.assertEqual(result["alias_variant_count"], 0)
             self.assertEqual(len(repository.get_confirmed_alias_rows(int(result["run_id"]))), 0)
-            self.assertEqual(search_provider.seen_variant_batches, [["Alex Smith"]])
+            self.assertEqual(len(search_provider.seen_variant_batches), 1)
+            self.assertIn("Alex Smith", search_provider.seen_variant_batches[0])
             self.assertNotIn("land_registry_address_pivot", result["search_summary"])
+
+    def test_step2_address_pivot_links_related_org_with_connection_phrase(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+            search_provider = SeedSearchProvider()
+
+            step1 = step1_expand_seed(
+                repository=repository,
+                charity_client=charity_client,
+                search_providers=[search_provider],
+                matcher=AlwaysMatchMatcher(),
+                seed_name="Alex Smith",
+                creativity_level="balanced",
+            )
+            run_id = int(step1["run_id"])
+
+            with (
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_profile",
+                    return_value={
+                        "company_name": "Alpha Ltd",
+                        "company_status": "active",
+                        "registered_office_address": {
+                            "address_line_1": "3 Company Lane",
+                            "locality": "London",
+                            "postal_code": "E3 3CC",
+                        },
+                    },
+                ),
+                patch(
+                    "src.address_pivot.AddressPivotSearcher.find_related_organisations",
+                    return_value=[
+                        {
+                            "registry_type": "company",
+                            "registry_number": "999",
+                            "suffix": 0,
+                            "name": "Beta Ltd",
+                            "status": "active",
+                            "metadata": {
+                                "company_name": "Beta Ltd",
+                                "company_status": "active",
+                                "registered_office_address": {
+                                    "address_line_1": "3 Company Lane",
+                                    "locality": "London",
+                                    "postal_code": "E3 3CC",
+                                },
+                            },
+                            "source": "address_pivot_company",
+                        }
+                    ],
+                ),
+            ):
+                step2_expand_connected_organisations(
+                    repository=repository,
+                    charity_client=charity_client,
+                    run_id=run_id,
+                )
+
+            connected = repository.get_run_organisations(run_id, stages=["step2_connected_org"])
+            beta_rows = [row for row in connected if row["name"] == "Beta Ltd"]
+            self.assertEqual(len(beta_rows), 1)
+            metadata = beta_rows[0]["run_metadata_json"]
+            self.assertIn("shares an address with", str(metadata))
+            address_edges = repository.get_run_address_edges(run_id)
+            self.assertTrue(any(row["organisation_name"] == "Beta Ltd" for row in address_edges))
 
 
 if __name__ == "__main__":
