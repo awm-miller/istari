@@ -72,7 +72,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
             "https://api.company-information.service.gov.uk",
         ).rstrip("/"),
         gemini_api_key=os.getenv("GEMINI_API_KEY"),
-        gemini_resolution_model=os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-3-flash-preview"),
+        gemini_resolution_model=os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-2.5-flash"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_search_model=os.getenv("OPENAI_SEARCH_MODEL", "gpt-4.1-mini"),
         openai_resolution_model=os.getenv("OPENAI_RESOLUTION_MODEL", "gpt-4.1-mini"),
@@ -83,7 +83,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         serper_base_url=os.getenv("SERPER_BASE_URL", "https://google.serper.dev").rstrip("/"),
         user_agent=os.getenv("USER_AGENT", "project-istari/0.1"),
         pdf_enrichment_enabled=os.getenv("PDF_ENRICHMENT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"},
-        pdf_enrichment_model=os.getenv("PDF_ENRICHMENT_MODEL", os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-3-flash-preview")),
+        pdf_enrichment_model=os.getenv("PDF_ENRICHMENT_MODEL", os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-2.5-flash")),
         pdf_enrichment_max_documents=int(os.getenv("PDF_ENRICHMENT_MAX_DOCUMENTS", "3")),
         pdf_enrichment_max_chunks=int(os.getenv("PDF_ENRICHMENT_MAX_CHUNKS", "4")),
     )

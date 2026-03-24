@@ -380,9 +380,9 @@ class CharityCommissionSiteDorkProvider(SearchProvider):
             for result in results:
                 url = result.get("href") or result.get("url") or ""
                 title = result.get("title", "")
-                cn = extract_charity_number_from_url(url)
+                cn = _extract_charity_number_from_title(title)
                 if not cn:
-                    cn = _extract_charity_number_from_title(title)
+                    cn = extract_charity_number_from_url(url)
                 if cn and cn not in charity_numbers:
                     org_name = title.split(" - ")[0].strip() if " - " in title else title
                     charity_numbers[cn] = org_name
@@ -406,7 +406,7 @@ class CharityCommissionSiteDorkProvider(SearchProvider):
                 trustees = []
 
             trustee_names = [
-                t.get("TrusteeName") or t.get("trustee_name") or t.get("name") or ""
+                _clean_trustee_name(t.get("TrusteeName") or t.get("trustee_name") or t.get("name") or "")
                 for t in trustees
             ]
             trustee_names = [n for n in trustee_names if n]
@@ -517,6 +517,13 @@ class CharityCommissionSiteDorkProvider(SearchProvider):
         cache_file.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
         self.metrics["live"] += 1
         return rows
+
+
+_GENDER_SUFFIXES = re.compile(r"\s+(Male|Female)\s*$", re.IGNORECASE)
+
+
+def _clean_trustee_name(name: str) -> str:
+    return _GENDER_SUFFIXES.sub("", name).strip()
 
 
 def _extract_charity_number_from_title(title: str) -> str | None:

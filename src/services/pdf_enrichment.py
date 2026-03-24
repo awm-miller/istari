@@ -40,6 +40,37 @@ def _normalize_for_match(value: str) -> str:
     return normalize_name(_clean_text(value))
 
 
+def _significant_tokens(name: str, *, min_len: int = 3) -> set[str]:
+    """Extract meaningful tokens from an org name, dropping short/common words."""
+    _STOP = {"ltd", "limited", "plc", "llp", "cic", "uk", "the", "of", "and", "for", "in", "a"}
+    return {
+        t for t in normalize_name(name).split()
+        if len(t) >= min_len and t not in _STOP
+    }
+
+
+def _text_mentions_org(text: str, org_name: str, *, threshold: float = 0.6) -> bool:
+    """Check whether enough significant org-name tokens appear in the text."""
+    tokens = _significant_tokens(org_name)
+    if not tokens:
+        return True
+    text_lower = text.lower()
+    hits = sum(1 for t in tokens if t in text_lower)
+    return hits / len(tokens) >= threshold
+
+
+def _result_title_matches_org(title: str, org_name: str) -> bool:
+    """Check the search result title is plausibly about this specific org."""
+    tokens = _significant_tokens(org_name)
+    if not tokens:
+        return True
+    title_lower = title.lower()
+    hits = sum(1 for t in tokens if t in title_lower)
+    if len(tokens) <= 2:
+        return hits == len(tokens)
+    return hits / len(tokens) >= 0.5
+
+
 def _json_cache_path(base_dir: Path, cache_key: str, suffix: str) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir / f"{cache_key}{suffix}"
@@ -291,7 +322,18 @@ class PdfEnrichmentService:
             "organisation_mentions_seen": 0,
             "warnings": [],
         }
-        for organisation in organisations:
+        seen_org_ids: set[int] = set()
+        deduped: list[Any] = []
+        for org in organisations:
+            oid = int(org["id"])
+            if oid not in seen_org_ids:
+                seen_org_ids.add(oid)
+                deduped.append(org)
+        organisations = deduped
+        self._run_seen_urls: set[str] = set()
+        log.info("PDF enrichment: starting for %d unique organisations (deduped from %d rows)", len(organisations), len(seen_org_ids))
+        for org_index, organisation in enumerate(organisations, start=1):
+            log.info("PDF enrichment: org %d/%d: %s", org_index, len(organisations), _clean_text(organisation["name"]))
             summary["processed_organisation_count"] += 1
             try:
                 org_summary = self._enrich_organisation(run_id=run_id, organisation=organisation)
@@ -309,7 +351,10 @@ class PdfEnrichmentService:
     def _enrich_organisation(self, *, run_id: int, organisation: Any) -> dict[str, Any]:
         org_name = _clean_text(organisation["name"])
         org_id = int(organisation["id"])
+        log.info("PDF enrichment: searching for documents for %s", org_name)
         documents = self.find_documents_for_organisation(org_name)[: self.settings.pdf_enrichment_max_documents]
+        documents = [d for d in documents if d.document_url not in self._run_seen_urls]
+        log.info("PDF enrichment: found %d new documents for %s", len(documents), org_name)
         summary = {
             "document_count": len(documents),
             "entity_count": 0,
@@ -318,17 +363,25 @@ class PdfEnrichmentService:
             "organisation_mentions_seen": 0,
             "warnings": [],
         }
-        for document in documents:
+        for doc_index, document in enumerate(documents, start=1):
+            log.info("PDF enrichment: [%s] processing doc %d/%d: %s", org_name, doc_index, len(documents), document.document_url[:120])
+            self._run_seen_urls.add(document.document_url)
             try:
                 hydrated = self._prepare_document(document)
+                log.info("PDF enrichment: [%s] doc %d prepared, %d chars markdown", org_name, doc_index, len(hydrated.markdown_text))
+                if not _text_mentions_org(hydrated.markdown_text, org_name):
+                    log.info("PDF enrichment: [%s] doc %d skipped -- org name not found in markdown", org_name, doc_index)
+                    continue
                 entities = self.extract_entities_from_document(
                     organisation_name=org_name,
                     document=hydrated,
                 )
             except RuntimeError as exc:
+                log.warning("PDF enrichment: [%s] doc %d failed: %s", org_name, doc_index, exc)
                 summary["warnings"].append(f"{org_name}: {exc}")
                 continue
 
+            log.info("PDF enrichment: [%s] doc %d extracted %d entities", org_name, doc_index, len(entities))
             for index, entity in enumerate(entities, start=1):
                 evidence_id = self._store_entity_evidence(
                     run_id=run_id,
@@ -381,14 +434,20 @@ class PdfEnrichmentService:
             if not isinstance(item, dict):
                 continue
             url = _clean_text(item.get("href") or item.get("url") or "")
+            title = _clean_text(item.get("title") or "")
+            snippet = _clean_text(item.get("body") or item.get("snippet") or "")
             if not url or url in seen_urls or ".pdf" not in url.lower():
+                continue
+            combined = f"{title} {snippet}"
+            if not _result_title_matches_org(combined, organisation_name):
+                log.info("PDF search: skipping '%s' -- title/snippet doesn't match '%s'", title[:80], organisation_name)
                 continue
             seen_urls.add(url)
             documents.append(
                 PdfSourceDocument(
                     organisation_name=organisation_name,
                     document_url=url,
-                    title=_clean_text(item.get("title") or organisation_name),
+                    title=title or organisation_name,
                     source_provider="pdf_web_search",
                 )
             )
@@ -412,9 +471,10 @@ class PdfEnrichmentService:
         pdf_path = _json_cache_path(self.pdf_dir, cache_key, ".pdf")
         if pdf_path.exists():
             return pdf_path
+        log.info("PDF download: %s", url[:120])
         req = request.Request(url, headers={"User-Agent": self.settings.user_agent}, method="GET")
         try:
-            with request.urlopen(req) as response:
+            with request.urlopen(req, timeout=30) as response:
                 pdf_path.write_bytes(response.read())
         except error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
@@ -434,6 +494,7 @@ class PdfEnrichmentService:
         except ImportError as exc:
             raise RuntimeError("opendataloader-pdf is not installed") from exc
 
+        log.info("PDF->Markdown: converting %s", pdf_path.name)
         output_dir = self.markdown_dir / pdf_path.stem
         output_dir.mkdir(parents=True, exist_ok=True)
         opendataloader_pdf.convert(
