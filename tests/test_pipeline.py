@@ -1,0 +1,298 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from src.charity_commission.search import CharityCommissionSearchProvider
+from src.config import Settings
+from src.models import EvidenceItem, NameVariant, ResolutionDecision
+from src.pipeline import (
+    run_name_pipeline,
+    step1_expand_seed,
+    step2_expand_connected_organisations,
+    step3_expand_connected_people,
+)
+from src.storage.repository import Repository
+
+
+def build_test_settings(root: Path) -> Settings:
+    return Settings(
+        project_root=root,
+        database_path=root / "test.sqlite",
+        cache_dir=root / "cache",
+        charity_api_key="test-cc",
+        charity_api_base_url="https://example.test/cc",
+        charity_api_key_header="X-Test-Key",
+        companies_house_api_key="test-ch",
+        companies_house_base_url="https://example.test/ch",
+        gemini_api_key=None,
+        gemini_resolution_model="gemini-test",
+        openai_api_key=None,
+        openai_search_model="gpt-test",
+        openai_resolution_model="gpt-test",
+        openai_base_url="https://example.test/openai",
+        openai_web_search_context="medium",
+        resolution_provider="gemini",
+        serper_api_key=None,
+        serper_base_url="https://example.test/serper",
+        user_agent="project-istari-test/1.0",
+    )
+
+
+class FakeCharityClient:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def search_charities_by_name(self, charity_name: str) -> list[dict[str, object]]:
+        if charity_name != "Alex Smith":
+            return []
+        return [
+            {
+                "organisation_number": 1001,
+                "reg_charity_number": 123456,
+                "group_subsid_suffix": 0,
+                "charity_name": "Alex Smith Foundation",
+                "reg_status": "R",
+            }
+        ]
+
+    def get_all_charity_details(self, charity_number: int, suffix: int = 0) -> dict[str, object]:
+        if charity_number == 123456:
+            return {
+                "organisation_number": 1001,
+                "charity_name": "Alex Smith Foundation",
+                "reg_status": "R",
+            }
+        if charity_number == 654321:
+            return {
+                "organisation_number": None,
+                "charity_name": "Linked Relief Trust",
+                "reg_status": "R",
+            }
+        raise RuntimeError(f"unexpected charity lookup: {charity_number}/{suffix}")
+
+    def get_charity_trustee_information(
+        self,
+        charity_number: int,
+        suffix: int = 0,
+    ) -> list[dict[str, object]]:
+        if charity_number == 123456:
+            return [{"TrusteeName": "Jane Trustee", "Role": "Trustee"}]
+        if charity_number == 654321:
+            return [{"TrusteeName": "John Linked", "Role": "Chair"}]
+        return []
+
+    def get_charity_trustee_names(self, charity_number: int, suffix: int = 0) -> list[str]:
+        if charity_number == 123456:
+            return ["Mary Trustee"]
+        if charity_number == 654321:
+            return ["Peter Linked"]
+        return []
+
+    def get_charity_linked_charities(self, charity_number: int, suffix: int = 0) -> list[dict[str, object]]:
+        if charity_number != 123456:
+            return []
+        return [
+            {
+                "linked_charity_number": 654321,
+                "linked_charity_suffix": 0,
+                "linked_charity_name": "Linked Relief Trust",
+            }
+        ]
+
+    def get_charity_linked_charity(self, charity_number: int, suffix: int = 0) -> dict[str, object]:
+        return {}
+
+
+class SeedSearchProvider:
+    def __init__(self) -> None:
+        self.seen_variant_batches: list[list[str]] = []
+
+    def search(self, variants: list[object]) -> list[EvidenceItem]:
+        names = [variant.name for variant in variants]
+        self.seen_variant_batches.append(names)
+        if "Alex Smith" not in names:
+            return []
+        return [
+            EvidenceItem(
+                source="companies_house_officer_appointments",
+                source_key="Alex Smith:alpha-company",
+                title="Alpha Ltd",
+                url="https://find-and-update.company-information.service.gov.uk/company/001",
+                snippet="Alex Smith linked to Alpha Ltd via Companies House as director",
+                raw_payload={
+                    "variant": "Alex Smith",
+                    "officer_search_item": {"title": "Alex Smith"},
+                    "appointment": {
+                        "officer_role": "director",
+                        "appointed_to": {
+                            "company_name": "Alpha Ltd",
+                            "company_number": "001",
+                        },
+                    },
+                },
+            ),
+            EvidenceItem(
+                source="charity_commission_search",
+                source_key="Alex Smith:123456:0",
+                title="Alex Smith Foundation",
+                url="https://example.test/charity/123456",
+                snippet="Charity Commission name search match for Alex Smith",
+                raw_payload={
+                    "variant": "Alex Smith",
+                    "candidate_name": "Alex Smith",
+                    "organisation_name": "Alex Smith Foundation",
+                    "registry_type": "charity",
+                    "registry_number": "123456",
+                    "suffix": 0,
+                },
+            ),
+        ]
+
+
+class AlwaysMatchMatcher:
+    def resolve(self, seed_name: str, candidate: object) -> ResolutionDecision:
+        return ResolutionDecision(
+            status="match",
+            confidence=0.99,
+            canonical_name=str(candidate.candidate_name),
+            explanation="Test matcher accepts the candidate.",
+            rule_score=float(candidate.score),
+        )
+
+
+class PipelineTests(unittest.TestCase):
+    def _repository(self, root: Path) -> Repository:
+        repository = Repository(
+            database_path=root / "test.sqlite",
+            schema_path=Path(__file__).resolve().parents[1] / "src" / "storage" / "schema.sql",
+        )
+        repository.init_db()
+        return repository
+
+    def test_charity_commission_search_provider_uses_registry_number_in_source_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = build_test_settings(Path(temp_dir))
+            provider = CharityCommissionSearchProvider(settings)
+            provider.client = FakeCharityClient(settings)
+
+            rows = provider.search([NameVariant(name="Alex Smith", strategy="seed_input", creativity_level="balanced")])
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].source, "charity_commission_search")
+            self.assertEqual(rows[0].source_key, "Alex Smith:123456:0")
+
+    def test_step_flow_expands_seed_orgs_then_connected_orgs_then_people(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+            search_provider = SeedSearchProvider()
+
+            step1 = step1_expand_seed(
+                repository=repository,
+                charity_client=charity_client,
+                search_providers=[search_provider],
+                matcher=AlwaysMatchMatcher(),
+                seed_name="Alex Smith",
+                creativity_level="balanced",
+            )
+            run_id = int(step1["run_id"])
+
+            self.assertEqual(step1["matched_organisation_count"], 2)
+            self.assertEqual(len(repository.get_run_organisations(run_id, stages=["step1_seed_match"])), 2)
+
+            step2 = step2_expand_connected_organisations(
+                repository=repository,
+                charity_client=charity_client,
+                run_id=run_id,
+            )
+
+            self.assertEqual(step2["connected_organisation_count"], 2)
+            scoped_connected = repository.get_run_organisations(run_id, stages=["step2_connected_org"])
+            self.assertEqual(len(scoped_connected), 2)
+
+            with (
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_profile",
+                    side_effect=lambda *args, **kwargs: {
+                        "company_name": "Alpha Ltd" if str(args[-1]) == "001" else "Alex Smith Foundation Ltd",
+                        "company_status": "active",
+                    },
+                ),
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_officers",
+                    side_effect=lambda *args, **kwargs: {
+                        "items": [
+                            {
+                                "name": "Alice Director" if str(args[-1]) == "001" else "Bob Director",
+                                "officer_role": "director",
+                                "appointed_on": "2020-01-01",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                step3 = step3_expand_connected_people(
+                    repository=repository,
+                    settings=settings,
+                    charity_client=charity_client,
+                    run_id=run_id,
+                    limit=10,
+                )
+
+            self.assertGreaterEqual(step3["inserted_roles"], 6)
+            ranked_names = [row["canonical_name"] for row in step3["ranking"]]
+            self.assertIn("Jane Trustee", ranked_names)
+            self.assertIn("Alice Director", ranked_names)
+
+    def test_run_name_pipeline_is_registry_only_and_alias_free(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+            search_provider = SeedSearchProvider()
+
+            with (
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_profile",
+                    return_value={"company_name": "Alpha Ltd", "company_status": "active"},
+                ),
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_officers",
+                    return_value={
+                        "items": [
+                            {
+                                "name": "Alice Director",
+                                "officer_role": "director",
+                                "appointed_on": "2020-01-01",
+                            }
+                        ]
+                    },
+                ),
+            ):
+                result = run_name_pipeline(
+                    repository=repository,
+                    settings=settings,
+                    charity_client=charity_client,
+                    search_providers=[search_provider],
+                    matcher=AlwaysMatchMatcher(),
+                    seed_name="Alex Smith",
+                    creativity_level="balanced",
+                    limit=10,
+                )
+
+            self.assertEqual(result["mode"], "registry_only_mvp")
+            self.assertEqual(result["alias_rounds"], 0)
+            self.assertEqual(result["alias_variant_count"], 0)
+            self.assertEqual(len(repository.get_confirmed_alias_rows(int(result["run_id"]))), 0)
+            self.assertEqual(search_provider.seen_variant_batches, [["Alex Smith"]])
+            self.assertNotIn("land_registry_address_pivot", result["search_summary"])
+
+
+if __name__ == "__main__":
+    unittest.main()

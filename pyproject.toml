@@ -1,0 +1,13 @@
+[project]
+name = "project-istari"
+version = "0.1.0"
+description = "CLI pipeline for linking people to England and Wales charities."
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "networkx>=3.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
