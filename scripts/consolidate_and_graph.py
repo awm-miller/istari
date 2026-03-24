@@ -87,6 +87,16 @@ def are_aliases(name_a: str, name_b: str) -> bool:
     return given_a.issubset(given_b) or given_b.issubset(given_a)
 
 
+def names_match(left: dict, right: dict) -> bool:
+    left_names = [str(left["label"]), *(str(name) for name in left.get("aliases") or [])]
+    right_names = [str(right["label"]), *(str(name) for name in right.get("aliases") or [])]
+    for left_name in left_names:
+        for right_name in right_names:
+            if are_aliases(left_name, right_name):
+                return True
+    return False
+
+
 def _load_screener() -> OFACScreener:
     screener = OFACScreener()
     sdn_path = Path(__file__).resolve().parents[1] / "data" / "sdn.csv"
@@ -428,6 +438,7 @@ def consolidate_run(run_id: int) -> dict:
             "lane": 2,
             "registry_type": info["registry_type"],
             "registry_number": info["registry_number"],
+            "seed_names": [seed_name],
             "people_count": len(people_list),
             "tooltip_lines": tooltip,
         })
@@ -569,17 +580,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             out.append(item)
         return out
 
-    def _merged_person_match(left: dict, right: dict) -> bool:
-        left_names = [left["label"], *(left.get("aliases") or [])]
-        right_names = [right["label"], *(right.get("aliases") or [])]
-        for left_name in left_names:
-            for right_name in right_names:
-                if are_aliases(left_name, right_name):
-                    return True
-        return False
-
     # Build per-run maps and gather lane-3 people for cross-run merging.
     run_contexts: list[dict] = []
+    identity_entries: list[dict] = []
     person_entries: list[dict] = []
     address_nodes: dict[str, dict] = {}
     org_address_edges: list[dict] = []
@@ -596,6 +599,13 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                         "id": address_id,
                         "lane": 3,
                     }
+            if node["kind"] == "seed_alias":
+                identity_entries.append({
+                    "run_id": int(run["run_id"]),
+                    "orig_id": str(node["id"]),
+                    "label": str(node["label"]),
+                    "aliases": list(node.get("aliases") or []),
+                })
             if node["kind"] != "person":
                 continue
             person_entries.append({
@@ -619,7 +629,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     person_uf = UnionFind()
     for i, left in enumerate(person_entries):
         for j in range(i + 1, len(person_entries)):
-            if _merged_person_match(left, person_entries[j]):
+            if names_match(left, person_entries[j]):
                 person_uf.union(i, j)
 
     merged_person_groups: dict[int, list[dict]] = {}
@@ -648,6 +658,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             merged_person_seeds[merged_id].add(str(entry["seed_name"]))
         merged_person_nodes[merged_id] = {
             "id": merged_id,
+            "individual_key": merged_id,
             "label": label,
             "kind": "person",
             "lane": 4,
@@ -675,6 +686,21 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             pruned_ids.add(mid)
     for mid in pruned_ids:
         del merged_person_nodes[mid]
+
+    identity_uf = UnionFind()
+    for i, left in enumerate(identity_entries):
+        for j in range(i + 1, len(identity_entries)):
+            if names_match(left, identity_entries[j]):
+                identity_uf.union(i, j)
+
+    identity_cluster_keys: dict[tuple[int, str], str] = {}
+    identity_groups: dict[int, list[dict]] = {}
+    for i, entry in enumerate(identity_entries):
+        identity_groups.setdefault(identity_uf.find(i), []).append(entry)
+    for group_index, entries in enumerate(identity_groups.values(), start=1):
+        cluster_id = f"identity_cluster:{group_index}"
+        for entry in entries:
+            identity_cluster_keys[(int(entry["run_id"]), str(entry["orig_id"]))] = cluster_id
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -707,6 +733,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             identity_node = {
                 **node,
                 "id": identity_id,
+                "individual_key": identity_cluster_keys.get((int(run["run_id"]), str(node["id"])), identity_id),
                 "lane": 1,
                 "seed_index": seed_index,
                 "seed_name": run["seed_name"],
@@ -741,6 +768,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "id": org_id,
                     "lane": 2,
                     "shared": False,
+                    "seed_names": [],
                 }
 
         for edge in run["edges"]:
@@ -837,8 +865,23 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
 
     for org_id, node in org_nodes.items():
         node["shared"] = len(org_seed_names.get(org_id, set())) > 1
-        identities = org_identities.get(org_id, [])
-        people = org_people.get(org_id, [])
+        node["seed_names"] = sorted(org_seed_names.get(org_id, set()))
+        identity_seen: set[tuple[str, str, str]] = set()
+        identities = []
+        for row in org_identities.get(org_id, []):
+            key = (str(row["seed"]), str(row["identity"]), str(row["phrase"]))
+            if key in identity_seen:
+                continue
+            identity_seen.add(key)
+            identities.append(row)
+        people_seen: set[tuple[str, str]] = set()
+        people = []
+        for row in org_people.get(org_id, []):
+            key = (str(row["person"]), str(row["phrase"]))
+            if key in people_seen:
+                continue
+            people_seen.add(key)
+            people.append(row)
         tooltip = [f"<strong>{node['label']}</strong>"]
         if node.get("registry_type") or node.get("registry_number"):
             tooltip.append(f"{node.get('registry_type', '')} {node.get('registry_number', '')}".strip())
@@ -1056,6 +1099,10 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
     <input id="org-multi-person-only" type="checkbox" />
     <span>only show organisations connected to 2+ individuals</span>
   </label>
+  <label class="toggle">
+    <input id="overlaps-only" type="checkbox" />
+    <span>show overlaps only</span>
+  </label>
   <div class="search-box">
     <input id="search" type="search" placeholder="Filter by name..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
@@ -1086,6 +1133,7 @@ const clearBtn = document.getElementById("clear-search");
 const laneLabelsDiv = document.getElementById("lane-labels");
 const stage3MultiOrgToggle = document.getElementById("stage3-multi-org-only");
 const orgMultiPersonToggle = document.getElementById("org-multi-person-only");
+const overlapsOnlyToggle = document.getElementById("overlaps-only");
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -1146,7 +1194,7 @@ allEdges.filter(e => e.kind === "role").forEach(e => {{
   if (!orgNode || !personNode) return;
   if (personNode.lane !== 1 && personNode.lane !== 4) return;
   if (!orgPersonIds.has(orgNode.id)) orgPersonIds.set(orgNode.id, new Set());
-  orgPersonIds.get(orgNode.id).add(personNode.id);
+  orgPersonIds.get(orgNode.id).add(personNode.individual_key || personNode.id);
 }});
 
 function activeIdentityIds() {{
@@ -1155,31 +1203,40 @@ function activeIdentityIds() {{
 }}
 
 function candidateOrgIdsForSelectedIdentities() {{
-  const activeIds = activeIdentityIds();
-  const orgIdentityIds = new Map();
-  allEdges.forEach(e => {{
-    if (e.kind !== "role") return;
-    const sourceNode = nodeById.get(e.source);
-    const targetNode = nodeById.get(e.target);
-    const identityNode = sourceNode?.lane === 1 ? sourceNode : targetNode?.lane === 1 ? targetNode : null;
-    const orgNode = sourceNode?.kind === "organisation" ? sourceNode : targetNode?.kind === "organisation" ? targetNode : null;
-    if (!identityNode || !orgNode) return;
-    if (!activeIds.has(identityNode.id)) return;
-    if (!orgIdentityIds.has(orgNode.id)) orgIdentityIds.set(orgNode.id, new Set());
-    orgIdentityIds.get(orgNode.id).add(identityNode.id);
-  }});
+  if (!multiSeed) return new Set(allNodes.filter(n => n.kind === "organisation").map(n => n.id));
+  const activeSeedNames = new Set(
+    identityNodes
+      .filter(n => selectedIdentities.has(n.id))
+      .map(n => n.seed_name)
+  );
   return new Set(
-    [...orgIdentityIds.entries()]
-      .map(([orgId]) => orgId)
+    allNodes
+      .filter(n => n.kind === "organisation")
+      .filter(n => (n.seed_names || []).some(seedName => activeSeedNames.has(seedName)))
+      .map(n => n.id)
+  );
+}}
+
+function filteredOrgIdsForCurrentFilters() {{
+  const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
+  return new Set(
+    [...candidateOrgIds].filter(orgId => {{
+      if (overlapsOnlyToggle?.checked) {{
+        const node = nodeById.get(orgId);
+        if ((node?.seed_names || []).length < 2) return false;
+      }}
+      if (orgMultiPersonToggle?.checked && (orgPersonIds.get(orgId)?.size || 0) < 2) return false;
+      return true;
+    }})
   );
 }}
 
 function visiblePeopleList() {{
-  const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
+  const visibleOrgIds = filteredOrgIdsForCurrentFilters();
   return peopleNodes.filter(n => {{
     if (stage3MultiOrgToggle?.checked && (n.org_count || 0) < 2) return false;
     const myOrgs = personOrgIds.get(n.id) || new Set();
-    return [...myOrgs].some(orgId => candidateOrgIds.has(orgId));
+    return [...myOrgs].some(orgId => visibleOrgIds.has(orgId));
   }});
 }}
 
@@ -1619,13 +1676,7 @@ function applyFilter() {{
   allNodes.forEach(n => {{ n._visible = false; }});
 
   const activeIdentities = activeIdentityIds();
-  const candidateOrgIds = candidateOrgIdsForSelectedIdentities();
-  const visibleOrgs = new Set(
-    [...candidateOrgIds].filter(orgId => {{
-      if (!orgMultiPersonToggle?.checked) return true;
-      return (orgPersonIds.get(orgId)?.size || 0) >= 2;
-    }})
-  );
+  const visibleOrgs = filteredOrgIdsForCurrentFilters();
   const visiblePeople = new Set();
 
   allNodes.filter(n => n.lane === 4).forEach(n => {{
@@ -1714,6 +1765,10 @@ stage3MultiOrgToggle?.addEventListener("change", () => {{
   applyFilter();
 }});
 orgMultiPersonToggle?.addEventListener("change", () => {{
+  buildPeopleDropdown();
+  applyFilter();
+}});
+overlapsOnlyToggle?.addEventListener("change", () => {{
   buildPeopleDropdown();
   applyFilter();
 }});

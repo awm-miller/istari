@@ -125,7 +125,7 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                     COUNT(*) AS link_count
                 FROM resolution_decisions
                 WHERE resolution_decisions.run_id = ?
-                  AND resolution_decisions.status IN ('match', 'maybe_match')
+                  AND resolution_decisions.status = 'match'
                 GROUP BY resolution_decisions.canonical_name
                 ORDER BY link_count DESC, canonical_name ASC
                 """,
@@ -151,7 +151,7 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                    AND organisations.registry_number = candidate_matches.registry_number
                    AND organisations.suffix = candidate_matches.suffix
                 WHERE resolution_decisions.run_id = ?
-                  AND resolution_decisions.status IN ('match', 'maybe_match')
+                  AND resolution_decisions.status = 'match'
                 """,
                 (run_id,),
             ).fetchall()

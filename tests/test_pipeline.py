@@ -169,6 +169,17 @@ class AlwaysMatchMatcher:
         )
 
 
+class AlwaysMaybeMatcher:
+    def resolve(self, seed_name: str, candidate: object) -> ResolutionDecision:
+        return ResolutionDecision(
+            status="maybe_match",
+            confidence=0.6,
+            canonical_name=str(candidate.candidate_name),
+            explanation="Test matcher leaves the candidate unverified.",
+            rule_score=float(candidate.score),
+        )
+
+
 class PipelineTests(unittest.TestCase):
     def _repository(self, root: Path) -> Repository:
         repository = Repository(
@@ -402,6 +413,27 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("shares an address with", str(metadata))
             address_edges = repository.get_run_address_edges(run_id)
             self.assertTrue(any(row["organisation_name"] == "Beta Ltd" for row in address_edges))
+
+    def test_step1_does_not_scope_maybe_matches_as_seed_orgs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+            search_provider = SeedSearchProvider()
+
+            step1 = step1_expand_seed(
+                repository=repository,
+                charity_client=charity_client,
+                search_providers=[search_provider],
+                matcher=AlwaysMaybeMatcher(),
+                seed_name="Alex Smith",
+                creativity_level="balanced",
+            )
+
+            run_id = int(step1["run_id"])
+            self.assertEqual(step1["matched_organisation_count"], 0)
+            self.assertEqual(len(repository.get_run_organisations(run_id, stages=["step1_seed_match"])), 0)
 
 
 if __name__ == "__main__":

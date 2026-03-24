@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.models import ResolutionDecision
+from src.resolution.features import person_name_similarity
 from src.search.queries import is_low_information_person_name, normalize_name
 
 
@@ -82,6 +83,42 @@ def apply_low_information_name_guard(
         explanation=(
             "Rejected because the candidate name is too low-information "
             "(for example a repeated generic name) to treat as a reliable identity."
+        ),
+        rule_score=decision.rule_score,
+        alias_status="none",
+        llm_payload=dict(decision.llm_payload) if decision.llm_payload else {},
+    )
+
+
+def apply_weak_name_match_guard(
+    *,
+    seed_name: str,
+    candidate: Any,
+    decision: ResolutionDecision,
+    minimum_similarity: float = 0.55,
+) -> ResolutionDecision:
+    candidate_name = str(candidate.candidate_name or decision.canonical_name or "").strip()
+    canonical_name = str(decision.canonical_name or candidate_name).strip()
+    if not candidate_name:
+        return decision
+    if normalize_name(candidate_name) == normalize_name(seed_name):
+        return decision
+    if canonical_name and normalize_name(canonical_name) == normalize_name(seed_name):
+        return decision
+
+    similarity = float(candidate.feature_payload.get("name_similarity") or 0.0)
+    if similarity <= 0.0:
+        similarity = person_name_similarity(seed_name, candidate_name)
+    if similarity >= minimum_similarity:
+        return decision
+
+    return ResolutionDecision(
+        status="no_match",
+        confidence=min(float(decision.confidence or 0.0), 0.2),
+        canonical_name=candidate_name or canonical_name,
+        explanation=(
+            "Rejected because the candidate name is too dissimilar to the seed name "
+            "to treat shared organisation metadata as identity evidence."
         ),
         rule_score=decision.rule_score,
         alias_status="none",

@@ -617,7 +617,7 @@ class Repository:
                        AND organisations.registry_number = candidate_matches.registry_number
                        AND organisations.suffix = candidate_matches.suffix
                     WHERE resolution_decisions.run_id = ?
-                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND resolution_decisions.status = 'match'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM run_organisations
@@ -669,7 +669,7 @@ class Repository:
                        AND organisations.registry_number = candidate_matches.registry_number
                        AND organisations.suffix = candidate_matches.suffix
                     WHERE resolution_decisions.run_id = ?
-                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND resolution_decisions.status = 'match'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM run_organisations
@@ -721,7 +721,7 @@ class Repository:
                        AND organisations.registry_number = candidate_matches.registry_number
                        AND organisations.suffix = candidate_matches.suffix
                     WHERE resolution_decisions.run_id = ?
-                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND resolution_decisions.status = 'match'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM run_organisations
@@ -763,7 +763,7 @@ class Repository:
                        AND organisations.registry_number = candidate_matches.registry_number
                        AND organisations.suffix = candidate_matches.suffix
                     WHERE resolution_decisions.run_id = ?
-                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND resolution_decisions.status = 'match'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM run_organisations
@@ -814,7 +814,7 @@ class Repository:
                        AND organisations.registry_number = candidate_matches.registry_number
                        AND organisations.suffix = candidate_matches.suffix
                     WHERE resolution_decisions.run_id = ?
-                      AND resolution_decisions.status IN ('match', 'maybe_match')
+                      AND resolution_decisions.status = 'match'
                       AND NOT EXISTS (
                           SELECT 1
                           FROM run_organisations
@@ -863,7 +863,7 @@ class Repository:
                    AND organisations.registry_number = candidate_matches.registry_number
                    AND organisations.suffix = candidate_matches.suffix
                 WHERE resolution_decisions.run_id = ?
-                  AND resolution_decisions.status IN ('match', 'maybe_match')
+                  AND resolution_decisions.status = 'match'
                 ORDER BY organisations.name ASC
                 """,
                 (run_id,),
@@ -894,7 +894,7 @@ class Repository:
                    AND organisations.registry_number = candidate_matches.registry_number
                    AND organisations.suffix = candidate_matches.suffix
                 WHERE resolution_decisions.run_id IN ({placeholders})
-                  AND resolution_decisions.status IN ('match', 'maybe_match')
+                  AND resolution_decisions.status = 'match'
             ),
             person_agg AS (
                 SELECT
@@ -990,7 +990,7 @@ class Repository:
                    AND organisations.registry_number = candidate_matches.registry_number
                    AND organisations.suffix = candidate_matches.suffix
                 WHERE resolution_decisions.run_id IN ({placeholders})
-                  AND resolution_decisions.status IN ('match', 'maybe_match')
+                  AND resolution_decisions.status = 'match'
             ),
             org_agg AS (
                 SELECT
