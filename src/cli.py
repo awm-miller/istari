@@ -19,6 +19,7 @@ from src.pipeline import (
     run_seed_batch_pipeline,
     step1_expand_seed,
     step2_expand_connected_organisations,
+    step2b_enrich_from_pdfs,
     step3_expand_connected_people,
     step4_ofac_screening,
 )
@@ -57,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     step3_parser.add_argument("run_id", type=int)
     step3_parser.add_argument("--limit", type=int, default=25)
+
+    pdf_parser = subparsers.add_parser(
+        "pdf-enrich",
+        help="Enrich a run from scoped charity/company PDFs using OpenDataLoader and Gemini.",
+    )
+    pdf_parser.add_argument("run_id", type=int)
 
     step4_parser = subparsers.add_parser(
         "step4-ofac",
@@ -153,7 +160,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
-    if args.command in {"init-db", "step1-seed", "step2-orgs", "step3-people", "run-name", "run-seeds"}:
+    if args.command in {"init-db", "step1-seed", "step2-orgs", "pdf-enrich", "step3-people", "run-name", "run-seeds"}:
         _startup_stop_other_pipeline_processes()
 
     repository = Repository(
@@ -184,6 +191,16 @@ def main() -> None:
     if args.command == "step2-orgs":
         result = step2_expand_connected_organisations(
             repository=repository,
+            charity_client=charity_client,
+            run_id=int(args.run_id),
+        )
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == "pdf-enrich":
+        result = step2b_enrich_from_pdfs(
+            repository=repository,
+            settings=settings,
             charity_client=charity_client,
             run_id=int(args.run_id),
         )

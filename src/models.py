@@ -58,6 +58,31 @@ class ResolutionDecision:
     llm_payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class PdfSourceDocument:
+    organisation_name: str
+    document_url: str
+    title: str
+    source_provider: str
+    local_pdf_path: str = ""
+    markdown_path: str = ""
+    markdown_text: str = ""
+
+
+@dataclass(slots=True)
+class PdfExtractedEntity:
+    name: str
+    entity_type: str
+    role_category: str
+    role_label: str
+    organisation_name: str
+    source_document_url: str
+    source_page_hint: str = ""
+    confidence: float = 0.0
+    registry_hint: str = ""
+    notes: str = ""
+
+
 def dataclass_to_dict(value: Any) -> dict[str, Any]:
     if hasattr(value, "__dataclass_fields__"):
         return asdict(value)

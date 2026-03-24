@@ -26,6 +26,10 @@ class Settings:
     serper_api_key: str | None
     serper_base_url: str
     user_agent: str
+    pdf_enrichment_enabled: bool
+    pdf_enrichment_model: str
+    pdf_enrichment_max_documents: int
+    pdf_enrichment_max_chunks: int
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -78,4 +82,8 @@ def load_settings(project_root: Path | None = None) -> Settings:
         serper_api_key=os.getenv("SERPER_API_KEY"),
         serper_base_url=os.getenv("SERPER_BASE_URL", "https://google.serper.dev").rstrip("/"),
         user_agent=os.getenv("USER_AGENT", "project-istari/0.1"),
+        pdf_enrichment_enabled=os.getenv("PDF_ENRICHMENT_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"},
+        pdf_enrichment_model=os.getenv("PDF_ENRICHMENT_MODEL", os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-3-flash-preview")),
+        pdf_enrichment_max_documents=int(os.getenv("PDF_ENRICHMENT_MAX_DOCUMENTS", "3")),
+        pdf_enrichment_max_chunks=int(os.getenv("PDF_ENRICHMENT_MAX_CHUNKS", "4")),
     )

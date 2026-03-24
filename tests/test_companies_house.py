@@ -36,6 +36,10 @@ class CompaniesHouseTests(unittest.TestCase):
             serper_api_key=None,
             serper_base_url="https://example.test/serper",
             user_agent="project-istari-test/1.0",
+            pdf_enrichment_enabled=True,
+            pdf_enrichment_model="gemini-test",
+            pdf_enrichment_max_documents=3,
+            pdf_enrichment_max_chunks=4,
         )
         client = CompaniesHouseClient(settings)
         seen: list[str] = []

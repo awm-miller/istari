@@ -9,6 +9,7 @@ from src.services.mvp_pipeline import (
     run_registry_only_mvp,
     step1_expand_seed,
     step2_expand_connected_organisations,
+    step2b_enrich_from_pdfs,
     step3_expand_connected_people,
     step4_ofac_screening,
 )
@@ -134,6 +135,7 @@ __all__ = [
     "run_seed_batch_pipeline",
     "step1_expand_seed",
     "step2_expand_connected_organisations",
+    "step2b_enrich_from_pdfs",
     "step3_expand_connected_people",
     "step4_ofac_screening",
 ]

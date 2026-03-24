@@ -24,6 +24,7 @@ from src.services.pipeline_services import (
     ResolutionService,
     VariantService,
 )
+from src.services.pdf_enrichment import enrich_run_from_pdfs
 from src.storage.repository import Repository
 
 log = logging.getLogger("istari.pipeline")
@@ -251,6 +252,23 @@ def step3_expand_connected_people(
     }
 
 
+def step2b_enrich_from_pdfs(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    run_id: int,
+) -> dict[str, Any]:
+    scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    return enrich_run_from_pdfs(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+        organisations=scoped_organisations,
+    )
+
+
 def step4_ofac_screening(
     *,
     settings: Settings,
@@ -314,6 +332,12 @@ def run_registry_only_mvp(
         charity_client=charity_client,
         run_id=run_id,
     )
+    step2b = step2b_enrich_from_pdfs(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+    )
     step3 = step3_expand_connected_people(
         repository=repository,
         settings=settings,
@@ -330,6 +354,7 @@ def run_registry_only_mvp(
         "run_id": run_id,
         "step1": step1,
         "step2": step2,
+        "step2b": step2b,
         "step3": step3,
         "step4": step4,
         "search_summary": step1["search_summary"],
