@@ -898,7 +898,39 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         node["tooltip_lines"] = tooltip
         nodes.append(node)
 
-    for node in address_nodes.values():
+    address_org_ids: dict[str, set[str]] = defaultdict(set)
+    for edge in org_address_edges:
+        address_org_ids[str(edge["target"])].add(str(edge["source"]))
+
+    for address_id, node in address_nodes.items():
+        linked_org_ids = sorted(address_org_ids.get(address_id, set()))
+        seed_names = sorted({
+            seed_name
+            for org_id in linked_org_ids
+            for seed_name in org_seed_names.get(org_id, set())
+        })
+        identity_refs = []
+        identity_seen: set[tuple[str, str]] = set()
+        for org_id in linked_org_ids:
+            for row in org_identities.get(org_id, []):
+                key = (str(row["seed"]), str(row["identity"]))
+                if key in identity_seen:
+                    continue
+                identity_seen.add(key)
+                identity_refs.append({
+                    "seed": str(row["seed"]),
+                    "identity": str(row["identity"]),
+                })
+        node["seed_names"] = seed_names
+        node["appears_under_identities"] = identity_refs
+        tooltip = list(node.get("tooltip_lines") or [f"<strong>{node['label']}</strong>"])
+        if len(seed_names) > 1:
+            tooltip.append(f"Appears under: {', '.join(seed_names)}")
+        if identity_refs:
+            tooltip.append("Appears under identities:")
+            for row in identity_refs[:10]:
+                tooltip.append(f"  {row['seed']}: {row['identity']}")
+        node["tooltip_lines"] = tooltip
         nodes.append(node)
 
     merged_people_consolidated: list[dict] = []
@@ -906,12 +938,29 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         node["org_count"] = len(merged_person_orgs.get(merged_id, set()))
         node["role_count"] = len(merged_person_role_keys.get(merged_id, set()))
         node["score"] = round(float(merged_person_score.get(merged_id, 0.0)), 4)
+        identity_refs = []
+        identity_seen: set[tuple[str, str]] = set()
+        for org_id in sorted(merged_person_orgs.get(merged_id, set())):
+            for row in org_identities.get(org_id, []):
+                key = (str(row["seed"]), str(row["identity"]))
+                if key in identity_seen:
+                    continue
+                identity_seen.add(key)
+                identity_refs.append({
+                    "seed": str(row["seed"]),
+                    "identity": str(row["identity"]),
+                })
+        node["appears_under_identities"] = identity_refs
         tooltip = [f"<strong>{node['label']}</strong>"]
         if len(node.get("aliases") or []) > 1:
             tooltip.append(f"Aliases: {', '.join(node['aliases'])}")
         tooltip.append(f"{node['org_count']} orgs, {node['role_count']} roles, score {node['score']}")
         if len(merged_person_seeds.get(merged_id, set())) > 1:
             tooltip.append(f"Appears under: {', '.join(sorted(merged_person_seeds[merged_id]))}")
+        if identity_refs:
+            tooltip.append("Appears under identities:")
+            for row in identity_refs[:10]:
+                tooltip.append(f"  {row['seed']}: {row['identity']}")
         seen_lines: set[tuple[str, str]] = set()
         for row in merged_person_roles.get(merged_id, []):
             key = (str(row["phrase"]), str(row["org"]))
@@ -1624,6 +1673,13 @@ pills.on("dblclick", (event, d) => {{
     html += `<div class="dim">Aliases: ${{d.aliases.join(", ")}}</div>`;
   }}
   if (d.org_count) html += `<div class="dim">${{d.org_count}} orgs, ${{d.role_count}} roles, score ${{d.score}}</div>`;
+  if (d.appears_under_identities && d.appears_under_identities.length) {{
+    html += `<div class="section"><div class="section-title">Appears under identities</div>`;
+    d.appears_under_identities.forEach(row => {{
+      html += `<div class="conn"><span class="dim">${{row.seed}}:</span> ${{row.identity}}</div>`;
+    }});
+    html += `</div>`;
+  }}
 
   if (directRoles.length) {{
     html += `<div class="section"><div class="section-title">Direct connections</div>`;
