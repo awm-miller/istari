@@ -1418,6 +1418,12 @@ function textWidth(text, fs) {{
 function nodeLabel(d) {{
   return d.label;
 }}
+function nodeMatchesQuery(d, q) {{
+  if (!q) return true;
+  const labelMatch = (d.label || "").toLowerCase().includes(q);
+  const aliasMatch = (d.aliases || []).some(a => (a || "").toLowerCase().includes(q));
+  return labelMatch || aliasMatch;
+}}
 function fontSize(d) {{
   if (d.kind === "seed") return 13;
   if (d.kind === "seed_alias") return 12;
@@ -1740,11 +1746,6 @@ function applyFilter() {{
     if (visible && stage3MultiOrgToggle?.checked) visible = (n.org_count || 0) >= 2;
     const myOrgs = personOrgIds.get(n.id) || new Set();
     if (visible) visible = [...myOrgs].some(orgId => visibleOrgs.has(orgId));
-    if (visible && q) {{
-      const nameMatch = n.label.toLowerCase().includes(q);
-      const aliasMatch = (n.aliases || []).some(a => a.toLowerCase().includes(q));
-      visible = nameMatch || aliasMatch;
-    }}
     n._visible = visible;
     if (visible) visiblePeople.add(n.id);
   }});
@@ -1786,6 +1787,29 @@ function applyFilter() {{
     visibleSeeds.add(seedNode.id);
   }});
   allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = visibleSeeds.has(n.id); }});
+
+  if (q) {{
+    const matchedNodeIds = new Set(
+      allNodes
+        .filter(n => n._visible && nodeMatchesQuery(n, q))
+        .map(n => n.id)
+    );
+    const contextNodeIds = new Set();
+    matchedNodeIds.forEach(nodeId => {{
+      const node = nodeById.get(nodeId);
+      if (!node?._visible) return;
+      contextNodeIds.add(nodeId);
+      (edgesByNodeId.get(nodeId) || []).forEach(e => {{
+        const otherId = e.source === nodeId ? e.target : e.source;
+        const otherNode = nodeById.get(otherId);
+        if (!otherNode?._visible) return;
+        contextNodeIds.add(otherId);
+      }});
+    }});
+    allNodes.forEach(n => {{
+      n._visible = n._visible && contextNodeIds.has(n.id);
+    }});
+  }}
 
   positionNodes();
   updatePositions();
