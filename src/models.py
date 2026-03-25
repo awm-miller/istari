@@ -67,6 +67,7 @@ class PdfSourceDocument:
     local_pdf_path: str = ""
     markdown_path: str = ""
     markdown_text: str = ""
+    filing_description: str = ""
 
 
 @dataclass(slots=True)

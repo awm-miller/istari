@@ -7,6 +7,9 @@ dependencies = [
     "flask>=3.0",
     "networkx>=3.0",
     "opendataloader-pdf>=2.0.2",
+    "PyMuPDF>=1.24",
+    "pytesseract>=0.3",
+    "Pillow>=10.0",
 ]
 
 [build-system]

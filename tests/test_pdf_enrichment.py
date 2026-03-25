@@ -88,120 +88,120 @@ class PdfEnrichmentTests(unittest.TestCase):
         self.assertEqual(rows[1].role_category, "ignore")
 
     def test_enrich_run_adds_roles_and_links_resolved_organisations(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            settings = build_test_settings(root)
-            repository = Repository(
-                settings.database_path,
-                settings.project_root / "src" / "storage" / "schema.sql",
-            )
-            schema_src = Path(__file__).resolve().parents[1] / "src" / "storage" / "schema.sql"
-            target_schema = settings.project_root / "src" / "storage" / "schema.sql"
-            target_schema.parent.mkdir(parents=True, exist_ok=True)
-            target_schema.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
-            repository.init_db()
+        root = Path(tempfile.mkdtemp())
+        settings = build_test_settings(root)
+        repository = Repository(
+            settings.database_path,
+            settings.project_root / "src" / "storage" / "schema.sql",
+        )
+        schema_src = Path(__file__).resolve().parents[1] / "src" / "storage" / "schema.sql"
+        target_schema = settings.project_root / "src" / "storage" / "schema.sql"
+        target_schema.parent.mkdir(parents=True, exist_ok=True)
+        target_schema.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
+        repository.init_db()
 
-            parent_org_id = repository.upsert_organisation(
-                OrganisationRecord(
-                    registry_type="charity",
-                    registry_number="123456",
-                    suffix=0,
-                    organisation_number=1001,
-                    name="Known Org",
-                    status="R",
-                    metadata={},
-                )
+        parent_org_id = repository.upsert_organisation(
+            OrganisationRecord(
+                registry_type="charity",
+                registry_number="123456",
+                suffix=0,
+                organisation_number=1001,
+                name="Known Org",
+                status="R",
+                metadata={},
             )
-            run_id = repository.create_run("Alex Smith", "balanced")
-            repository.link_run_organisation(run_id, parent_org_id, stage="step1_seed_match", source="seed")
+        )
+        run_id = repository.create_run("Alex Smith", "balanced")
+        repository.link_run_organisation(run_id, parent_org_id, stage="step1_seed_match", source="seed")
 
-            service = PdfEnrichmentService(
-                settings=settings,
-                repository=repository,
-                charity_client=FakeCharityClient(settings),
-            )
-            document = PdfSourceDocument(
-                organisation_name="Known Org",
-                document_url="https://example.test/report.pdf",
-                title="Known Org Annual Report",
-                source_provider="pdf_web_search",
-                local_pdf_path=str(root / "report.pdf"),
-                markdown_path=str(root / "report.md"),
-                markdown_text="dummy",
-            )
+        service = PdfEnrichmentService(
+            settings=settings,
+            repository=repository,
+            charity_client=FakeCharityClient(settings),
+        )
+        document = PdfSourceDocument(
+            organisation_name="Known Org",
+            document_url="https://example.test/report.pdf",
+            title="Known Org Annual Report",
+            source_provider="companies_house_filing",
+            local_pdf_path=str(root / "report.pdf"),
+            markdown_path=str(root / "report.md"),
+            markdown_text="Annual report for Known Org with trustees and accounts.",
+            filing_description="accounts (2023-01-01)",
+        )
 
-            with (
-                patch.object(service, "find_documents_for_organisation", return_value=[document]),
-                patch.object(service, "_prepare_document", return_value=document),
-                patch.object(
-                    service,
-                    "extract_entities_from_document",
-                    return_value=[
-                        PdfExtractedEntity(
-                            name="Jane Trustee",
-                            entity_type="person",
-                            role_category="person",
-                            role_label="trustee",
-                            organisation_name="Known Org",
-                            source_document_url=document.document_url,
-                            confidence=0.9,
-                        ),
-                        PdfExtractedEntity(
-                            name="Acme Audit Limited",
-                            entity_type="organisation",
-                            role_category="organisation",
-                            role_label="auditor",
-                            organisation_name="Known Org",
-                            source_document_url=document.document_url,
-                            confidence=0.9,
-                        ),
-                    ],
-                ),
-                patch.object(
-                    service.org_resolver,
-                    "resolve",
-                    return_value=OrganisationRecord(
-                        registry_type="company",
-                        registry_number="ACME123",
-                        suffix=0,
-                        organisation_number=None,
-                        name="Acme Audit Limited",
-                        status="active",
-                        metadata={},
+        with (
+            patch.object(service, "find_documents_for_organisation", return_value=[document]),
+            patch.object(service, "_prepare_document", return_value=document),
+            patch.object(
+                service,
+                "extract_entities_from_document",
+                return_value=[
+                    PdfExtractedEntity(
+                        name="Jane Trustee",
+                        entity_type="person",
+                        role_category="person",
+                        role_label="trustee",
+                        organisation_name="Known Org",
+                        source_document_url=document.document_url,
+                        confidence=0.9,
                     ),
+                    PdfExtractedEntity(
+                        name="Acme Audit Limited",
+                        entity_type="organisation",
+                        role_category="organisation",
+                        role_label="auditor",
+                        organisation_name="Known Org",
+                        source_document_url=document.document_url,
+                        confidence=0.9,
+                    ),
+                ],
+            ),
+            patch.object(
+                service.org_resolver,
+                "resolve",
+                return_value=OrganisationRecord(
+                    registry_type="company",
+                    registry_number="ACME123",
+                    suffix=0,
+                    organisation_number=None,
+                    name="Acme Audit Limited",
+                    status="active",
+                    metadata={},
                 ),
-            ):
-                summary = service.enrich_run(
-                    run_id=run_id,
-                    organisations=repository.get_run_organisations(run_id, stages=["step1_seed_match"]),
-                )
+            ),
+        ):
+            summary = service.enrich_run(
+                run_id=run_id,
+                organisations=repository.get_run_organisations(run_id, stages=["step1_seed_match"]),
+            )
 
-            self.assertEqual(summary["document_count"], 1)
-            self.assertEqual(summary["entity_count"], 2)
-            self.assertEqual(summary["people_added"], 1)
-            self.assertEqual(summary["organisation_mentions_resolved"], 1)
+        self.assertEqual(summary["document_count"], 1)
+        self.assertEqual(summary["entity_count"], 2)
+        self.assertEqual(summary["people_added"], 1)
+        self.assertEqual(summary["organisation_mentions_resolved"], 1)
 
-            with repository.connect() as connection:
-                roles = connection.execute(
-                    "SELECT role_label, source FROM person_org_roles WHERE organisation_id = ?",
-                    (parent_org_id,),
-                ).fetchall()
-                self.assertEqual(len(roles), 1)
-                self.assertEqual(str(roles[0]["source"]), "pdf_gemini_extraction")
+        with repository.connect() as connection:
+            roles = connection.execute(
+                "SELECT role_label, source FROM person_org_roles WHERE organisation_id = ?",
+                (parent_org_id,),
+            ).fetchall()
+            self.assertEqual(len(roles), 1)
+            self.assertEqual(str(roles[0]["source"]), "pdf_gemini_extraction")
 
-                linked = connection.execute(
-                    """
-                    SELECT organisations.name
-                    FROM run_organisations
-                    JOIN organisations ON organisations.id = run_organisations.organisation_id
-                    WHERE run_organisations.run_id = ? AND run_organisations.source = 'pdf_org_mention'
-                    """,
-                    (run_id,),
-                ).fetchall()
-                self.assertEqual([str(row["name"]) for row in linked], ["Acme Audit Limited"])
+            linked = connection.execute(
+                """
+                SELECT organisations.name
+                FROM run_organisations
+                JOIN organisations ON organisations.id = run_organisations.organisation_id
+                WHERE run_organisations.run_id = ? AND run_organisations.source = 'pdf_org_mention'
+                """,
+                (run_id,),
+            ).fetchall()
+            self.assertEqual([str(row["name"]) for row in linked], ["Acme Audit Limited"])
 
-            del service
-            del repository
+        del service
+        del repository
 
 
 if __name__ == "__main__":

@@ -72,6 +72,16 @@ class CompaniesHouseClient:
         payload = self._get_json(url)
         return payload if isinstance(payload, dict) else {}
 
+    def get_filing_history(self, company_number: str, items_per_page: int = 100, start_index: int = 0) -> dict[str, Any]:
+        self._ensure_api_key()
+        encoded_company_number = parse.quote(str(company_number), safe="")
+        url = (
+            f"{self.settings.companies_house_base_url}/company/{encoded_company_number}/filing-history"
+            f"?items_per_page={items_per_page}&start_index={start_index}"
+        )
+        payload = self._get_json(url)
+        return payload if isinstance(payload, dict) else {}
+
     def _get_json(self, url: str) -> Any:
         global _last_request_at
         cache_key = sha256(url.encode("utf-8")).hexdigest()

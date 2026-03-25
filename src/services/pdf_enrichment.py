@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import http.client
+import io
 import json
 import logging
 import re
@@ -9,6 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+from urllib.parse import urlparse
 
 from src.charity_commission.search import search_name_to_organisation
 from src.companies_house.client import CompaniesHouseClient
@@ -16,7 +20,6 @@ from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.models import EvidenceItem, OrganisationRecord, PdfExtractedEntity, PdfSourceDocument
 from src.openai_api import extract_json_document
-from src.search.provider import WebDorkSearchProvider
 from src.search.queries import normalize_name
 
 log = logging.getLogger("istari.pdf_enrichment")
@@ -59,16 +62,43 @@ def _text_mentions_org(text: str, org_name: str, *, threshold: float = 0.6) -> b
     return hits / len(tokens) >= threshold
 
 
-def _result_title_matches_org(title: str, org_name: str) -> bool:
-    """Check the search result title is plausibly about this specific org."""
-    tokens = _significant_tokens(org_name)
-    if not tokens:
-        return True
-    title_lower = title.lower()
-    hits = sum(1 for t in tokens if t in title_lower)
-    if len(tokens) <= 2:
-        return hits == len(tokens)
-    return hits / len(tokens) >= 0.5
+_TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+
+def _has_meaningful_text(markdown: str, *, min_chars: int = 80) -> bool:
+    text_only = "\n".join(
+        line for line in markdown.split("\n")
+        if not line.strip().startswith("![")
+    ).strip()
+    return len(text_only) >= min_chars
+
+
+def _ocr_pdf(pdf_path: Path) -> str:
+    try:
+        import fitz  # PyMuPDF
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        log.warning("OCR dependencies (pymupdf, pytesseract, Pillow) not installed")
+        return ""
+
+    tesseract_path = Path(_TESSERACT_CMD)
+    if not tesseract_path.exists() and shutil.which("tesseract") is None:
+        log.warning("Tesseract not found at %s", _TESSERACT_CMD)
+        return ""
+    if tesseract_path.exists():
+        pytesseract.pytesseract.tesseract_cmd = str(tesseract_path)
+
+    doc = fitz.open(str(pdf_path))
+    pages: list[str] = []
+    for page_num in range(doc.page_count):
+        pix = doc[page_num].get_pixmap(dpi=300)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        text = pytesseract.image_to_string(img, lang="eng").strip()
+        if text:
+            pages.append(text)
+    doc.close()
+    return "\n\n".join(pages)
 
 
 def _json_cache_path(base_dir: Path, cache_key: str, suffix: str) -> Path:
@@ -171,7 +201,9 @@ def _build_extraction_prompt(
     document_title: str,
     document_url: str,
     markdown_chunk: str,
+    filing_description: str = "",
 ) -> str:
+    filing_line = f"\nFiling description: {filing_description}" if filing_description else ""
     return f"""\
 Extract named entities from this charity/company PDF markdown.
 Return JSON only with this shape:
@@ -202,7 +234,7 @@ Rules:
 
 Scoped organisation: {organisation_name}
 Document title: {document_title}
-Document URL: {document_url}
+Document URL: {document_url}{filing_line}
 
 Markdown:
 {markdown_chunk}"""
@@ -289,7 +321,6 @@ class PdfEnrichmentService:
         self.pdf_dir = self.cache_dir / "pdfs"
         self.markdown_dir = self.cache_dir / "markdown"
         self.response_dir = self.cache_dir / "responses"
-        self.web_search = WebDorkSearchProvider(settings)
         self.companies_house_client = CompaniesHouseClient(settings)
         self.org_resolver = PdfOrganisationResolver(
             settings=settings,
@@ -304,6 +335,10 @@ class PdfEnrichmentService:
             if settings.gemini_api_key
             else None
         )
+        self._ch_auth: str | None = None
+        if settings.companies_house_api_key:
+            raw = f"{settings.companies_house_api_key}:".encode("utf-8")
+            self._ch_auth = base64.b64encode(raw).decode("ascii")
 
     def enrich_run(self, *, run_id: int, organisations: list[Any]) -> dict[str, Any]:
         if not self.settings.pdf_enrichment_enabled:
@@ -351,8 +386,18 @@ class PdfEnrichmentService:
     def _enrich_organisation(self, *, run_id: int, organisation: Any) -> dict[str, Any]:
         org_name = _clean_text(organisation["name"])
         org_id = int(organisation["id"])
-        log.info("PDF enrichment: searching for documents for %s", org_name)
-        documents = self.find_documents_for_organisation(org_name)[: self.settings.pdf_enrichment_max_documents]
+        try:
+            registry_type = _clean_text(organisation["registry_type"] or "")
+        except (KeyError, IndexError):
+            registry_type = ""
+        try:
+            registry_number = _clean_text(organisation["registry_number"] or "")
+        except (KeyError, IndexError):
+            registry_number = ""
+        log.info("PDF enrichment: searching for documents for %s (type=%s, num=%s)", org_name, registry_type, registry_number)
+        documents = self.find_documents_for_organisation(
+            org_name, registry_type=registry_type, registry_number=registry_number,
+        )[: self.settings.pdf_enrichment_max_documents]
         documents = [d for d in documents if d.document_url not in self._run_seen_urls]
         log.info("PDF enrichment: found %d new documents for %s", len(documents), org_name)
         summary = {
@@ -369,7 +414,7 @@ class PdfEnrichmentService:
             try:
                 hydrated = self._prepare_document(document)
                 log.info("PDF enrichment: [%s] doc %d prepared, %d chars markdown", org_name, doc_index, len(hydrated.markdown_text))
-                if not _text_mentions_org(hydrated.markdown_text, org_name):
+                if document.source_provider != "companies_house_filing" and not _text_mentions_org(hydrated.markdown_text, org_name):
                     log.info("PDF enrichment: [%s] doc %d skipped -- org name not found in markdown", org_name, doc_index)
                     continue
                 entities = self.extract_entities_from_document(
@@ -418,6 +463,7 @@ class PdfEnrichmentService:
                             "title": hydrated.title,
                             "url": hydrated.document_url,
                             "markdown_path": hydrated.markdown_path,
+                            "filing_description": hydrated.filing_description,
                         },
                         "evidence_id": evidence_id,
                     },
@@ -425,36 +471,56 @@ class PdfEnrichmentService:
                 summary["people_added"] += 1
         return summary
 
-    def find_documents_for_organisation(self, organisation_name: str) -> list[PdfSourceDocument]:
-        query = f'"{organisation_name}" ("annual report" OR accounts OR "trustees report" OR "directors report") filetype:pdf'
-        results = self.web_search._cached_search(query)
+    def find_documents_for_organisation(
+        self, organisation_name: str, *, registry_type: str = "", registry_number: str = "",
+    ) -> list[PdfSourceDocument]:
+        if registry_type == "company" and registry_number and self._ch_auth:
+            return self._find_ch_filing_documents(organisation_name, registry_number)
+        return []
+
+    def _find_ch_filing_documents(
+        self, organisation_name: str, company_number: str,
+    ) -> list[PdfSourceDocument]:
+        try:
+            payload = self.companies_house_client.get_filing_history(company_number)
+        except RuntimeError as exc:
+            log.warning("CH filing history fetch failed for %s: %s", company_number, exc)
+            return []
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            return []
+
         documents: list[PdfSourceDocument] = []
-        seen_urls: set[str] = set()
-        for item in results:
+        for item in items:
             if not isinstance(item, dict):
                 continue
-            url = _clean_text(item.get("href") or item.get("url") or "")
-            title = _clean_text(item.get("title") or "")
-            snippet = _clean_text(item.get("body") or item.get("snippet") or "")
-            if not url or url in seen_urls or ".pdf" not in url.lower():
+            links = item.get("links", {})
+            doc_meta_url = links.get("document_metadata")
+            if not doc_meta_url:
                 continue
-            combined = f"{title} {snippet}"
-            if not _result_title_matches_org(combined, organisation_name):
-                log.info("PDF search: skipping '%s' -- title/snippet doesn't match '%s'", title[:80], organisation_name)
-                continue
-            seen_urls.add(url)
+            description = _clean_text(item.get("description", ""))
+            date = _clean_text(item.get("date", ""))
+            desc_values = item.get("description_values", {}) or {}
+            made_up_date = _clean_text(desc_values.get("made_up_date", ""))
+            filing_desc = f"{description} ({date})" if date else description
+            if made_up_date:
+                filing_desc += f" [accounts to {made_up_date}]"
+            title = f"{organisation_name} - {filing_desc}"
+            doc_url = doc_meta_url if doc_meta_url.startswith("http") else f"https://document-api.company-information.service.gov.uk{doc_meta_url}"
+
             documents.append(
                 PdfSourceDocument(
                     organisation_name=organisation_name,
-                    document_url=url,
-                    title=title or organisation_name,
-                    source_provider="pdf_web_search",
+                    document_url=doc_url,
+                    title=title,
+                    source_provider="companies_house_filing",
+                    filing_description=filing_desc,
                 )
             )
         return documents
 
     def _prepare_document(self, document: PdfSourceDocument) -> PdfSourceDocument:
-        pdf_path = self._download_pdf(document.document_url)
+        pdf_path = self._download_pdf(document)
         markdown_path, markdown_text = self._convert_pdf_to_markdown(pdf_path)
         return PdfSourceDocument(
             organisation_name=document.organisation_name,
@@ -464,14 +530,20 @@ class PdfEnrichmentService:
             local_pdf_path=str(pdf_path),
             markdown_path=str(markdown_path),
             markdown_text=markdown_text,
+            filing_description=document.filing_description,
         )
 
-    def _download_pdf(self, url: str) -> Path:
+    def _download_pdf(self, document: PdfSourceDocument) -> Path:
+        url = document.document_url
         cache_key = hashlib.sha256(url.encode("utf-8")).hexdigest()
         pdf_path = _json_cache_path(self.pdf_dir, cache_key, ".pdf")
         if pdf_path.exists():
             return pdf_path
         log.info("PDF download: %s", url[:120])
+
+        if document.source_provider == "companies_house_filing" and self._ch_auth:
+            return self._download_ch_pdf(url, pdf_path)
+
         req = request.Request(url, headers={"User-Agent": self.settings.user_agent}, method="GET")
         try:
             with request.urlopen(req, timeout=30) as response:
@@ -483,35 +555,75 @@ class PdfEnrichmentService:
             raise RuntimeError(f"PDF download failed: {exc}") from exc
         return pdf_path
 
+    def _download_ch_pdf(self, metadata_url: str, pdf_path: Path) -> Path:
+        """Two-step CH download: get metadata -> follow /content redirect -> download from S3."""
+        content_url = metadata_url.rstrip("/") + "/content"
+        parsed = urlparse(content_url)
+        conn = http.client.HTTPSConnection(parsed.hostname, timeout=30)
+        try:
+            headers = {
+                "Authorization": f"Basic {self._ch_auth}",
+                "Accept": "application/pdf",
+                "User-Agent": self.settings.user_agent,
+            }
+            conn.request("GET", f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path, headers=headers)
+            resp = conn.getresponse()
+            resp.read()
+            if resp.status not in (301, 302, 303):
+                raise RuntimeError(f"CH document API returned {resp.status} (expected redirect)")
+            s3_url = resp.getheader("Location")
+            if not s3_url:
+                raise RuntimeError("CH document API redirect had no Location header")
+        finally:
+            conn.close()
+
+        req = request.Request(s3_url, headers={"User-Agent": self.settings.user_agent}, method="GET")
+        try:
+            with request.urlopen(req, timeout=60) as response:
+                pdf_path.write_bytes(response.read())
+        except Exception as exc:
+            raise RuntimeError(f"CH PDF download from S3 failed: {exc}") from exc
+        return pdf_path
+
     def _convert_pdf_to_markdown(self, pdf_path: Path) -> tuple[Path, str]:
         markdown_path = _json_cache_path(self.markdown_dir, pdf_path.stem, ".md")
         if markdown_path.exists():
             return markdown_path, markdown_path.read_text(encoding="utf-8")
+
+        markdown_text = self._try_opendataloader(pdf_path)
+        if not _has_meaningful_text(markdown_text):
+            log.info("PDF->Markdown: text extraction empty, trying OCR for %s", pdf_path.name)
+            markdown_text = _ocr_pdf(pdf_path)
+
+        markdown_path.write_text(markdown_text, encoding="utf-8")
+        return markdown_path, markdown_text
+
+    @staticmethod
+    def _try_opendataloader(pdf_path: Path) -> str:
         if shutil.which("java") is None:
-            raise RuntimeError("OpenDataLoader PDF requires Java 11+ on PATH")
+            return ""
         try:
             import opendataloader_pdf
-        except ImportError as exc:
-            raise RuntimeError("opendataloader-pdf is not installed") from exc
-
-        log.info("PDF->Markdown: converting %s", pdf_path.name)
-        output_dir = self.markdown_dir / pdf_path.stem
+        except ImportError:
+            return ""
+        output_dir = pdf_path.parent / f"{pdf_path.stem}_odl"
         output_dir.mkdir(parents=True, exist_ok=True)
-        opendataloader_pdf.convert(
-            input_path=[str(pdf_path)],
-            output_dir=str(output_dir),
-            format="markdown",
-            quiet=True,
-        )
+        try:
+            opendataloader_pdf.convert(
+                input_path=[str(pdf_path)],
+                output_dir=str(output_dir),
+                format="markdown",
+                quiet=True,
+            )
+        except Exception:
+            return ""
         produced = output_dir / f"{pdf_path.stem}.md"
         if not produced.exists():
             candidates = sorted(output_dir.glob("*.md"))
             if not candidates:
-                raise RuntimeError("OpenDataLoader did not produce markdown output")
+                return ""
             produced = candidates[0]
-        markdown_text = produced.read_text(encoding="utf-8", errors="replace")
-        markdown_path.write_text(markdown_text, encoding="utf-8")
-        return markdown_path, markdown_text
+        return produced.read_text(encoding="utf-8", errors="replace")
 
     def extract_entities_from_document(
         self,
@@ -531,6 +643,7 @@ class PdfEnrichmentService:
                 document_title=document.title,
                 document_url=document.document_url,
                 markdown_chunk=chunk,
+                filing_description=document.filing_description,
             )
             response = self._gemini.generate(
                 model=self.settings.pdf_enrichment_model,
@@ -588,7 +701,7 @@ class PdfEnrichmentService:
             source_key=source_key,
             title=document.title or organisation_name,
             url=document.document_url,
-            snippet=f"{entity.name} extracted from PDF for {organisation_name}",
+            snippet=f"{entity.name} extracted from PDF for {organisation_name} ({document.filing_description})" if document.filing_description else f"{entity.name} extracted from PDF for {organisation_name}",
             raw_payload={
                 "organisation_name": organisation_name,
                 "document": {
@@ -597,6 +710,7 @@ class PdfEnrichmentService:
                     "source_provider": document.source_provider,
                     "local_pdf_path": document.local_pdf_path,
                     "markdown_path": document.markdown_path,
+                    "filing_description": document.filing_description,
                 },
                 "entity": asdict(entity),
             },
