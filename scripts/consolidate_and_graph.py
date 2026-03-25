@@ -1814,6 +1814,21 @@ function layoutRow(list, yTop, xMin, xMax) {{
 
 const LANE_GAP = 50;
 
+function sortByNeighborX(list) {{
+  return list.sort((a, b) => {{
+    function avgNeighborX(node) {{
+      const xs = [];
+      (edgesByNodeId.get(node.id) || []).forEach(e => {{
+        const otherId = e.source === node.id ? e.target : e.source;
+        const other = nodeById.get(otherId);
+        if (other && other._visible && other.x != null && other.lane !== node.lane) xs.push(other.x);
+      }});
+      return xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : W / 2;
+    }}
+    return avgNeighborX(a) - avgNeighborX(b);
+  }});
+}}
+
 function positionNodes() {{
   const visible = allNodes.filter(n => n._visible !== false);
   let curY = 60;
@@ -1821,6 +1836,7 @@ function positionNodes() {{
     const laneKeys = [1, 2, 3, 4];
     laneKeys.forEach(lane => {{
       const list = visible.filter(n => n.lane === lane);
+      if (lane > 1) sortByNeighborX(list);
       LANE_Y[lane] = curY;
       const h = layoutRow(list, curY, 0, W);
       curY += Math.max(h, 30) + LANE_GAP;
@@ -1831,15 +1847,21 @@ function positionNodes() {{
     curY += Math.max(idH, 30) + LANE_GAP;
 
     LANE_Y[2] = curY;
-    const orgH = layoutRow(visible.filter(n => n.kind === "organisation"), curY, 0, W);
+    const orgs = visible.filter(n => n.kind === "organisation");
+    sortByNeighborX(orgs);
+    const orgH = layoutRow(orgs, curY, 0, W);
     curY += Math.max(orgH, 30) + LANE_GAP;
 
     LANE_Y[3] = curY;
-    const addrH = layoutRow(visible.filter(n => n.kind === "address"), curY, 0, W);
+    const addrs = visible.filter(n => n.kind === "address");
+    sortByNeighborX(addrs);
+    const addrH = layoutRow(addrs, curY, 0, W);
     curY += Math.max(addrH, 30) + LANE_GAP;
 
     LANE_Y[4] = curY;
-    layoutRow(visible.filter(n => n.lane === 4), curY, 0, W);
+    const people = visible.filter(n => n.lane === 4);
+    sortByNeighborX(people);
+    layoutRow(people, curY, 0, W);
   }}
 }}
 positionNodes();
@@ -2135,7 +2157,7 @@ function bindRoleLines(selection) {{
   return selection
     .attr("stroke", edgeStroke)
     .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "hidden_connection" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
-    .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "hidden_connection" ? 0.65 : 0.45)
+    .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "hidden_connection" ? 0.65 : d.kind === "address_link" ? 0.75 : 0.45)
     .attr("stroke-dasharray", d => d.kind === "hidden_connection" ? "5 4" : null)
     .style("pointer-events", "none");
 }}
