@@ -1724,6 +1724,24 @@ function contextNodeIdsForFocus(startNodeIds) {{
       contextIds.add(otherId);
     }});
   }});
+  const contextSeedNames = new Set();
+  contextIds.forEach(id => {{
+    const n = nodeById.get(id);
+    if (n?.kind === "organisation") (n.seed_names || []).forEach(s => contextSeedNames.add(s));
+  }});
+  if (contextSeedNames.size) {{
+    allNodes.forEach(n => {{
+      if (!n._visible) return;
+      if (n.lane === 1 && contextSeedNames.has(n.seed_name)) {{
+        contextIds.add(n.id);
+        (edgesByNodeId.get(n.id) || []).forEach(e => {{
+          const otherId = e.source === n.id ? e.target : e.source;
+          const otherNode = nodeById.get(otherId);
+          if (otherNode?.kind === "seed" && otherNode._visible) contextIds.add(otherId);
+        }});
+      }}
+    }});
+  }}
   return contextIds;
 }}
 function fontSize(d) {{
@@ -1981,11 +1999,40 @@ function edgePairKey(a, b) {{
   return a < b ? `${{a}}||${{b}}` : `${{b}}||${{a}}`;
 }}
 
-function bridgeTooltip(sourceId, targetId, hops) {{
+function bridgeNodeTypeLabel(node) {{
+  if (!node) return "node";
+  if (node.kind === "seed") return "seed";
+  if (node.lane === 1) return "identity";
+  if (node.kind === "address") return "address";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "charity") return "charity";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "company") return "company";
+  if (node.kind === "organisation") return "organisation";
+  return "person";
+}}
+
+function bridgeStepLine(edge) {{
+  if (edge.tooltip) return edge.tooltip;
+  const source = nodeById.get(edge.source);
+  const target = nodeById.get(edge.target);
+  return `${{source?.label || edge.source}} is linked to ${{target?.label || edge.target}}`;
+}}
+
+function bridgeTooltipLines(sourceId, targetId, hiddenNodeIds, pathEdges) {{
   const source = nodeById.get(sourceId);
   const target = nodeById.get(targetId);
-  const viaText = hops === 1 ? "1 hidden node" : `${{hops}} hidden nodes`;
-  return `${{source?.label || sourceId}} is connected to ${{target?.label || targetId}} via ${{viaText}}`;
+  const hiddenNodes = hiddenNodeIds.map(id => nodeById.get(id)).filter(Boolean);
+  const viaText = hiddenNodes.length === 1 ? "1 hidden node" : `${{hiddenNodes.length}} hidden nodes`;
+  const lines = [
+    `<strong>${{source?.label || sourceId}}</strong> connects to <strong>${{target?.label || targetId}}</strong> through ${{viaText}}.`,
+  ];
+  if (hiddenNodes.length) {{
+    lines.push(`Hidden path: ${{hiddenNodes.map(n => `${{n.label}} <span class="dim">(${{bridgeNodeTypeLabel(n)}})</span>`).join(" <span class=\\"dim\\">→</span> ")}}`);
+  }}
+  if (pathEdges.length) {{
+    lines.push("<strong>How the connection works:</strong>");
+    pathEdges.forEach(edge => lines.push(bridgeStepLine(edge)));
+  }}
+  return lines;
 }}
 
 function derivedVisibleEdges() {{
@@ -1998,7 +2045,7 @@ function derivedVisibleEdges() {{
       const nextId = edge.source === startId ? edge.target : edge.source;
       if (displayedIds.has(nextId) || seenHidden.has(nextId)) return;
       seenHidden.add(nextId);
-      hiddenQueue.push({{ id: nextId, hops: 1 }});
+      hiddenQueue.push({{ id: nextId, hops: 1, hiddenNodeIds: [nextId], pathEdges: [edge] }});
     }});
     while (hiddenQueue.length) {{
       const current = hiddenQueue.shift();
@@ -2016,14 +2063,19 @@ function derivedVisibleEdges() {{
               target,
               kind: "bridge",
               hops: current.hops,
-              tooltip: bridgeTooltip(source, target, current.hops),
+              tooltip_lines: bridgeTooltipLines(source, target, current.hiddenNodeIds, [...current.pathEdges, edge]),
             }});
           }}
           return;
         }}
         if (seenHidden.has(nextId)) return;
         seenHidden.add(nextId);
-        hiddenQueue.push({{ id: nextId, hops: current.hops + 1 }});
+        hiddenQueue.push({{
+          id: nextId,
+          hops: current.hops + 1,
+          hiddenNodeIds: [...current.hiddenNodeIds, nextId],
+          pathEdges: [...current.pathEdges, edge],
+        }});
       }});
     }}
   }});
@@ -2040,7 +2092,7 @@ function bindRoleLines(selection) {{
     .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "bridge" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
     .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "bridge" ? 0.65 : 0.45)
     .attr("stroke-dasharray", d => d.kind === "bridge" ? "5 4" : null)
-    .on("mouseover", (event, d) => showTooltip(event, [d.tooltip || "link"]))
+    .on("mouseover", (event, d) => showTooltip(event, d.tooltip_lines || [d.tooltip || "link"]))
     .on("mousemove", positionTooltip)
     .on("mouseout", hideTooltip)
     .style("cursor", "default")
@@ -2050,7 +2102,7 @@ function bindRoleLines(selection) {{
 function renderEdges() {{
   roleLine = bindRoleLines(
     edgeGroup.selectAll("line.role-edge")
-      .data(renderedEdges(), d => `${{d.kind}}:${{d.source}}:${{d.target}}:${{d.hops || 0}}:${{d.tooltip || ""}}`)
+      .data(renderedEdges(), d => `${{d.kind}}:${{d.source}}:${{d.target}}:${{d.hops || 0}}:${{(d.tooltip_lines || [d.tooltip || ""]).join("|")}}`)
       .join(
         enter => enter.append("line").attr("class", "role-edge"),
         update => update,
@@ -2305,8 +2357,14 @@ def main() -> None:
     id_slug = "+".join(str(r) for r in args.run_ids)
     out_path = args.out or f"output/run_{id_slug}_graph.html"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(render_html(data), encoding="utf-8")
+    html_content = render_html(data)
+    Path(out_path).write_text(html_content, encoding="utf-8")
     print(f"Graph written to {out_path}")
+
+    netlify_path = Path("netlify_graph_viewer/index.html")
+    if netlify_path.parent.exists():
+        netlify_path.write_text(html_content, encoding="utf-8")
+        print(f"Netlify viewer updated at {netlify_path}")
 
     try:
         webbrowser.open(Path(out_path).resolve().as_uri())
