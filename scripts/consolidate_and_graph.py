@@ -147,6 +147,49 @@ def _row_str(row, key: str) -> str:
         return ""
 
 
+def _json_dict(raw_value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(raw_value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _resolve_parent_org_id(
+    metadata: dict[str, object],
+    org_registry_lookup: dict[tuple[str, str, int], int],
+) -> int | None:
+    try:
+        parent_org_id = metadata.get("parent_organisation_id")
+        if parent_org_id not in (None, ""):
+            return int(parent_org_id)
+    except (TypeError, ValueError):
+        pass
+
+    parent_registry_type = str(metadata.get("parent_registry_type") or "").strip()
+    parent_registry_number = str(metadata.get("parent_registry_number") or "").strip()
+    if not parent_registry_type or not parent_registry_number:
+        return None
+    try:
+        parent_suffix = int(metadata.get("parent_suffix") or 0)
+    except (TypeError, ValueError):
+        parent_suffix = 0
+    return org_registry_lookup.get((parent_registry_type, parent_registry_number, parent_suffix))
+
+
+def _linked_org_phrase(source: str, metadata: dict[str, object]) -> str:
+    custom_phrase = str(metadata.get("connection_phrase") or "").strip()
+    if custom_phrase:
+        return custom_phrase
+    if source == "pdf_org_mention":
+        return "is mentioned in filings for"
+    if source == "charity_commission_linked_charities":
+        return "is linked in Charity Commission records to"
+    if source.startswith("address_pivot"):
+        return "shares an address with"
+    return "is linked to"
+
+
 def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
     if "named as a trustee" in phrase.lower():
@@ -192,6 +235,8 @@ def consolidate_run(run_id: int) -> dict:
 
     ranked = repository.get_ranked_people_for_run(run_id, limit=500)
     raw_edges = repository.get_run_network_edges(run_id)
+    scoped_org_rows = repository.get_run_scoped_organisations(run_id)
+    run_org_rows = repository.get_run_organisations(run_id)
     address_rows = repository.get_run_address_edges(run_id)
     run_row = repository.get_run(run_id)
     seed_name = str(run_row["seed_name"]) if run_row else "Seed"
@@ -256,15 +301,56 @@ def consolidate_run(run_id: int) -> dict:
 
     # --- build edges with full metadata ---
     org_map: dict[int, dict] = {}
-    for edge in raw_edges:
-        oid = int(edge["organisation_id"])
-        if oid not in org_map:
-            org_map[oid] = {
-                "id": f"org:{oid}",
-                "label": str(edge["organisation_name"]),
-                "registry_type": str(edge["registry_type"] or ""),
-                "registry_number": str(edge["registry_number"] or ""),
-            }
+    org_registry_lookup: dict[tuple[str, str, int], int] = {}
+    for row in scoped_org_rows:
+        oid = int(row["id"])
+        org_map[oid] = {
+            "id": f"org:{oid}",
+            "label": str(row["name"] or ""),
+            "registry_type": str(row["registry_type"] or ""),
+            "registry_number": str(row["registry_number"] or ""),
+        }
+        org_registry_lookup[
+            (
+                str(row["registry_type"] or ""),
+                str(row["registry_number"] or ""),
+                int(row["suffix"] or 0),
+            )
+        ] = oid
+
+    org_org_edges: list[dict] = []
+    seen_oo: set[tuple[str, str, str]] = set()
+    for row in run_org_rows:
+        child_org_id = int(row["id"])
+        if child_org_id not in org_map:
+            continue
+        metadata = _json_dict(row["run_metadata_json"])
+        parent_org_id = _resolve_parent_org_id(metadata, org_registry_lookup)
+        if parent_org_id is None or parent_org_id == child_org_id:
+            continue
+        if parent_org_id not in org_map or child_org_id not in org_map:
+            continue
+        phrase = _linked_org_phrase(str(row["source"] or ""), metadata)
+        source_id = f"org:{parent_org_id}"
+        target_id = f"org:{child_org_id}"
+        key = (source_id, target_id, phrase)
+        if key in seen_oo:
+            continue
+        seen_oo.add(key)
+        source_label = org_map[parent_org_id]["label"]
+        target_label = org_map[child_org_id]["label"]
+        org_org_edges.append({
+            "source": source_id,
+            "target": target_id,
+            "kind": "org_link",
+            "role_type": "organisation_link",
+            "role_label": str(row["source"] or "organisation_link"),
+            "phrase": phrase,
+            "source_provider": str(row["source"] or ""),
+            "confidence": "medium",
+            "weight": 0.55,
+            "tooltip": f"{target_label} {phrase} {source_label}",
+        })
 
     address_map: dict[int, dict] = {}
     org_addresses: dict[str, list[dict]] = defaultdict(list)
@@ -510,6 +596,8 @@ def consolidate_run(run_id: int) -> dict:
             "tooltip": f"{p_label} {pe['phrase']} {o_label}",
         })
 
+    graph_edges.extend(org_org_edges)
+
     for row in address_rows:
         graph_edges.append(
             {
@@ -586,6 +674,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     person_entries: list[dict] = []
     address_nodes: dict[str, dict] = {}
     org_address_edges: list[dict] = []
+    org_org_edges: list[dict] = []
     for seed_index, run in enumerate(runs):
         node_map: dict[str, dict] = {str(node["id"]): node for node in run["nodes"]}
         identity_ids = {str(node["id"]) for node in run["nodes"] if node["kind"] == "seed_alias"}
@@ -772,6 +861,25 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 }
 
         for edge in run["edges"]:
+            if edge.get("kind") == "org_link":
+                source_id = str(edge["source"])
+                target_id = str(edge["target"])
+                if source_id in org_nodes and target_id in org_nodes:
+                    org_org_edges.append(
+                        {
+                            "source": source_id,
+                            "target": target_id,
+                            "kind": "org_link",
+                            "role_type": edge.get("role_type", "organisation_link"),
+                            "role_label": edge.get("role_label", "organisation_link"),
+                            "phrase": edge.get("phrase", ""),
+                            "source_provider": edge.get("source_provider", ""),
+                            "confidence": edge.get("confidence", ""),
+                            "weight": float(edge.get("weight") or 0.55),
+                            "tooltip": edge.get("tooltip", ""),
+                        }
+                    )
+                continue
             if edge.get("kind") == "address_link":
                 org_id = str(edge["source"])
                 address_id = str(edge["target"])
@@ -862,6 +970,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
 
     identity_org_edges = _dedupe_edges(identity_org_edges, ("source", "target", "phrase"))
     org_person_edges = _dedupe_edges(org_person_edges, ("source", "target", "phrase"))
+    org_org_edges = _dedupe_edges(org_org_edges, ("source", "target", "phrase"))
 
     for org_id, node in org_nodes.items():
         node["shared"] = len(org_seed_names.get(org_id, set())) > 1
@@ -984,6 +1093,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         })
 
     edges.extend(identity_org_edges)
+    edges.extend(org_org_edges)
     edges.extend(org_address_edges)
     edges.extend(org_person_edges)
 
@@ -1246,6 +1356,29 @@ allEdges.filter(e => e.kind === "role").forEach(e => {{
   orgPersonIds.get(orgNode.id).add(personNode.individual_key || personNode.id);
 }});
 
+const orgLinkIds = new Map();
+allEdges.filter(e => e.kind === "org_link").forEach(e => {{
+  if (!orgLinkIds.has(e.source)) orgLinkIds.set(e.source, new Set());
+  if (!orgLinkIds.has(e.target)) orgLinkIds.set(e.target, new Set());
+  orgLinkIds.get(e.source).add(e.target);
+  orgLinkIds.get(e.target).add(e.source);
+}});
+
+function expandOrgIdsThroughOrgLinks(startOrgIds) {{
+  const expanded = new Set(startOrgIds);
+  const queue = [...startOrgIds];
+  while (queue.length) {{
+    const orgId = queue.shift();
+    const linked = orgLinkIds.get(orgId) || new Set();
+    linked.forEach(otherId => {{
+      if (expanded.has(otherId)) return;
+      expanded.add(otherId);
+      queue.push(otherId);
+    }});
+  }}
+  return expanded;
+}}
+
 function activeIdentityIds() {{
   if (!multiSeed) return new Set(identityNodes.map(n => n.id));
   return new Set(identityNodes.filter(n => selectedIdentities.has(n.id)).map(n => n.id));
@@ -1426,22 +1559,24 @@ function nodeMatchesQuery(d, q) {{
 }}
 function contextNodeIdsForFocus(startNodeIds) {{
   const contextIds = new Set();
-  const expandFromOrg = new Set();
+  const seedOrgIds = new Set();
   startNodeIds.forEach(nodeId => {{
     const node = nodeById.get(nodeId);
     if (!node?._visible) return;
     contextIds.add(nodeId);
+    if (node.kind === "organisation") seedOrgIds.add(nodeId);
     (edgesByNodeId.get(nodeId) || []).forEach(e => {{
       const otherId = e.source === nodeId ? e.target : e.source;
       const otherNode = nodeById.get(otherId);
       if (!otherNode?._visible) return;
       contextIds.add(otherId);
-      if ((node.kind === "address" || node.lane === 1) && otherNode.kind === "organisation") {{
-        expandFromOrg.add(otherId);
+      if ((node.kind === "address" || node.lane === 1 || node.kind === "organisation") && otherNode.kind === "organisation") {{
+        seedOrgIds.add(otherId);
       }}
     }});
   }});
-  expandFromOrg.forEach(orgId => {{
+  expandOrgIdsThroughOrgLinks(seedOrgIds).forEach(orgId => {{
+    contextIds.add(orgId);
     (edgesByNodeId.get(orgId) || []).forEach(e => {{
       const otherId = e.source === orgId ? e.target : e.source;
       const otherNode = nodeById.get(otherId);
@@ -1469,6 +1604,7 @@ function nodeColor(d) {{
 }}
 function edgeStroke(d) {{
   if (d.kind === "alias") return "var(--amber)";
+  if (d.kind === "org_link") return "var(--green)";
   if (d.kind === "address_link") return "var(--purple)";
   const rt = (d.role_type || "").toLowerCase();
   if (rt.includes("trustee")) return "var(--blue)";
@@ -1700,7 +1836,7 @@ pills.on("dblclick", (event, d) => {{
   const directRoles = [];
   const seenDirectConnections = new Set();
   edges
-    .filter(e => e.kind === "role" || e.kind === "alias" || e.kind === "address_link")
+    .filter(e => e.kind === "role" || e.kind === "alias" || e.kind === "address_link" || e.kind === "org_link")
     .forEach(e => {{
       const otherId = e.source === d.id ? e.target : e.source;
       const key = `${{e.kind}}:${{otherId}}`;
@@ -1756,7 +1892,7 @@ function applyFilter() {{
   allNodes.forEach(n => {{ n._visible = false; }});
 
   const activeIdentities = activeIdentityIds();
-  const visibleOrgs = filteredOrgIdsForCurrentFilters();
+  const visibleOrgs = expandOrgIdsThroughOrgLinks(filteredOrgIdsForCurrentFilters());
   const visiblePeople = new Set();
 
   allNodes.filter(n => n.lane === 4).forEach(n => {{

@@ -182,10 +182,21 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
             )
 
         scoped_org_rows = repository.get_run_scoped_organisations(run_id)
+        run_org_rows = repository.get_run_organisations(run_id)
         org_ids_in_run: set[int] = set()
+        scoped_org_by_id: dict[int, Any] = {}
+        org_registry_lookup: dict[tuple[str, str, int], int] = {}
         for row in scoped_org_rows:
             org_id_int = int(row["id"])
             org_ids_in_run.add(org_id_int)
+            scoped_org_by_id[org_id_int] = row
+            org_registry_lookup[
+                (
+                    str(row["registry_type"] or ""),
+                    str(row["registry_number"] or ""),
+                    int(row["suffix"] or 0),
+                )
+            ] = org_id_int
             ensure_node(
                 f"org:{org_id_int}",
                 label=str(row["name"] or "").strip() or "Unknown organisation",
@@ -197,6 +208,30 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                     "registry_number": str(row["registry_number"] or ""),
                     "suffix": int(row["suffix"] or 0),
                 },
+            )
+
+        for row in run_org_rows:
+            child_org_id = int(row["id"])
+            if child_org_id not in org_ids_in_run:
+                continue
+            link_metadata = _json_dict(row["run_metadata_json"])
+            parent_org_id = _resolve_parent_org_id(link_metadata, org_registry_lookup)
+            if parent_org_id is None or parent_org_id == child_org_id:
+                continue
+            if parent_org_id not in org_ids_in_run:
+                continue
+            source_name = str(scoped_org_by_id[parent_org_id]["name"] or "").strip() or "Unknown organisation"
+            target_name = str(scoped_org_by_id[child_org_id]["name"] or "").strip() or "Unknown organisation"
+            phrase = _linked_org_phrase(str(row["source"] or ""), link_metadata)
+            add_edge(
+                f"orgorg:{run_id}:org:{parent_org_id}:org:{child_org_id}:{_short_hash(str(row['source']) + phrase)}",
+                f"org:{parent_org_id}",
+                f"org:{child_org_id}",
+                run_id=run_id,
+                role_type="organisation_link",
+                role_label=str(row["source"] or "organisation_link"),
+                source=str(row["source"] or "run_organisation"),
+                explanation=(f"{target_name} {phrase} {source_name}.").replace("  ", " "),
             )
 
         for row in candidate_org_rows:
@@ -346,6 +381,49 @@ def _candidate_relationship_phrase(payload: dict[str, Any], source: str) -> str:
         return "is linked at Companies House to"
     if str(source).startswith("charity_commission"):
         return "is linked in Charity Commission records to"
+    return "is linked to"
+
+
+def _json_dict(raw_value: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(str(raw_value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _resolve_parent_org_id(
+    metadata: dict[str, Any],
+    org_registry_lookup: dict[tuple[str, str, int], int],
+) -> int | None:
+    try:
+        parent_org_id = metadata.get("parent_organisation_id")
+        if parent_org_id not in (None, ""):
+            return int(parent_org_id)
+    except (TypeError, ValueError):
+        pass
+
+    parent_registry_type = str(metadata.get("parent_registry_type") or "").strip()
+    parent_registry_number = str(metadata.get("parent_registry_number") or "").strip()
+    if not parent_registry_type or not parent_registry_number:
+        return None
+    try:
+        parent_suffix = int(metadata.get("parent_suffix") or 0)
+    except (TypeError, ValueError):
+        parent_suffix = 0
+    return org_registry_lookup.get((parent_registry_type, parent_registry_number, parent_suffix))
+
+
+def _linked_org_phrase(source: str, metadata: dict[str, Any]) -> str:
+    custom_phrase = str(metadata.get("connection_phrase") or "").strip()
+    if custom_phrase:
+        return custom_phrase
+    if source == "pdf_org_mention":
+        return "is mentioned in filings for"
+    if source == "charity_commission_linked_charities":
+        return "is linked in Charity Commission records to"
+    if source.startswith("address_pivot"):
+        return "shares an address with"
     return "is linked to"
 
 
