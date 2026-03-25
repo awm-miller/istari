@@ -654,7 +654,16 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
       lane 2: deduplicated organisations
       lane 3: deduplicated expanded people (merged only by alias matching)
     """
-    runs = [consolidate_run(rid) for rid in run_ids]
+    runs = []
+    total_runs = len(run_ids)
+    for index, rid in enumerate(run_ids, start=1):
+        print(f"[graph] Loading run {index}/{total_runs}: {rid}", flush=True)
+        run = consolidate_run(rid)
+        print(
+            f"[graph] Loaded run {rid}: {len(run['nodes'])} nodes, {len(run['edges'])} edges",
+            flush=True,
+        )
+        runs.append(run)
     seed_names = [r["seed_name"] for r in runs]
 
     def _dedupe_edges(items: list[dict], key_fields: tuple[str, ...]) -> list[dict]:
@@ -667,6 +676,45 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             seen.add(key)
             out.append(item)
         return out
+
+    def _surname_keys(entry: dict) -> set[str]:
+        keys: set[str] = set()
+        names = [str(entry["label"]), *(str(name) for name in entry.get("aliases") or [])]
+        for name in names:
+            tokens = _alias_tokens(name)
+            if not tokens:
+                continue
+            surname = tokens[-1]
+            keys.add(surname)
+            for old, new in _FUZZY_SWAPS:
+                if old in surname:
+                    keys.add(surname.replace(old, new))
+                if new in surname:
+                    keys.add(surname.replace(new, old))
+        return keys
+
+    def _union_matching_entries(entries: list[dict], union_find: UnionFind) -> int:
+        buckets: dict[str, list[int]] = defaultdict(list)
+        for index, entry in enumerate(entries):
+            for key in _surname_keys(entry):
+                buckets[key].append(index)
+        compared_pairs: set[tuple[int, int]] = set()
+        comparisons = 0
+        for bucket in buckets.values():
+            if len(bucket) < 2:
+                continue
+            for offset, left_index in enumerate(bucket):
+                for right_index in bucket[offset + 1:]:
+                    pair = (left_index, right_index) if left_index < right_index else (right_index, left_index)
+                    if pair in compared_pairs:
+                        continue
+                    compared_pairs.add(pair)
+                    comparisons += 1
+                    if names_match(entries[left_index], entries[right_index]):
+                        union_find.union(left_index, right_index)
+        return comparisons
+
+    print(f"[graph] Building merge context for {len(runs)} runs", flush=True)
 
     # Build per-run maps and gather lane-3 people for cross-run merging.
     run_contexts: list[dict] = []
@@ -714,16 +762,19 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "person_ids": person_ids,
         })
 
+    print(f"[graph] Collected {len(person_entries)} people and {len(identity_entries)} identities", flush=True)
+    print("[graph] Matching people across runs", flush=True)
+
     # Merge stage-4 people across runs using the existing alias matcher.
     person_uf = UnionFind()
-    for i, left in enumerate(person_entries):
-        for j in range(i + 1, len(person_entries)):
-            if names_match(left, person_entries[j]):
-                person_uf.union(i, j)
+    person_comparisons = _union_matching_entries(person_entries, person_uf)
+    print(f"[graph] Compared {person_comparisons} candidate person pairs", flush=True)
 
     merged_person_groups: dict[int, list[dict]] = {}
     for i, entry in enumerate(person_entries):
         merged_person_groups.setdefault(person_uf.find(i), []).append(entry)
+
+    print(f"[graph] Built {len(merged_person_groups)} merged person groups", flush=True)
 
     person_entry_to_merged_id: dict[tuple[int, str], str] = {}
     merged_person_nodes: dict[str, dict] = {}
@@ -776,16 +827,16 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     for mid in pruned_ids:
         del merged_person_nodes[mid]
 
+    print("[graph] Matching identities across runs", flush=True)
     identity_uf = UnionFind()
-    for i, left in enumerate(identity_entries):
-        for j in range(i + 1, len(identity_entries)):
-            if names_match(left, identity_entries[j]):
-                identity_uf.union(i, j)
+    identity_comparisons = _union_matching_entries(identity_entries, identity_uf)
+    print(f"[graph] Compared {identity_comparisons} candidate identity pairs", flush=True)
 
     identity_cluster_keys: dict[tuple[int, str], str] = {}
     identity_groups: dict[int, list[dict]] = {}
     for i, entry in enumerate(identity_entries):
         identity_groups.setdefault(identity_uf.find(i), []).append(entry)
+    print(f"[graph] Built {len(identity_groups)} identity groups", flush=True)
     for group_index, entries in enumerate(identity_groups.values(), start=1):
         cluster_id = f"identity_cluster:{group_index}"
         for entry in entries:
@@ -798,6 +849,8 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     org_identities: dict[str, list[dict]] = defaultdict(list)
     org_seed_names: dict[str, set[str]] = defaultdict(set)
     identity_meta: dict[str, dict] = {}
+
+    print("[graph] Building final merged nodes and edges", flush=True)
 
     # Keep seeds and identities separate per run.
     for context in run_contexts:
@@ -1112,6 +1165,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     consolidated.sort(key=lambda c: (-float(c["score"]), -int(c["org_count"]), c["label"]))
 
     _tag_sanctioned_nodes(nodes)
+    print(f"[graph] Final merged graph: {len(nodes)} nodes, {len(edges)} edges", flush=True)
     return {
         "seed_name": "Istari",
         "run_id": "+".join(str(r) for r in run_ids),
@@ -1697,53 +1751,7 @@ function nodeMatchesQuery(d, q) {{
   const aliasMatch = (d.aliases || []).some(a => (a || "").toLowerCase().includes(q));
   return labelMatch || aliasMatch;
 }}
-function contextNodeIdsForFocus(startNodeIds) {{
-  const contextIds = new Set();
-  const seedOrgIds = new Set();
-  startNodeIds.forEach(nodeId => {{
-    const node = nodeById.get(nodeId);
-    if (!node?._visible) return;
-    contextIds.add(nodeId);
-    if (node.kind === "organisation") seedOrgIds.add(nodeId);
-    (edgesByNodeId.get(nodeId) || []).forEach(e => {{
-      const otherId = e.source === nodeId ? e.target : e.source;
-      const otherNode = nodeById.get(otherId);
-      if (!otherNode?._visible) return;
-      contextIds.add(otherId);
-      if ((node.kind === "address" || node.lane === 1 || node.kind === "organisation") && otherNode.kind === "organisation") {{
-        seedOrgIds.add(otherId);
-      }}
-    }});
-  }});
-  expandOrgIdsThroughOrgLinks(seedOrgIds).forEach(orgId => {{
-    contextIds.add(orgId);
-    (edgesByNodeId.get(orgId) || []).forEach(e => {{
-      const otherId = e.source === orgId ? e.target : e.source;
-      const otherNode = nodeById.get(otherId);
-      if (!otherNode?._visible) return;
-      contextIds.add(otherId);
-    }});
-  }});
-  const contextSeedNames = new Set();
-  contextIds.forEach(id => {{
-    const n = nodeById.get(id);
-    if (n?.kind === "organisation") (n.seed_names || []).forEach(s => contextSeedNames.add(s));
-  }});
-  if (contextSeedNames.size) {{
-    allNodes.forEach(n => {{
-      if (!n._visible) return;
-      if (n.lane === 1 && contextSeedNames.has(n.seed_name)) {{
-        contextIds.add(n.id);
-        (edgesByNodeId.get(n.id) || []).forEach(e => {{
-          const otherId = e.source === n.id ? e.target : e.source;
-          const otherNode = nodeById.get(otherId);
-          if (otherNode?.kind === "seed" && otherNode._visible) contextIds.add(otherId);
-        }});
-      }}
-    }});
-  }}
-  return contextIds;
-}}
+let searchOrFocusMode = false;
 function fontSize(d) {{
   if (d.kind === "seed") return 13;
   if (d.kind === "seed_alias") return 12;
@@ -1761,7 +1769,7 @@ function nodeColor(d) {{
   return "var(--blue)";
 }}
 function edgeStroke(d) {{
-  if (d.kind === "bridge") return "#94a3b8";
+  if (d.kind === "hidden_connection") return "#94a3b8";
   if (d.kind === "alias") return "var(--amber)";
   if (d.kind === "org_link") return "var(--green)";
   if (d.kind === "address_link") return "var(--purple)";
@@ -1979,14 +1987,9 @@ const drag = d3.drag()
 pills.call(drag);
 
 // -- focus panel (double-click) --
-const focusPanel = document.getElementById("focus-panel");
-const focusContent = document.getElementById("focus-content");
-const focusClose = document.getElementById("focus-close");
-let focusedNodeId = null;
-let focusContextNodeIds = null;
 
 function isNodeDisplayed(node) {{
-  return !!node && !!node._visible && (!focusContextNodeIds || focusContextNodeIds.has(node.id));
+  return !!node && !!node._visible;
 }}
 
 function isEdgeDisplayed(edge) {{
@@ -1999,7 +2002,7 @@ function edgePairKey(a, b) {{
   return a < b ? `${{a}}||${{b}}` : `${{b}}||${{a}}`;
 }}
 
-function bridgeNodeTypeLabel(node) {{
+function hiddenNodeTypeLabel(node) {{
   if (!node) return "node";
   if (node.kind === "seed") return "seed";
   if (node.lane === 1) return "identity";
@@ -2010,14 +2013,14 @@ function bridgeNodeTypeLabel(node) {{
   return "person";
 }}
 
-function bridgeStepLine(edge) {{
+function hiddenConnectionStepLine(edge) {{
   if (edge.tooltip) return edge.tooltip;
   const source = nodeById.get(edge.source);
   const target = nodeById.get(edge.target);
   return `${{source?.label || edge.source}} is linked to ${{target?.label || edge.target}}`;
 }}
 
-function bridgeTooltipLines(sourceId, targetId, hiddenNodeIds, pathEdges) {{
+function hiddenConnectionTooltipLines(sourceId, targetId, hiddenNodeIds, pathEdges) {{
   const source = nodeById.get(sourceId);
   const target = nodeById.get(targetId);
   const hiddenNodes = hiddenNodeIds.map(id => nodeById.get(id)).filter(Boolean);
@@ -2026,72 +2029,151 @@ function bridgeTooltipLines(sourceId, targetId, hiddenNodeIds, pathEdges) {{
     `<strong>${{source?.label || sourceId}}</strong> connects to <strong>${{target?.label || targetId}}</strong> through ${{viaText}}.`,
   ];
   if (hiddenNodes.length) {{
-    lines.push(`Hidden path: ${{hiddenNodes.map(n => `${{n.label}} <span class="dim">(${{bridgeNodeTypeLabel(n)}})</span>`).join(" <span class=\\"dim\\">→</span> ")}}`);
+    lines.push(`Hidden path: ${{hiddenNodes.map(n => `${{n.label}} <span class="dim">(${{hiddenNodeTypeLabel(n)}})</span>`).join(" <span class=\\"dim\\">→</span> ")}}`);
   }}
   if (pathEdges.length) {{
     lines.push("<strong>How the connection works:</strong>");
-    pathEdges.forEach(edge => lines.push(bridgeStepLine(edge)));
+    pathEdges.forEach(edge => lines.push(hiddenConnectionStepLine(edge)));
   }}
   return lines;
 }}
 
-function derivedVisibleEdges() {{
-  const displayedIds = new Set(allNodes.filter(isNodeDisplayed).map(n => n.id));
-  const bridges = new Map();
-  displayedIds.forEach(startId => {{
-    const hiddenQueue = [];
-    const seenHidden = new Set();
-    (edgesByNodeId.get(startId) || []).forEach(edge => {{
-      const nextId = edge.source === startId ? edge.target : edge.source;
-      if (displayedIds.has(nextId) || seenHidden.has(nextId)) return;
-      seenHidden.add(nextId);
-      hiddenQueue.push({{ id: nextId, hops: 1, hiddenNodeIds: [nextId], pathEdges: [edge] }});
-    }});
-    while (hiddenQueue.length) {{
-      const current = hiddenQueue.shift();
-      (edgesByNodeId.get(current.id) || []).forEach(edge => {{
-        const nextId = edge.source === current.id ? edge.target : edge.source;
-        if (nextId === startId) return;
-        if (displayedIds.has(nextId)) {{
-          const pairKey = edgePairKey(startId, nextId);
-          if (directEdgePairs.has(pairKey)) return;
-          const [source, target] = startId < nextId ? [startId, nextId] : [nextId, startId];
-          const existing = bridges.get(pairKey);
-          if (!existing || current.hops < existing.hops) {{
-            bridges.set(pairKey, {{
-              source,
-              target,
-              kind: "bridge",
-              hops: current.hops,
-              tooltip_lines: bridgeTooltipLines(source, target, current.hiddenNodeIds, [...current.pathEdges, edge]),
+function displayedNodeIds() {{
+  return new Set(allNodes.filter(isNodeDisplayed).map(n => n.id));
+}}
+
+function isBridgeEndpoint(node) {{
+  if (!node) return false;
+  return node.kind === "seed" || node.kind === "address" || node.lane === 1 || node.lane === 4;
+}}
+
+function findBridgeConnections(startId) {{
+  const connections = new Map();
+  const hiddenQueue = [];
+  const visited = new Set([startId]);
+  (edgesByNodeId.get(startId) || []).forEach(edge => {{
+    const nextId = edge.source === startId ? edge.target : edge.source;
+    if (visited.has(nextId)) return;
+    visited.add(nextId);
+    const nextNode = nodeById.get(nextId);
+    if (nextNode && isBridgeEndpoint(nextNode)) {{
+      if (!directEdgePairs.has(edgePairKey(startId, nextId))) {{
+        connections.set(nextId, {{
+          source: startId,
+          target: nextId,
+          kind: "hidden_connection",
+          hops: 1,
+          hiddenNodeIds: [nextId],
+          pathEdges: [edge],
+          tooltip_lines: hiddenConnectionTooltipLines(startId, nextId, [nextId], [edge]),
+        }});
+      }}
+      return;
+    }}
+    hiddenQueue.push({{ id: nextId, hops: 1, hiddenNodeIds: [nextId], pathEdges: [edge] }});
+  }});
+  while (hiddenQueue.length) {{
+    const current = hiddenQueue.shift();
+    (edgesByNodeId.get(current.id) || []).forEach(edge => {{
+      const nextId = edge.source === current.id ? edge.target : edge.source;
+      if (visited.has(nextId)) return;
+      visited.add(nextId);
+      const nextNode = nodeById.get(nextId);
+      if (nextNode && isBridgeEndpoint(nextNode)) {{
+        const existing = connections.get(nextId);
+        if (!existing || current.hops + 1 < existing.hops) {{
+          if (!directEdgePairs.has(edgePairKey(startId, nextId))) {{
+            connections.set(nextId, {{
+              source: startId,
+              target: nextId,
+              kind: "hidden_connection",
+              hops: current.hops + 1,
+              hiddenNodeIds: [...current.hiddenNodeIds, nextId],
+              pathEdges: [...current.pathEdges, edge],
+              tooltip_lines: hiddenConnectionTooltipLines(startId, nextId, current.hiddenNodeIds, [...current.pathEdges, edge]),
             }});
           }}
-          return;
         }}
-        if (seenHidden.has(nextId)) return;
-        seenHidden.add(nextId);
-        hiddenQueue.push({{
-          id: nextId,
-          hops: current.hops + 1,
-          hiddenNodeIds: [...current.hiddenNodeIds, nextId],
-          pathEdges: [...current.pathEdges, edge],
-        }});
+        return;
+      }}
+      hiddenQueue.push({{
+        id: nextId,
+        hops: current.hops + 1,
+        hiddenNodeIds: [...current.hiddenNodeIds, nextId],
+        pathEdges: [...current.pathEdges, edge],
       }});
-    }}
+    }});
+  }}
+  return [...connections.values()];
+}}
+
+function deriveHiddenConnectionEdges() {{
+  const displayedIds = displayedNodeIds();
+  const hiddenConnections = new Map();
+  displayedIds.forEach(startId => {{
+    const startNode = nodeById.get(startId);
+    if (!startNode || isBridgeEndpoint(startNode)) return;
+    findBridgeConnections(startId).forEach(connection => {{
+      const targetNode = nodeById.get(connection.target);
+      if (!targetNode || !targetNode._visible) return;
+      const pairKey = edgePairKey(connection.source, connection.target);
+      const existing = hiddenConnections.get(pairKey);
+      if (!existing || connection.hops < existing.hops) {{
+        hiddenConnections.set(pairKey, connection);
+      }}
+    }});
   }});
-  return [...bridges.values()];
+  return [...hiddenConnections.values()];
+}}
+
+function hiddenConnectionSectionKey(focusNode, otherNode) {{
+  if (focusNode.kind !== "organisation") return "hidden";
+  if (otherNode?.kind === "organisation") return "peer";
+  if ((otherNode?.lane ?? focusNode.lane) <= focusNode.lane) return "upstream";
+  return "downstream";
+}}
+
+function hiddenConnectionSectionTitle(sectionKey) {{
+  if (sectionKey === "upstream") return "Upstream connections";
+  if (sectionKey === "downstream") return "Downstream connections";
+  if (sectionKey === "peer") return "Related organisations";
+  return "Hidden connections";
+}}
+
+function hiddenConnectionSectionsForNode(nodeId) {{
+  const focusNode = nodeById.get(nodeId);
+  const sections = new Map();
+  findBridgeConnections(nodeId).forEach(connection => {{
+    const otherNode = nodeById.get(connection.target);
+    if (!otherNode) return;
+    const sectionKey = hiddenConnectionSectionKey(focusNode, otherNode);
+    if (!sections.has(sectionKey)) sections.set(sectionKey, []);
+    sections.get(sectionKey).push({{
+      otherNode,
+      tooltip_lines: connection.tooltip_lines,
+      hops: connection.hops,
+    }});
+  }});
+  sections.forEach(items => items.sort((a, b) =>
+    (a.otherNode.lane - b.otherNode.lane) ||
+    (a.hops - b.hops) ||
+    a.otherNode.label.localeCompare(b.otherNode.label)
+  ));
+  return sections;
 }}
 
 function renderedEdges() {{
-  return allEdges.filter(isEdgeDisplayed).concat(derivedVisibleEdges());
+  const visible = allEdges.filter(isEdgeDisplayed);
+  if (searchOrFocusMode) return visible.concat(deriveHiddenConnectionEdges());
+  return visible;
 }}
 
 function bindRoleLines(selection) {{
   return selection
     .attr("stroke", edgeStroke)
-    .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "bridge" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
-    .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "bridge" ? 0.65 : 0.45)
-    .attr("stroke-dasharray", d => d.kind === "bridge" ? "5 4" : null)
+    .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "hidden_connection" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
+    .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "hidden_connection" ? 0.65 : 0.45)
+    .attr("stroke-dasharray", d => d.kind === "hidden_connection" ? "5 4" : null)
     .on("mouseover", (event, d) => showTooltip(event, d.tooltip_lines || [d.tooltip || "link"]))
     .on("mousemove", positionTooltip)
     .on("mouseout", hideTooltip)
@@ -2111,76 +2193,11 @@ function renderEdges() {{
   );
 }}
 
-function closeFocusPanel() {{
-  focusPanel.style.display = "none";
-  focusedNodeId = null;
-  focusContextNodeIds = null;
-  positionNodes();
-  updatePositions();
-  syncVisibility();
-  zoomToVisible();
-}}
-focusClose.addEventListener("click", closeFocusPanel);
-
-pills.on("dblclick", (event, d) => {{
-  event.stopPropagation();
-  focusedNodeId = d.id;
-
-  const edges = edgesByNodeId.get(d.id) || [];
-  const directRoles = [];
-  const seenDirectConnections = new Set();
-  edges
-    .filter(e => e.kind === "role" || e.kind === "alias" || e.kind === "address_link" || e.kind === "org_link")
-    .forEach(e => {{
-      const otherId = e.source === d.id ? e.target : e.source;
-      const key = `${{e.kind}}:${{otherId}}`;
-      if (seenDirectConnections.has(key)) return;
-      seenDirectConnections.add(key);
-      directRoles.push(e);
-    }});
-
-  let html = `<h3>${{d.label}}</h3>`;
-  if (d.aliases && d.aliases.length > 1) {{
-    html += `<div class="dim">Aliases: ${{d.aliases.join(", ")}}</div>`;
-  }}
-  if (d.org_count) html += `<div class="dim">${{d.org_count}} orgs, ${{d.role_count}} roles, score ${{d.score}}</div>`;
-  if (d.appears_under_identities && d.appears_under_identities.length) {{
-    html += `<div class="section"><div class="section-title">Appears under identities</div>`;
-    d.appears_under_identities.forEach(row => {{
-      html += `<div class="conn"><span class="dim">${{row.seed}}:</span> ${{row.identity}}</div>`;
-    }});
-    html += `</div>`;
-  }}
-
-  if (directRoles.length) {{
-    html += `<div class="section"><div class="section-title">Direct connections</div>`;
-    directRoles.forEach(e => {{
-      const otherId = e.source === d.id ? e.target : e.source;
-      const other = nodeById.get(otherId);
-      html += `<div class="conn">${{e.tooltip || (other ? other.label : otherId)}}</div>`;
-    }});
-    html += `</div>`;
-  }}
-
-  focusContent.innerHTML = html;
-  focusPanel.style.display = "block";
-
-  focusContextNodeIds = contextNodeIdsForFocus([d.id]);
-  positionNodes();
-  updatePositions();
-  syncVisibility();
-  zoomToVisible();
-}});
-
-svg.on("dblclick.focus", () => {{
-  if (focusedNodeId) closeFocusPanel();
-}});
 
 // -- search / filter --
 let searchTerm = "";
 
 function applyFilter() {{
-  if (focusedNodeId) closeFocusPanel();
   const q = searchTerm.toLowerCase();
 
   allNodes.forEach(n => {{ n._visible = false; }});
@@ -2241,15 +2258,29 @@ function applyFilter() {{
   }});
 
   if (q) {{
+    searchOrFocusMode = true;
+    allNodes.forEach(n => {{ n._visible = false; }});
     const matchedNodeIds = new Set(
       allNodes
-        .filter(n => n._visible && nodeMatchesQuery(n, q))
+        .filter(n => nodeMatchesQuery(n, q) && selectedNodeTypes.has(nodeTypeKey(n)))
         .map(n => n.id)
     );
-    const contextNodeIds = contextNodeIdsForFocus(matchedNodeIds);
-    allNodes.forEach(n => {{
-      n._visible = n._visible && contextNodeIds.has(n.id);
+    matchedNodeIds.forEach(id => {{
+      const n = nodeById.get(id);
+      if (n) n._visible = true;
     }});
+    const bridgeEndpoints = new Set();
+    matchedNodeIds.forEach(startId => {{
+      findBridgeConnections(startId).forEach(connection => {{
+        bridgeEndpoints.add(connection.target);
+      }});
+    }});
+    bridgeEndpoints.forEach(id => {{
+      const n = nodeById.get(id);
+      if (n) n._visible = true;
+    }});
+  }} else {{
+    searchOrFocusMode = false;
   }}
 
   positionNodes();
