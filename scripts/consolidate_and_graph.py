@@ -1213,6 +1213,16 @@ body {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; backgroun
 }}
 .legend .row {{ display: flex; align-items: center; gap: 6px; }}
 .legend .dot {{ width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }}
+.legend .icon-chip {{
+  width: 18px; height: 18px; border-radius: 999px; display: inline-flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.18);
+}}
+.legend .icon-chip svg {{ width: 12px; height: 12px; overflow: visible; }}
+.legend .icon-chip path {{
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}}
 #graph {{ width: 100vw; height: calc(100vh - 48px); overflow: hidden; }}
 .tooltip {{
   position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -1250,6 +1260,10 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
     <button class="org-dropdown-btn" id="people-dropdown-btn">People &#9662;</button>
     <div class="org-dropdown-menu" id="people-dropdown-menu"></div>
   </div>
+  <div class="org-dropdown" id="type-dropdown">
+    <button class="org-dropdown-btn" id="type-dropdown-btn">Types &#9662;</button>
+    <div class="org-dropdown-menu" id="type-dropdown-menu"></div>
+  </div>
   <label class="toggle">
     <input id="stage3-multi-org-only" type="checkbox" />
     <span>only show individuals connected to 2+ organisations</span>
@@ -1269,14 +1283,7 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
 </div>
 <div id="graph"></div>
 <div class="lane-labels" id="lane-labels"></div>
-<div class="legend">
-  <div class="row"><span class="dot" style="background:var(--red)"></span> Seed</div>
-  <div class="row"><span class="dot" style="background:var(--amber)"></span> Seed identity</div>
-  <div class="row"><span class="dot" style="background:var(--green)"></span> Organisation</div>
-  <div class="row"><span class="dot" style="background:var(--purple)"></span> Address</div>
-  <div class="row"><span class="dot" style="background:var(--blue)"></span> Person</div>
-  <div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</div>
-</div>
+<div class="legend" id="legend"></div>
 <div class="tooltip" id="tooltip"></div>
 <div class="focus-panel" id="focus-panel"><button class="close-btn" id="focus-close">&times;</button><div id="focus-content"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -1316,6 +1323,12 @@ allEdges.forEach(e => {{
   edgesByNodeId.get(e.source).push(e);
   edgesByNodeId.get(e.target).push(e);
 }});
+const directEdgePairs = new Set(
+  allEdges.map(e => {{
+    const [a, b] = [e.source, e.target].sort();
+    return `${{a}}||${{b}}`;
+  }})
+);
 
 // -- build identity and people dropdowns --
 const identityNodes = allNodes
@@ -1330,6 +1343,29 @@ const identityDropdownBtn = document.getElementById("identity-dropdown-btn");
 const identityDropdownMenu = document.getElementById("identity-dropdown-menu");
 const peopleDropdownBtn = document.getElementById("people-dropdown-btn");
 const peopleDropdownMenu = document.getElementById("people-dropdown-menu");
+const typeDropdownBtn = document.getElementById("type-dropdown-btn");
+const typeDropdownMenu = document.getElementById("type-dropdown-menu");
+const legendEl = document.getElementById("legend");
+const nodeTypeOptions = [
+  {{ key: "seed", label: "Seed" }},
+  {{ key: "identity", label: "Identity" }},
+  {{ key: "charity", label: "Charity" }},
+  {{ key: "company", label: "Company" }},
+  {{ key: "organisation", label: "Other organisation" }},
+  {{ key: "address", label: "Address" }},
+  {{ key: "person", label: "Person" }},
+];
+const selectedNodeTypes = new Set(nodeTypeOptions.map(opt => opt.key));
+
+function nodeTypeKey(node) {{
+  if (node.kind === "seed") return "seed";
+  if (node.lane === 1) return "identity";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "charity") return "charity";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "company") return "company";
+  if (node.kind === "organisation") return "organisation";
+  if (node.kind === "address") return "address";
+  return "person";
+}}
 
 // per-person org count for multi-org filter
 const personOrgIds = new Map();
@@ -1525,6 +1561,50 @@ function buildPeopleDropdown() {{
 }}
 buildIdentityDropdown();
 buildPeopleDropdown();
+function buildTypeDropdown() {{
+  if (!typeDropdownMenu || !typeDropdownBtn) return;
+  typeDropdownMenu.innerHTML = "";
+
+  const allRow = document.createElement("label");
+  allRow.style.fontWeight = "600";
+  allRow.style.borderBottom = "1px solid var(--border)";
+  allRow.style.paddingBottom = "6px";
+  allRow.style.marginBottom = "4px";
+  const allCb = document.createElement("input");
+  allCb.type = "checkbox";
+  allCb.checked = nodeTypeOptions.every(opt => selectedNodeTypes.has(opt.key));
+  allCb.addEventListener("change", () => {{
+    if (allCb.checked) nodeTypeOptions.forEach(opt => selectedNodeTypes.add(opt.key));
+    else selectedNodeTypes.clear();
+    buildTypeDropdown();
+    applyFilter();
+  }});
+  allRow.appendChild(allCb);
+  allRow.appendChild(document.createTextNode(" All types"));
+  typeDropdownMenu.appendChild(allRow);
+
+  nodeTypeOptions.forEach(option => {{
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selectedNodeTypes.has(option.key);
+    cb.addEventListener("change", () => {{
+      if (cb.checked) selectedNodeTypes.add(option.key);
+      else selectedNodeTypes.delete(option.key);
+      buildTypeDropdown();
+      applyFilter();
+    }});
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(` ${{option.label}}`));
+    typeDropdownMenu.appendChild(label);
+  }});
+
+  const selectedCount = nodeTypeOptions.filter(opt => selectedNodeTypes.has(opt.key)).length;
+  typeDropdownBtn.textContent = selectedCount === nodeTypeOptions.length
+    ? "Types ▾"
+    : `${{selectedCount}}/${{nodeTypeOptions.length}} types ▾`;
+}}
+buildTypeDropdown();
 
 identityDropdownBtn?.addEventListener("click", (e) => {{
   e.stopPropagation();
@@ -1534,12 +1614,18 @@ peopleDropdownBtn.addEventListener("click", (e) => {{
   e.stopPropagation();
   peopleDropdownMenu.classList.toggle("open");
 }});
+typeDropdownBtn?.addEventListener("click", (e) => {{
+  e.stopPropagation();
+  typeDropdownMenu?.classList.toggle("open");
+}});
 document.addEventListener("click", () => {{
   identityDropdownMenu?.classList.remove("open");
   peopleDropdownMenu.classList.remove("open");
+  typeDropdownMenu?.classList.remove("open");
 }});
 identityDropdownMenu?.addEventListener("click", (e) => e.stopPropagation());
 peopleDropdownMenu.addEventListener("click", (e) => e.stopPropagation());
+typeDropdownMenu?.addEventListener("click", (e) => e.stopPropagation());
 
 // -- measure text widths via hidden canvas --
 const measureCtx = document.createElement("canvas").getContext("2d");
@@ -1551,6 +1637,60 @@ function textWidth(text, fs) {{
 function nodeLabel(d) {{
   return d.label;
 }}
+function iconPath(kind) {{
+  if (kind === "identity") return "M12 12a3 3 0 1 0 0-6a3 3 0 0 0 0 6ZM6.5 18a5.5 5.5 0 0 1 11 0";
+  if (kind === "address") return "M12 21s-5-4.35-5-8.5a5 5 0 1 1 10 0C17 16.65 12 21 12 21Zm0-7a1.8 1.8 0 1 0 0-3.6A1.8 1.8 0 0 0 12 14Z";
+  if (kind === "accountancy") return "M8 3h8a2 2 0 0 1 2 2v14H6V5a2 2 0 0 1 2-2Zm1 4h6M9 11h2M13 11h2M9 15h2M13 15h2";
+  if (kind === "charity") return "M12 20s-6-3.9-6-8.2A3.8 3.8 0 0 1 12 9a3.8 3.8 0 0 1 6 2.8C18 16.1 12 20 12 20Z";
+  if (kind === "company") return "M4 20h16M6 20V9l4-3v14M14 20V5h4v15M8 11h.01M8 14h.01M8 17h.01M16 9h.01M16 12h.01M16 15h.01";
+  if (kind === "organisation") return "M12 5v3M7 18h10M8 18l1.5-6h5L16 18M6 10h12";
+  return "M12 12a3 3 0 1 0 0-6a3 3 0 0 0 0 6Zm-5.5 7a5.5 5.5 0 0 1 11 0";
+}}
+function iconSpec(kind) {{
+  if (kind === "identity") return {{ fill: "var(--amber)", color: "#0f172a", path: iconPath("identity") }};
+  if (kind === "address") return {{ fill: "var(--purple)", color: "#ffffff", path: iconPath("address") }};
+  if (kind === "accountancy") return {{ fill: "#8b5cf6", color: "#ffffff", path: iconPath("accountancy") }};
+  if (kind === "charity") return {{ fill: "var(--green)", color: "#ffffff", path: iconPath("charity") }};
+  if (kind === "company") return {{ fill: "#0ea5e9", color: "#ffffff", path: iconPath("company") }};
+  if (kind === "organisation") return {{ fill: "#475569", color: "#ffffff", path: iconPath("organisation") }};
+  return {{ fill: "var(--blue)", color: "#ffffff", path: iconPath("person") }};
+}}
+function badgeSpec(d) {{
+  const label = (d.label || "").toLowerCase();
+  const looksLikeAccountancy = /(account|audit|auditor|accountant|accounting|chartered)/.test(label);
+  if (d.kind === "seed") return null;
+  if (d.kind === "seed_alias") return iconSpec("identity");
+  if (d.kind === "address") return iconSpec("address");
+  if (looksLikeAccountancy) return iconSpec("accountancy");
+  if (d.kind === "organisation" && (d.registry_type || "").toLowerCase() === "charity") return iconSpec("charity");
+  if (d.kind === "organisation" && (d.registry_type || "").toLowerCase() === "company") return iconSpec("company");
+  if (d.kind === "organisation") return iconSpec("organisation");
+  return iconSpec("person");
+}}
+function badgeWidth(d) {{ return badgeSpec(d) ? 18 : 0; }}
+function badgeHeight(d) {{ return Math.max(14, pillHeight(d) - 6); }}
+function badgeTextInset(d) {{ return badgeSpec(d) ? 34 : 16; }}
+function iconSvgMarkup(spec) {{
+  return `<span class="icon-chip" style="background:${{spec.fill}};color:${{spec.color}}">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${{spec.path}}"></path></svg>
+  </span>`;
+}}
+function renderLegend() {{
+  if (!legendEl) return;
+  const rows = [
+    `<div class="row"><span class="dot" style="background:var(--red)"></span> Seed</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("identity"))}} Identity</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("charity"))}} Charity</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("company"))}} Company</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("accountancy"))}} Accountancy firm</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("address"))}} Address</div>`,
+    `<div class="row">${{iconSvgMarkup(iconSpec("person"))}} Person</div>`,
+    `<div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</div>`,
+  ];
+  legendEl.innerHTML = rows.join("");
+}}
+renderLegend();
 function nodeMatchesQuery(d, q) {{
   if (!q) return true;
   const labelMatch = (d.label || "").toLowerCase().includes(q);
@@ -1592,7 +1732,7 @@ function fontSize(d) {{
   return 10.5;
 }}
 function pillHeight(d) {{ return fontSize(d) + 12; }}
-function pillWidth(d) {{ return textWidth(nodeLabel(d), fontSize(d)) + 18; }}
+function pillWidth(d) {{ return badgeWidth(d) + textWidth(nodeLabel(d), fontSize(d)) + 32; }}
 
 function nodeColor(d) {{
   if (d.sanctioned) return "#ff2222";
@@ -1603,6 +1743,7 @@ function nodeColor(d) {{
   return "var(--blue)";
 }}
 function edgeStroke(d) {{
+  if (d.kind === "bridge") return "#94a3b8";
   if (d.kind === "alias") return "var(--amber)";
   if (d.kind === "org_link") return "var(--green)";
   if (d.kind === "address_link") return "var(--purple)";
@@ -1695,11 +1836,7 @@ positionNodes();
 
 // -- edges layer --
 const edgeGroup = gRoot.append("g");
-const roleLine = edgeGroup.selectAll("line.role-edge").data(allEdges).join("line")
-  .attr("class", "role-edge")
-  .attr("stroke", edgeStroke)
-  .attr("stroke-width", d => d.kind === "alias" ? 2.5 : 1.4 + (d.weight || 0) * 1.5)
-  .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : 0.45);
+let roleLine = edgeGroup.selectAll("line.role-edge");
 
 // -- nodes layer: pill groups --
 const nodeGroup = gRoot.append("g");
@@ -1723,10 +1860,39 @@ pills.append("text")
   .attr("font-size", fontSize)
   .attr("font-weight", d => (d.kind === "seed" || d.kind === "seed_alias") ? 600 : 400)
   .attr("fill", d => (d.kind === "seed" || d.kind === "seed_alias") ? "var(--text-bright)" : "var(--text)")
-  .attr("text-anchor", "middle")
+  .attr("text-anchor", "start")
   .attr("dominant-baseline", "central")
-  .attr("x", d => pillWidth(d) / 2)
+  .attr("x", badgeTextInset)
   .attr("y", d => pillHeight(d) / 2)
+  .style("pointer-events", "none");
+
+const badgeGroups = pills.append("g")
+  .style("display", d => badgeSpec(d) ? null : "none");
+
+badgeGroups.append("rect")
+  .attr("rx", d => badgeHeight(d) / 2)
+  .attr("ry", d => badgeHeight(d) / 2)
+  .attr("x", 8)
+  .attr("y", d => (pillHeight(d) - badgeHeight(d)) / 2)
+  .attr("width", badgeWidth)
+  .attr("height", badgeHeight)
+  .attr("fill", d => badgeSpec(d)?.fill || "transparent")
+  .attr("stroke", "rgba(255,255,255,0.18)")
+  .attr("stroke-width", 0.8);
+
+badgeGroups.append("path")
+  .attr("d", d => badgeSpec(d)?.path || "")
+  .attr("transform", d => {{
+    const size = 24 * 0.5;
+    const x = 8 + (badgeWidth(d) - size) / 2;
+    const y = (pillHeight(d) - size) / 2;
+    return `translate(${{x}},${{y}}) scale(0.5)`;
+  }})
+  .attr("fill", "none")
+  .attr("stroke", d => badgeSpec(d)?.color || "transparent")
+  .attr("stroke-width", 1.8)
+  .attr("stroke-linecap", "round")
+  .attr("stroke-linejoin", "round")
   .style("pointer-events", "none");
 
 function updatePositions() {{
@@ -1737,6 +1903,7 @@ function updatePositions() {{
     .attr("y2", d => nodeById.get(d.target)?.y ?? 0);
   pills.attr("transform", d => `translate(${{d.x - pillWidth(d) / 2}},${{d.y - pillHeight(d) / 2}})`);
 }}
+renderEdges();
 updatePositions();
 
 // -- lane labels --
@@ -1783,13 +1950,6 @@ pills
   .on("mousemove", (event) => positionTooltip(event))
   .on("mouseout", hideTooltip);
 
-roleLine
-  .on("mouseover", (event, d) => showTooltip(event, [d.tooltip || "link"]))
-  .on("mousemove", positionTooltip)
-  .on("mouseout", hideTooltip)
-  .style("cursor", "default")
-  .style("pointer-events", "stroke");
-
 // -- drag --
 const drag = d3.drag()
   .on("start", (event, d) => {{ d._dragging = true; }})
@@ -1815,6 +1975,88 @@ function isEdgeDisplayed(edge) {{
   const sourceNode = nodeById.get(edge.source);
   const targetNode = nodeById.get(edge.target);
   return isNodeDisplayed(sourceNode) && isNodeDisplayed(targetNode);
+}}
+
+function edgePairKey(a, b) {{
+  return a < b ? `${{a}}||${{b}}` : `${{b}}||${{a}}`;
+}}
+
+function bridgeTooltip(sourceId, targetId, hops) {{
+  const source = nodeById.get(sourceId);
+  const target = nodeById.get(targetId);
+  const viaText = hops === 1 ? "1 hidden node" : `${{hops}} hidden nodes`;
+  return `${{source?.label || sourceId}} is connected to ${{target?.label || targetId}} via ${{viaText}}`;
+}}
+
+function derivedVisibleEdges() {{
+  const displayedIds = new Set(allNodes.filter(isNodeDisplayed).map(n => n.id));
+  const bridges = new Map();
+  displayedIds.forEach(startId => {{
+    const hiddenQueue = [];
+    const seenHidden = new Set();
+    (edgesByNodeId.get(startId) || []).forEach(edge => {{
+      const nextId = edge.source === startId ? edge.target : edge.source;
+      if (displayedIds.has(nextId) || seenHidden.has(nextId)) return;
+      seenHidden.add(nextId);
+      hiddenQueue.push({{ id: nextId, hops: 1 }});
+    }});
+    while (hiddenQueue.length) {{
+      const current = hiddenQueue.shift();
+      (edgesByNodeId.get(current.id) || []).forEach(edge => {{
+        const nextId = edge.source === current.id ? edge.target : edge.source;
+        if (nextId === startId) return;
+        if (displayedIds.has(nextId)) {{
+          const pairKey = edgePairKey(startId, nextId);
+          if (directEdgePairs.has(pairKey)) return;
+          const [source, target] = startId < nextId ? [startId, nextId] : [nextId, startId];
+          const existing = bridges.get(pairKey);
+          if (!existing || current.hops < existing.hops) {{
+            bridges.set(pairKey, {{
+              source,
+              target,
+              kind: "bridge",
+              hops: current.hops,
+              tooltip: bridgeTooltip(source, target, current.hops),
+            }});
+          }}
+          return;
+        }}
+        if (seenHidden.has(nextId)) return;
+        seenHidden.add(nextId);
+        hiddenQueue.push({{ id: nextId, hops: current.hops + 1 }});
+      }});
+    }}
+  }});
+  return [...bridges.values()];
+}}
+
+function renderedEdges() {{
+  return allEdges.filter(isEdgeDisplayed).concat(derivedVisibleEdges());
+}}
+
+function bindRoleLines(selection) {{
+  return selection
+    .attr("stroke", edgeStroke)
+    .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "bridge" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
+    .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "bridge" ? 0.65 : 0.45)
+    .attr("stroke-dasharray", d => d.kind === "bridge" ? "5 4" : null)
+    .on("mouseover", (event, d) => showTooltip(event, [d.tooltip || "link"]))
+    .on("mousemove", positionTooltip)
+    .on("mouseout", hideTooltip)
+    .style("cursor", "default")
+    .style("pointer-events", "stroke");
+}}
+
+function renderEdges() {{
+  roleLine = bindRoleLines(
+    edgeGroup.selectAll("line.role-edge")
+      .data(renderedEdges(), d => `${{d.kind}}:${{d.source}}:${{d.target}}:${{d.hops || 0}}:${{d.tooltip || ""}}`)
+      .join(
+        enter => enter.append("line").attr("class", "role-edge"),
+        update => update,
+        exit => exit.remove()
+      )
+  );
 }}
 
 function closeFocusPanel() {{
@@ -1942,6 +2184,10 @@ function applyFilter() {{
   }});
   allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = visibleSeeds.has(n.id); }});
 
+  allNodes.forEach(n => {{
+    n._visible = n._visible && selectedNodeTypes.has(nodeTypeKey(n));
+  }});
+
   if (q) {{
     const matchedNodeIds = new Set(
       allNodes
@@ -2003,10 +2249,8 @@ function syncVisibility() {{
   pills
     .attr("display", d => isNodeDisplayed(d) ? null : "none")
     .attr("opacity", d => isNodeDisplayed(d) ? 1 : 0);
-
-  roleLine
-    .attr("display", d => isEdgeDisplayed(d) ? null : "none")
-    .attr("stroke-opacity", d => isEdgeDisplayed(d) ? (d.kind === "alias" ? 0.8 : 0.45) : 0);
+  renderEdges();
+  updatePositions();
 }}
 
 function zoomToVisible() {{
