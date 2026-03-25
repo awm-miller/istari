@@ -1359,7 +1359,7 @@ const W = container.clientWidth;
 const H = container.clientHeight;
 
 const LANE_Y = {{ 0: 80, 1: 260, 2: 520, 3: 760, 4: 980 }};
-const LANE_NAMES = {{ 0: "Seed", 1: "Identity", 2: "Organisations", 3: "Addresses", 4: "People" }};
+const LANE_NAMES = {{ 1: "Identity", 2: "Organisations", 3: "Addresses", 4: "People" }};
 
 const svg = d3.select(container).append("svg")
   .attr("width", "100%").attr("height", "100%")
@@ -1401,7 +1401,6 @@ const typeDropdownBtn = document.getElementById("type-dropdown-btn");
 const typeDropdownMenu = document.getElementById("type-dropdown-menu");
 const legendEl = document.getElementById("legend");
 const nodeTypeOptions = [
-  {{ key: "seed", label: "Seed" }},
   {{ key: "identity", label: "Identity" }},
   {{ key: "charity", label: "Charity" }},
   {{ key: "company", label: "Company" }},
@@ -1732,7 +1731,6 @@ function iconSvgMarkup(spec) {{
 function renderLegend() {{
   if (!legendEl) return;
   const rows = [
-    `<div class="row"><span class="dot" style="background:var(--red)"></span> Seed</div>`,
     `<div class="row">${{iconSvgMarkup(iconSpec("identity"))}} Identity</div>`,
     `<div class="row">${{iconSvgMarkup(iconSpec("charity"))}} Charity</div>`,
     `<div class="row">${{iconSvgMarkup(iconSpec("company"))}} Company</div>`,
@@ -1830,7 +1828,7 @@ function positionNodes() {{
   const visible = allNodes.filter(n => n._visible !== false);
   let curY = 60;
   if (!multiSeed) {{
-    const laneKeys = [0, 1, 2, 3, 4];
+    const laneKeys = [1, 2, 3, 4];
     laneKeys.forEach(lane => {{
       const list = visible.filter(n => n.lane === lane);
       LANE_Y[lane] = curY;
@@ -1838,10 +1836,6 @@ function positionNodes() {{
       curY += Math.max(h, 30) + LANE_GAP;
     }});
   }} else {{
-    LANE_Y[0] = curY;
-    const seedH = layoutRow(visible.filter(n => n.kind === "seed"), curY, 0, W);
-    curY += Math.max(seedH, 30) + LANE_GAP;
-
     LANE_Y[1] = curY;
     const idH = layoutRow(visible.filter(n => n.lane === 1), curY, 0, W);
     curY += Math.max(idH, 30) + LANE_GAP;
@@ -1922,7 +1916,7 @@ badgeGroups.append("path")
   .style("pointer-events", "none");
 
 function updatePositions() {{
-  roleLine
+  edgeGroup.selectAll("line")
     .attr("x1", d => nodeById.get(d.source)?.x ?? 0)
     .attr("y1", d => nodeById.get(d.source)?.y ?? 0)
     .attr("x2", d => nodeById.get(d.target)?.x ?? 0)
@@ -2044,7 +2038,7 @@ function displayedNodeIds() {{
 
 function isBridgeEndpoint(node) {{
   if (!node) return false;
-  return node.kind === "seed" || node.kind === "address" || node.lane === 1 || node.lane === 4;
+  return node.kind === "address" || node.lane === 1 || node.lane === 4;
 }}
 
 function findBridgeConnections(startId) {{
@@ -2174,23 +2168,32 @@ function bindRoleLines(selection) {{
     .attr("stroke-width", d => d.kind === "alias" ? 2.5 : d.kind === "hidden_connection" ? 1.6 : 1.4 + (d.weight || 0) * 1.5)
     .attr("stroke-opacity", d => d.kind === "alias" ? 0.8 : d.kind === "hidden_connection" ? 0.65 : 0.45)
     .attr("stroke-dasharray", d => d.kind === "hidden_connection" ? "5 4" : null)
-    .on("mouseover", (event, d) => showTooltip(event, d.tooltip_lines || [d.tooltip || "link"]))
-    .on("mousemove", positionTooltip)
-    .on("mouseout", hideTooltip)
-    .style("cursor", "default")
-    .style("pointer-events", "stroke");
+    .style("pointer-events", "none");
 }}
 
 function renderEdges() {{
-  roleLine = bindRoleLines(
-    edgeGroup.selectAll("line.role-edge")
-      .data(renderedEdges(), d => `${{d.kind}}:${{d.source}}:${{d.target}}:${{d.hops || 0}}:${{(d.tooltip_lines || [d.tooltip || ""]).join("|")}}`)
-      .join(
-        enter => enter.append("line").attr("class", "role-edge"),
-        update => update,
-        exit => exit.remove()
-      )
-  );
+  const edgeData = renderedEdges();
+  const key = d => `${{d.kind}}:${{d.source}}:${{d.target}}:${{d.hops || 0}}:${{(d.tooltip_lines || [d.tooltip || ""]).join("|")}}`;
+  const groups = edgeGroup.selectAll("g.edge-group")
+    .data(edgeData, key)
+    .join(
+      enter => {{
+        const g = enter.append("g").attr("class", "edge-group");
+        g.append("line").attr("class", "role-edge-hit")
+          .attr("stroke", "transparent").attr("stroke-width", 12)
+          .style("pointer-events", "stroke");
+        g.append("line").attr("class", "role-edge")
+          .style("pointer-events", "none");
+        return g;
+      }},
+      update => update,
+      exit => exit.remove()
+    );
+  roleLine = bindRoleLines(groups.select("line.role-edge"));
+  groups.select("line.role-edge-hit")
+    .on("mouseover", (event, d) => showTooltip(event, d.tooltip_lines || [d.tooltip || "link"]))
+    .on("mousemove", positionTooltip)
+    .on("mouseout", hideTooltip);
 }}
 
 
@@ -2240,18 +2243,7 @@ function applyFilter() {{
   }});
   allNodes.filter(n => n.lane === 1).forEach(n => {{ n._visible = visibleAliases.has(n.id); }});
 
-  const visibleSeeds = new Set();
-  allEdges.forEach(e => {{
-    if (e.kind !== "alias") return;
-    const sourceNode = nodeById.get(e.source);
-    const targetNode = nodeById.get(e.target);
-    const seedNode = sourceNode?.kind === "seed" ? sourceNode : targetNode?.kind === "seed" ? targetNode : null;
-    const aliasNode = sourceNode?.lane === 1 ? sourceNode : targetNode?.lane === 1 ? targetNode : null;
-    if (!seedNode || !aliasNode) return;
-    if (!visibleAliases.has(aliasNode.id)) return;
-    visibleSeeds.add(seedNode.id);
-  }});
-  allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = visibleSeeds.has(n.id); }});
+  allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
 
   allNodes.forEach(n => {{
     n._visible = n._visible && selectedNodeTypes.has(nodeTypeKey(n));
@@ -2269,15 +2261,34 @@ function applyFilter() {{
       const n = nodeById.get(id);
       if (n) n._visible = true;
     }});
-    const bridgeEndpoints = new Set();
+
+    function walkDownstream(nodeId, visited) {{
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+      const node = nodeById.get(nodeId);
+      if (!node) return;
+      node._visible = true;
+      const nodeLane = node.lane ?? 0;
+      (edgesByNodeId.get(nodeId) || []).forEach(e => {{
+        const otherId = e.source === nodeId ? e.target : e.source;
+        const otherNode = nodeById.get(otherId);
+        if (!otherNode) return;
+        const otherLane = otherNode.lane ?? 0;
+        if (otherLane > nodeLane) walkDownstream(otherId, visited);
+      }});
+    }}
+    const downstreamVisited = new Set();
+    matchedNodeIds.forEach(id => walkDownstream(id, downstreamVisited));
+
     matchedNodeIds.forEach(startId => {{
       findBridgeConnections(startId).forEach(connection => {{
-        bridgeEndpoints.add(connection.target);
+        const otherNode = nodeById.get(connection.target);
+        if (!otherNode) return;
+        const startNode = nodeById.get(startId);
+        const startLane = startNode?.lane ?? 0;
+        const otherLane = otherNode.lane ?? 0;
+        if (otherLane <= startLane) otherNode._visible = true;
       }});
-    }});
-    bridgeEndpoints.forEach(id => {{
-      const n = nodeById.get(id);
-      if (n) n._visible = true;
     }});
   }} else {{
     searchOrFocusMode = false;
