@@ -1252,14 +1252,6 @@ body {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; backgroun
 .search-box .clear-btn {{
   background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 16px; padding: 2px 6px;
 }}
-.lane-labels {{
-  position: absolute; left: 8px; top: 56px; z-index: 15; pointer-events: none;
-}}
-.lane-label {{
-  font-size: 11px; font-weight: 700; color: var(--text-dim); letter-spacing: 0.5px;
-  text-transform: uppercase; position: absolute; left: 0; transform: translateY(-50%);
-  background: var(--bg); padding: 2px 8px; border-radius: 4px;
-}}
 .legend {{
   position: absolute; top: 56px; right: 12px; z-index: 15;
   display: flex; flex-direction: column; gap: 5px; background: var(--surface);
@@ -1336,7 +1328,6 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
   </div>
 </div>
 <div id="graph"></div>
-<div class="lane-labels" id="lane-labels"></div>
 <div class="legend" id="legend"></div>
 <div class="tooltip" id="tooltip"></div>
 <div class="focus-panel" id="focus-panel"><button class="close-btn" id="focus-close">&times;</button><div id="focus-content"></div></div>
@@ -1350,7 +1341,6 @@ const container = document.getElementById("graph");
 const tooltipEl = document.getElementById("tooltip");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
-const laneLabelsDiv = document.getElementById("lane-labels");
 const stage3MultiOrgToggle = document.getElementById("stage3-multi-org-only");
 const orgMultiPersonToggle = document.getElementById("org-multi-person-only");
 const overlapsOnlyToggle = document.getElementById("overlaps-only");
@@ -1926,27 +1916,6 @@ function updatePositions() {{
 renderEdges();
 updatePositions();
 
-// -- lane labels --
-function updateLaneLabels() {{
-  const t = d3.zoomTransform(svg.node());
-  laneLabelsDiv.innerHTML = "";
-  Object.entries(LANE_NAMES).forEach(([lane, name]) => {{
-    const screenY = LANE_Y[lane] * t.k + t.y + 48;
-    const el = document.createElement("div");
-    el.className = "lane-label";
-    el.style.top = screenY + "px";
-    el.textContent = name;
-    laneLabelsDiv.appendChild(el);
-  }});
-}}
-updateLaneLabels();
-svg.on("zoom.labels", null);
-zoom.on("zoom.labels", updateLaneLabels);
-svg.call(zoom).on("zoom", (e) => {{
-  gRoot.attr("transform", e.transform);
-  updateLaneLabels();
-}});
-
 // -- tooltip --
 function showTooltip(event, lines) {{
   tooltipEl.innerHTML = lines.join("<br>");
@@ -2262,7 +2231,7 @@ function applyFilter() {{
       if (n) n._visible = true;
     }});
 
-    function walkDownstream(nodeId, visited) {{
+    function walkConnected(nodeId, visited, directionFn) {{
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
       const node = nodeById.get(nodeId);
@@ -2274,22 +2243,14 @@ function applyFilter() {{
         const otherNode = nodeById.get(otherId);
         if (!otherNode) return;
         const otherLane = otherNode.lane ?? 0;
-        if (otherLane > nodeLane) walkDownstream(otherId, visited);
+        if (directionFn(otherLane, nodeLane)) walkConnected(otherId, visited, directionFn);
       }});
     }}
     const downstreamVisited = new Set();
-    matchedNodeIds.forEach(id => walkDownstream(id, downstreamVisited));
-
-    matchedNodeIds.forEach(startId => {{
-      findBridgeConnections(startId).forEach(connection => {{
-        const otherNode = nodeById.get(connection.target);
-        if (!otherNode) return;
-        const startNode = nodeById.get(startId);
-        const startLane = startNode?.lane ?? 0;
-        const otherLane = otherNode.lane ?? 0;
-        if (otherLane <= startLane) otherNode._visible = true;
-      }});
-    }});
+    matchedNodeIds.forEach(id => walkConnected(id, downstreamVisited, (other, self) => other > self));
+    const upstreamVisited = new Set();
+    matchedNodeIds.forEach(id => walkConnected(id, upstreamVisited, (other, self) => other < self));
+    allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
   }} else {{
     searchOrFocusMode = false;
   }}
