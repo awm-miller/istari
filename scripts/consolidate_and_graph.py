@@ -2231,7 +2231,7 @@ function applyFilter() {{
       if (n) n._visible = true;
     }});
 
-    function walkConnected(nodeId, visited, directionFn) {{
+    function walkDownstream(nodeId, visited) {{
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
       const node = nodeById.get(nodeId);
@@ -2243,13 +2243,20 @@ function applyFilter() {{
         const otherNode = nodeById.get(otherId);
         if (!otherNode) return;
         const otherLane = otherNode.lane ?? 0;
-        if (directionFn(otherLane, nodeLane)) walkConnected(otherId, visited, directionFn);
+        if (otherLane > nodeLane) walkDownstream(otherId, visited);
       }});
     }}
     const downstreamVisited = new Set();
-    matchedNodeIds.forEach(id => walkConnected(id, downstreamVisited, (other, self) => other > self));
-    const upstreamVisited = new Set();
-    matchedNodeIds.forEach(id => walkConnected(id, upstreamVisited, (other, self) => other < self));
+    matchedNodeIds.forEach(id => walkDownstream(id, downstreamVisited));
+    matchedNodeIds.forEach(startId => {{
+      findBridgeConnections(startId).forEach(connection => {{
+        const n = nodeById.get(connection.target);
+        if (n) n._visible = true;
+      }});
+    }});
+    allNodes.filter(n => n._visible && n.kind === "organisation").forEach(n => {{
+      walkDownstream(n.id, downstreamVisited);
+    }});
     allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
   }} else {{
     searchOrFocusMode = false;
