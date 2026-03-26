@@ -2358,6 +2358,7 @@ function applyFilter() {{
       const n = nodeById.get(id);
       if (n) n._visible = true;
     }});
+    const peopleOnlySearch = q && matchedNodeIds.size > 0 && [...matchedNodeIds].every(id => nodeById.get(id)?.lane === 4);
 
     function walkLane(nodeId, visited, directionFn) {{
       if (visited.has(nodeId)) return;
@@ -2400,6 +2401,7 @@ function applyFilter() {{
         const n = nodeById.get(connection.target);
         if (!n) return;
         if ((indirectOrgsActive || stage3FocusActive) && n.lane !== 1) return;
+        if (peopleOnlySearch && n.lane === 4) return;
         n._visible = true;
       }});
     }});
@@ -2407,7 +2409,15 @@ function applyFilter() {{
       const downstreamVisited = new Set();
       matchedNodeIds.forEach(id => walkLane(id, downstreamVisited, (other, self) => other > self));
       allNodes.filter(n => n._visible && n.kind === "organisation").forEach(n => {{
-        walkLane(n.id, downstreamVisited, (other, self) => other > self);
+        if (!peopleOnlySearch) {{
+          walkLane(n.id, downstreamVisited, (other, self) => other > self);
+          return;
+        }}
+        (edgesByNodeId.get(n.id) || []).forEach(e => {{
+          const otherId = e.source === n.id ? e.target : e.source;
+          const otherNode = nodeById.get(otherId);
+          if (otherNode?.kind === "address") otherNode._visible = true;
+        }});
       }});
     }}
     allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
