@@ -9,7 +9,7 @@ This file is a quick reference for the terms used in the generated graph view in
 - `lane 2`: `Organisations`
   Companies, charities, and other org-like entities.
 - `lane 3`: `Addresses`
-  Shared or registered addresses linked to organisations.
+  Shared or registered addresses linked to organisations. During multi-run rebuilds, equivalent address variants can collapse into one merged node so multiple org edges draw to the same place.
 - `lane 4`: `People`
   Non-seed people pulled in from org records.
 
@@ -38,7 +38,7 @@ In search mode, we now treat upstream and downstream differently depending on th
 - `organisation`
   A company, charity, or similar entity in lane 2.
 - `address`
-  An address node in lane 3.
+  An address node in lane 3. In the combined graph this may represent multiple equivalent raw address labels.
 - `person`
   A lane-4 individual from organisation records.
 

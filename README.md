@@ -6,15 +6,15 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 ## Architecture
 
-![Pipeline Architecture](docs/architecture.png)
+![Pipeline Architecture](docs/architecture.svg)
 
 ### Pipeline stages
 
 | Stage | What happens |
 |---|---|
-| **Step 1 — Seed Expansion** | Generate name variants from the seed, search the Charity Commission API, Companies House API, and web (Serper). An AI entity-resolution layer (Gemini / OpenAI) matches candidates to real registry records. |
+| **Step 1 — Seed Expansion** | Generate name variants from the seed, search the Charity Commission API, Companies House API, and web (Serper). A rules-first entity-resolution layer uses Gemini / OpenAI only for ambiguous candidates. |
 | **Step 2 — Org Expansion** | Walk linked charities and companies outward from Step 1 matches. An address-pivot search finds additional organisations registered at the same addresses. |
-| **Step 2b — PDF Enrichment** | Download charity/company PDFs (annual reports, accounts) and extract structured data via OpenDataLoader + Gemini. |
+| **Step 2b — PDF Enrichment** | Download charity/company PDFs (annual reports, accounts) and extract structured data via OpenDataLoader + Gemini, including connection phrasing and explanatory detail for mentions. |
 | **Step 3 — People Expansion** | Discover trustees, directors, secretaries, and officers for every scoped organisation. Rank people by the number and weight of their connections. |
 | **Step 4 — OFAC Screening** | Screen the ranked people list against the US Treasury OFAC SDN sanctions list. |
 
@@ -31,6 +31,7 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 - **SQLite** — all entities, relationships, resolution decisions, and run metadata
 - **Flask web UI** — serves an interactive network graph at `localhost:5000`
 - **JSON export** — graph payload for the Netlify viewer
+- **Graph rebuild** — merges person aliases and equivalent addresses across runs so shared edges collapse onto common nodes
 
 ## Quick start
 
@@ -52,6 +53,9 @@ python -m src.cli run-seeds "Jane Smith" "John Doe"
 
 # Launch the web UI
 python -m src.cli web-ui
+
+# Rebuild the combined graph from all saved runs
+python scripts/rebuild_graph.py
 ```
 
 ## CLI commands
