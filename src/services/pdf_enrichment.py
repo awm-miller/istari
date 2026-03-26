@@ -157,6 +157,7 @@ def parse_pdf_entities_document(
         if role_category not in _ALLOWED_ROLE_CATEGORIES:
             role_category = "ignore"
         role_label = _clean_text(row.get("role_label", ""))
+        connection_phrase = _clean_text(row.get("connection_phrase", ""))
         source_page_hint = _clean_text(row.get("source_page_hint", ""))
         registry_hint = _clean_text(row.get("registry_hint", ""))
         notes = _clean_text(row.get("notes", ""))
@@ -173,6 +174,7 @@ def parse_pdf_entities_document(
                 role_label=role_label,
                 organisation_name=_clean_text(row.get("organisation_name") or organisation_name),
                 source_document_url=source_document_url,
+                connection_phrase=connection_phrase,
                 source_page_hint=source_page_hint,
                 confidence=max(0.0, min(confidence, 1.0)),
                 registry_hint=registry_hint,
@@ -184,15 +186,34 @@ def parse_pdf_entities_document(
 
 def role_mapping_for_entity(entity: PdfExtractedEntity) -> tuple[str, str, str, str, float] | None:
     label = entity.role_label or entity.role_category or entity.entity_type
+    phrase = entity.connection_phrase.strip()
     if entity.role_category == "ignore":
         return None
     if entity.role_category == "organisation":
         return None
     if entity.role_category == "accountant_or_auditor":
-        return ("accountant_or_auditor", label, "professional_to", "is an accountant or auditor for", 0.6)
+        return (
+            "accountant_or_auditor",
+            label,
+            "professional_to",
+            phrase or "is an accountant or auditor for",
+            0.6,
+        )
     if entity.role_category == "other_professional":
-        return ("other_professional", label, "professional_to", "is professionally linked to", 0.55)
-    return ("pdf_person_mention", label or "pdf_person_mention", "mentioned_for", "is mentioned in documents for", 0.45)
+        return (
+            "other_professional",
+            label,
+            "professional_to",
+            phrase or "is professionally linked to",
+            0.55,
+        )
+    return (
+        "pdf_person_mention",
+        label or "pdf_person_mention",
+        "mentioned_for",
+        phrase or "is mentioned in documents for",
+        0.45,
+    )
 
 
 def _build_extraction_prompt(
@@ -214,6 +235,7 @@ Return JSON only with this shape:
       "entity_type": "person" | "organisation" | "other",
       "role_category": "person" | "organisation" | "accountant_or_auditor" | "other_professional" | "ignore",
       "role_label": "",
+      "connection_phrase": "",
       "organisation_name": "",
       "source_page_hint": "",
       "confidence": 0.0,
@@ -228,6 +250,8 @@ Rules:
 - Use role_category=organisation for named organisations mentioned as counterparties, linked entities, subsidiaries, parent entities, auditors, accountants, or service firms.
 - Use role_category=accountant_or_auditor for people or firms acting as auditor, examiner, accountant, or accounting practice.
 - Use role_category=ignore for incidental names that are not useful for registry/company pivoting.
+- Set connection_phrase to a short natural-language phrase that explains the relationship to the scoped organisation, e.g. "is listed as a director of", "is named as auditor for", "is identified as a subsidiary of", "is described as providing services to".
+- Use notes to briefly explain how the document makes that link, quoting or paraphrasing the relevant context.
 - Prefer precision over recall.
 - Do not invent registry numbers.
 - Keep organisation_name as the scoped organisation unless the text clearly ties the entity to another organisation.
@@ -740,6 +764,8 @@ class PdfEnrichmentService:
                 "document_url": entity.source_document_url,
                 "entity_name": entity.name,
                 "role_category": entity.role_category,
+                "connection_phrase": entity.connection_phrase,
+                "connection_detail": entity.notes,
                 "evidence_id": evidence_id,
             },
         )

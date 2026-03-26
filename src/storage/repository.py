@@ -710,7 +710,8 @@ class Repository:
                     person_org_roles.relationship_phrase,
                     person_org_roles.source,
                     person_org_roles.confidence_class,
-                    person_org_roles.edge_weight
+                    person_org_roles.edge_weight,
+                    person_org_roles.provenance_json
                 FROM person_org_roles
                 JOIN people
                     ON people.id = person_org_roles.person_id

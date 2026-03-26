@@ -12,7 +12,6 @@ from urllib import error, request
 from urllib.parse import urlparse
 
 from src.charity_commission.identifiers import extract_charity_number_from_url
-from src.charity_commission.search import CharityCommissionSearchProvider
 from src.companies_house.client import CompaniesHouseClient, extract_officer_id
 from src.companies_house.relationships import (
     company_relationship_kind,
@@ -540,8 +539,6 @@ def build_search_providers(
     include_web_dork: bool = True,
 ) -> list[SearchProvider]:
     providers: list[SearchProvider] = []
-    if settings.charity_api_key:
-        providers.append(CharityCommissionSearchProvider(settings))
     if settings.serper_api_key and settings.charity_api_key:
         providers.append(CharityCommissionSiteDorkProvider(settings))
     if include_web_dork:

@@ -79,6 +79,7 @@ class PdfExtractedEntity:
     role_label: str
     organisation_name: str
     source_document_url: str
+    connection_phrase: str = ""
     source_page_hint: str = ""
     confidence: float = 0.0
     registry_hint: str = ""

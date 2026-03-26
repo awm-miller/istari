@@ -190,6 +190,18 @@ def _linked_org_phrase(source: str, metadata: dict[str, object]) -> str:
     return "is linked to"
 
 
+def _linked_org_detail(metadata: dict[str, object]) -> str:
+    return str(metadata.get("connection_detail") or "").strip()
+
+
+def _pdf_role_detail(edge) -> str:
+    if _row_str(edge, "source") != "pdf_gemini_extraction":
+        return ""
+    provenance = _json_dict(edge["provenance_json"])
+    pdf_entity = provenance.get("pdf_entity", {}) if isinstance(provenance, dict) else {}
+    return str(pdf_entity.get("notes") or "").strip()
+
+
 def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
     if "named as a trustee" in phrase.lower():
@@ -331,6 +343,7 @@ def consolidate_run(run_id: int) -> dict:
         if parent_org_id not in org_map or child_org_id not in org_map:
             continue
         phrase = _linked_org_phrase(str(row["source"] or ""), metadata)
+        detail = _linked_org_detail(metadata)
         source_id = f"org:{parent_org_id}"
         target_id = f"org:{child_org_id}"
         key = (source_id, target_id, phrase)
@@ -346,6 +359,7 @@ def consolidate_run(run_id: int) -> dict:
             "role_type": "organisation_link",
             "role_label": str(row["source"] or "organisation_link"),
             "phrase": phrase,
+            "detail": detail,
             "source_provider": str(row["source"] or ""),
             "confidence": "medium",
             "weight": 0.55,
@@ -389,6 +403,7 @@ def consolidate_run(run_id: int) -> dict:
         role_type = str(edge["role_type"] or "link")
         role_label = str(edge["role_label"] or "")
         phrase = _role_phrase(edge)
+        detail = _pdf_role_detail(edge)
         key = (gid, org_id, phrase)
         if key not in seen_po:
             seen_po.add(key)
@@ -398,6 +413,7 @@ def consolidate_run(run_id: int) -> dict:
                 "role_type": role_type,
                 "role_label": role_label,
                 "phrase": phrase,
+                "detail": detail,
                 "source_provider": str(edge["source"] or ""),
                 "confidence": str(edge["confidence_class"] or ""),
                 "weight": float(edge["edge_weight"] or 0.35),
@@ -407,6 +423,7 @@ def consolidate_run(run_id: int) -> dict:
         org_label = org_map[int(edge["organisation_id"])]["label"] if int(edge["organisation_id"]) in org_map else ""
         person_roles[gid].append({
             "phrase": phrase,
+            "detail": detail,
             "org": org_label,
             "role_type": role_type,
             "role_label": role_label,
@@ -414,6 +431,7 @@ def consolidate_run(run_id: int) -> dict:
         org_people[org_id].append({
             "person": person_label,
             "phrase": phrase,
+            "detail": detail,
             "role_type": role_type,
         })
 
@@ -1052,11 +1070,17 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         if identities:
             tooltip.append(f"{len(identities)} linked identities:")
             for row in identities[:10]:
-                tooltip.append(f"  {row['seed']}: {row['identity']} {row['phrase']}")
+                line = f"  {row['seed']}: {row['identity']} {row['phrase']}"
+                if row.get("detail"):
+                    line += f" ({row['detail']})"
+                tooltip.append(line)
         if people:
             tooltip.append(f"{len(people)} linked people:")
             for row in people[:12]:
-                tooltip.append(f"  {row['person']} {row['phrase']}")
+                line = f"  {row['person']} {row['phrase']}"
+                if row.get("detail"):
+                    line += f" ({row['detail']})"
+                tooltip.append(line)
         node["tooltip_lines"] = tooltip
         nodes.append(node)
 
@@ -1129,7 +1153,10 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             if key in seen_lines:
                 continue
             seen_lines.add(key)
-            tooltip.append(f"  {row['phrase']} <em>{row['org']}</em>")
+            line = f"  {row['phrase']} <em>{row['org']}</em>"
+            if row.get("detail"):
+                line += f" ({row['detail']})"
+            tooltip.append(line)
             if len(seen_lines) >= 15:
                 break
         node["tooltip_lines"] = tooltip

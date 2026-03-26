@@ -223,6 +223,10 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
             source_name = str(scoped_org_by_id[parent_org_id]["name"] or "").strip() or "Unknown organisation"
             target_name = str(scoped_org_by_id[child_org_id]["name"] or "").strip() or "Unknown organisation"
             phrase = _linked_org_phrase(str(row["source"] or ""), link_metadata)
+            detail = _linked_org_detail(link_metadata)
+            explanation = (f"{target_name} {phrase} {source_name}.").replace("  ", " ")
+            if detail:
+                explanation += f" {detail}"
             add_edge(
                 f"orgorg:{run_id}:org:{parent_org_id}:org:{child_org_id}:{_short_hash(str(row['source']) + phrase)}",
                 f"org:{parent_org_id}",
@@ -231,7 +235,7 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                 role_type="organisation_link",
                 role_label=str(row["source"] or "organisation_link"),
                 source=str(row["source"] or "run_organisation"),
-                explanation=(f"{target_name} {phrase} {source_name}.").replace("  ", " "),
+                explanation=explanation,
             )
 
         for row in candidate_org_rows:
@@ -327,6 +331,10 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                 str(row["relationship_phrase"] or ""),
             )
             explanation = f"{person_name} {role_phrase} {str(row['organisation_name'] or '')}".strip()
+            if str(row["source"] or "") == "pdf_gemini_extraction":
+                detail = _pdf_person_detail(row)
+                if detail:
+                    explanation += f". {detail}"
             add_edge(
                 f"orgexp:{run_id}:{org_id}:{expanded_id}:{_short_hash(role_type + role_label + str(row['source']))}",
                 org_id,
@@ -425,6 +433,16 @@ def _linked_org_phrase(source: str, metadata: dict[str, Any]) -> str:
     if source.startswith("address_pivot"):
         return "shares an address with"
     return "is linked to"
+
+
+def _linked_org_detail(metadata: dict[str, Any]) -> str:
+    return str(metadata.get("connection_detail") or "").strip()
+
+
+def _pdf_person_detail(row: Any) -> str:
+    provenance = _json_dict(row["provenance_json"])
+    pdf_entity = provenance.get("pdf_entity", {}) if isinstance(provenance, dict) else {}
+    return str(pdf_entity.get("notes") or "").strip()
 
 
 def _friendly_role_phrase(role_type: str, role_label: str, relationship_phrase: str = "") -> str:

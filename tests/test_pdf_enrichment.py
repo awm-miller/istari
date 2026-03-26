@@ -68,6 +68,8 @@ class PdfEnrichmentTests(unittest.TestCase):
                         "entity_type": "person",
                         "role_category": "person",
                         "role_label": "trustee",
+                        "connection_phrase": "is named as a trustee of",
+                        "notes": "The trustees section lists Jane Trustee by name.",
                         "confidence": 0.9,
                     },
                     {
@@ -84,6 +86,8 @@ class PdfEnrichmentTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].name, "Jane Trustee")
         self.assertEqual(rows[0].organisation_name, "Known Org")
+        self.assertEqual(rows[0].connection_phrase, "is named as a trustee of")
+        self.assertEqual(rows[0].notes, "The trustees section lists Jane Trustee by name.")
         self.assertEqual(rows[1].entity_type, "other")
         self.assertEqual(rows[1].role_category, "ignore")
 
@@ -144,6 +148,8 @@ class PdfEnrichmentTests(unittest.TestCase):
                         role_label="trustee",
                         organisation_name="Known Org",
                         source_document_url=document.document_url,
+                        connection_phrase="is named as a trustee of",
+                        notes="The annual report trustee section lists Jane Trustee.",
                         confidence=0.9,
                     ),
                     PdfExtractedEntity(
@@ -153,6 +159,8 @@ class PdfEnrichmentTests(unittest.TestCase):
                         role_label="auditor",
                         organisation_name="Known Org",
                         source_document_url=document.document_url,
+                        connection_phrase="is named as auditor for",
+                        notes="The accounts section names Acme Audit Limited as auditor.",
                         confidence=0.9,
                     ),
                 ],
@@ -183,15 +191,17 @@ class PdfEnrichmentTests(unittest.TestCase):
 
         with repository.connect() as connection:
             roles = connection.execute(
-                "SELECT role_label, source FROM person_org_roles WHERE organisation_id = ?",
+                "SELECT role_label, relationship_phrase, provenance_json, source FROM person_org_roles WHERE organisation_id = ?",
                 (parent_org_id,),
             ).fetchall()
             self.assertEqual(len(roles), 1)
             self.assertEqual(str(roles[0]["source"]), "pdf_gemini_extraction")
+            self.assertEqual(str(roles[0]["relationship_phrase"]), "is named as a trustee of")
+            self.assertIn("trustee section", str(roles[0]["provenance_json"]))
 
             linked = connection.execute(
                 """
-                SELECT organisations.name
+                SELECT organisations.name, run_organisations.metadata_json
                 FROM run_organisations
                 JOIN organisations ON organisations.id = run_organisations.organisation_id
                 WHERE run_organisations.run_id = ? AND run_organisations.source = 'pdf_org_mention'
@@ -199,6 +209,8 @@ class PdfEnrichmentTests(unittest.TestCase):
                 (run_id,),
             ).fetchall()
             self.assertEqual([str(row["name"]) for row in linked], ["Acme Audit Limited"])
+            self.assertIn("is named as auditor for", str(linked[0]["metadata_json"]))
+            self.assertIn("accounts section", str(linked[0]["metadata_json"]))
 
         del service
         del repository
