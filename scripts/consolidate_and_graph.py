@@ -1726,6 +1726,7 @@ function nodeLabel(d) {{
 function iconPath(kind) {{
   if (kind === "identity") return "M12 12a3 3 0 1 0 0-6a3 3 0 0 0 0 6ZM6.5 18a5.5 5.5 0 0 1 11 0";
   if (kind === "address") return "M12 21s-5-4.35-5-8.5a5 5 0 1 1 10 0C17 16.65 12 21 12 21Zm0-7a1.8 1.8 0 1 0 0-3.6A1.8 1.8 0 0 0 12 14Z";
+  if (kind === "search") return "M11 18a7 7 0 1 1 4.95-2.05 M16 16l4 4";
   if (kind === "accountancy") return "M8 3h8a2 2 0 0 1 2 2v14H6V5a2 2 0 0 1 2-2Zm1 4h6M9 11h2M13 11h2M9 15h2M13 15h2";
   if (kind === "charity") return "M12 20s-6-3.9-6-8.2A3.8 3.8 0 0 1 12 9a3.8 3.8 0 0 1 6 2.8C18 16.1 12 20 12 20Z";
   if (kind === "company") return "M4 20h16M6 20V9l4-3v14M14 20V5h4v15M8 11h.01M8 14h.01M8 17h.01M16 9h.01M16 12h.01M16 15h.01";
@@ -1783,13 +1784,16 @@ function nodeMatchesQuery(d, q) {{
   return labelMatch || aliasMatch;
 }}
 let searchOrFocusMode = false;
+let stage3FocusNodeId = null;
+function canInspectUpstream(d) {{ return d.kind === "address" || d.lane === 4; }}
 function fontSize(d) {{
   if (d.kind === "seed") return 13;
   if (d.kind === "seed_alias") return 12;
   return 10.5;
 }}
 function pillHeight(d) {{ return fontSize(d) + 12; }}
-function pillWidth(d) {{ return badgeWidth(d) + textWidth(nodeLabel(d), fontSize(d)) + 32; }}
+function focusButtonWidth(d) {{ return canInspectUpstream(d) ? 24 : 0; }}
+function pillWidth(d) {{ return badgeWidth(d) + textWidth(nodeLabel(d), fontSize(d)) + 32 + focusButtonWidth(d); }}
 
 function nodeColor(d) {{
   if (d.sanctioned) return "#ff2222";
@@ -1919,7 +1923,7 @@ const pills = nodeGroup.selectAll("g.pill").data(allNodes).join("g")
   .attr("class", "pill")
   .style("cursor", "pointer");
 
-pills.append("rect")
+const pillRects = pills.append("rect")
   .attr("rx", d => pillHeight(d) / 2)
   .attr("ry", d => pillHeight(d) / 2)
   .attr("width", pillWidth)
@@ -1970,6 +1974,40 @@ badgeGroups.append("path")
   .attr("stroke-linejoin", "round")
   .style("pointer-events", "none");
 
+const addressFocusButtons = pills.append("g")
+  .attr("class", "address-focus-btn")
+  .style("display", d => canInspectUpstream(d) ? null : "none")
+  .style("cursor", "pointer");
+
+addressFocusButtons.append("circle")
+  .attr("class", "focus-btn")
+  .attr("cx", d => pillWidth(d) - 14)
+  .attr("cy", d => pillHeight(d) / 2)
+  .attr("r", 8)
+  .attr("fill", "rgba(255,255,255,0.08)")
+  .attr("stroke", "rgba(255,255,255,0.28)")
+  .attr("stroke-width", 1);
+
+addressFocusButtons.append("path")
+  .attr("class", "focus-btn")
+  .attr("d", iconPath("search"))
+  .attr("transform", d => `translate(${{pillWidth(d) - 20}},${{pillHeight(d) / 2 - 6}}) scale(0.5)`)
+  .attr("fill", "none")
+  .attr("stroke", "#ffffff")
+  .attr("stroke-width", 1.8)
+  .attr("stroke-linecap", "round")
+  .attr("stroke-linejoin", "round");
+
+addressFocusButtons
+  .on("mouseover", (event, d) => showTooltip(event, [`Inspect upstream connections for ${{d.label}}`]))
+  .on("mousemove", (event) => positionTooltip(event))
+  .on("mouseout", hideTooltip)
+  .on("click", (event, d) => {{
+    event.stopPropagation();
+    stage3FocusNodeId = stage3FocusNodeId === d.id ? null : d.id;
+    applyFilter();
+  }});
+
 function updatePositions() {{
   edgeGroup.selectAll("line")
     .attr("x1", d => nodeById.get(d.source)?.x ?? 0)
@@ -2006,6 +2044,7 @@ pills
 
 // -- drag --
 const drag = d3.drag()
+  .filter((event) => !(event.target.classList && event.target.classList.contains("focus-btn")))
   .on("start", (event, d) => {{ d._dragging = true; }})
   .on("drag", (event, d) => {{
     d.x = event.x; d.y = event.y;
@@ -2013,6 +2052,11 @@ const drag = d3.drag()
   }})
   .on("end", (event, d) => {{ d._dragging = false; }});
 pills.call(drag);
+svg.on("dblclick.focus", () => {{
+  if (!stage3FocusNodeId) return;
+  stage3FocusNodeId = null;
+  applyFilter();
+}});
 
 // -- focus panel (double-click) --
 
@@ -2284,17 +2328,20 @@ function applyFilter() {{
   }});
 
   const indirectOrgsActive = !q && indirectOrgsToggle?.checked;
-  if (q || indirectOrgsActive) {{
+  const stage3FocusActive = !indirectOrgsActive && !!stage3FocusNodeId;
+  if (q || indirectOrgsActive || stage3FocusActive) {{
     searchOrFocusMode = true;
     allNodes.forEach(n => {{ n._visible = false; }});
     let matchedNodeIds;
-    if (q) {{
+    if (stage3FocusActive) {{
+      matchedNodeIds = new Set([stage3FocusNodeId]);
+    }} else if (q) {{
       matchedNodeIds = new Set(
         allNodes
           .filter(n => nodeMatchesQuery(n, q) && selectedNodeTypes.has(nodeTypeKey(n)))
           .map(n => n.id)
       );
-    }} else {{
+    }} else if (indirectOrgsActive) {{
       matchedNodeIds = new Set();
       indirectOrgIndividuals.forEach((individuals, orgId) => {{
         let count = 0;
@@ -2328,16 +2375,35 @@ function applyFilter() {{
       }});
     }}
     const upstreamVisited = new Set();
-    matchedNodeIds.forEach(id => walkLane(id, upstreamVisited, (other, self) => other < self));
+    if (stage3FocusActive) {{
+      matchedNodeIds.forEach(id => {{
+        const node = nodeById.get(id);
+        if (!node) return;
+        (edgesByNodeId.get(id) || []).forEach(e => {{
+          const otherId = e.source === id ? e.target : e.source;
+          const otherNode = nodeById.get(otherId);
+          if (!otherNode || otherNode.kind !== "organisation") return;
+          otherNode._visible = true;
+          (edgesByNodeId.get(otherId) || []).forEach(e2 => {{
+            if (e2.kind !== "role") return;
+            const nextId = e2.source === otherId ? e2.target : e2.source;
+            const nextNode = nodeById.get(nextId);
+            if (nextNode?.lane === 1) nextNode._visible = true;
+          }});
+        }});
+      }});
+    }} else {{
+      matchedNodeIds.forEach(id => walkLane(id, upstreamVisited, (other, self) => other < self));
+    }}
     matchedNodeIds.forEach(startId => {{
       findBridgeConnections(startId).forEach(connection => {{
         const n = nodeById.get(connection.target);
         if (!n) return;
-        if (indirectOrgsActive && n.lane !== 1) return;
+        if ((indirectOrgsActive || stage3FocusActive) && n.lane !== 1) return;
         n._visible = true;
       }});
     }});
-    if (!indirectOrgsActive) {{
+    if (!indirectOrgsActive && !stage3FocusActive) {{
       const downstreamVisited = new Set();
       matchedNodeIds.forEach(id => walkLane(id, downstreamVisited, (other, self) => other > self));
       allNodes.filter(n => n._visible && n.kind === "organisation").forEach(n => {{
