@@ -2112,9 +2112,14 @@ function displayedNodeIds() {{
   return new Set(allNodes.filter(isNodeDisplayed).map(n => n.id));
 }}
 
-function isBridgeEndpoint(node) {{
+function isBridgeStartNode(node) {{
   if (!node) return false;
-  return node.kind === "address" || node.lane === 1 || node.lane === 4;
+  return node.kind === "organisation" || node.kind === "address";
+}}
+
+function isBridgeTargetNode(node) {{
+  if (!node) return false;
+  return node.lane === 1;
 }}
 
 function applyNodeTypeFilter() {{
@@ -2128,6 +2133,7 @@ function applyNodeTypeFilter() {{
     allNodes.forEach(n => {{
       if (!n._visible) return;
       if (n.kind === "organisation" || n.kind === "seed") return;
+      if (searchOrFocusMode && n.lane === 1) return;
       const hasVisibleOrg = (edgesByNodeId.get(n.id) || []).some(e => {{
         const otherId = e.source === n.id ? e.target : e.source;
         const otherNode = nodeById.get(otherId);
@@ -2142,6 +2148,8 @@ function applyNodeTypeFilter() {{
 }}
 
 function findBridgeConnections(startId) {{
+  const startNode = nodeById.get(startId);
+  if (!isBridgeStartNode(startNode)) return [];
   const connections = new Map();
   const hiddenQueue = [];
   const visited = new Set([startId]);
@@ -2150,7 +2158,7 @@ function findBridgeConnections(startId) {{
     if (visited.has(nextId)) return;
     visited.add(nextId);
     const nextNode = nodeById.get(nextId);
-    if (nextNode && isBridgeEndpoint(nextNode)) {{
+    if (nextNode && isBridgeTargetNode(nextNode)) {{
       if (!directEdgePairs.has(edgePairKey(startId, nextId))) {{
         connections.set(nextId, {{
           source: startId,
@@ -2164,6 +2172,7 @@ function findBridgeConnections(startId) {{
       }}
       return;
     }}
+    if (!isBridgeStartNode(nextNode)) return;
     hiddenQueue.push({{ id: nextId, hops: 1, hiddenNodeIds: [nextId], pathEdges: [edge] }});
   }});
   while (hiddenQueue.length) {{
@@ -2173,7 +2182,7 @@ function findBridgeConnections(startId) {{
       if (visited.has(nextId)) return;
       visited.add(nextId);
       const nextNode = nodeById.get(nextId);
-      if (nextNode && isBridgeEndpoint(nextNode)) {{
+      if (nextNode && isBridgeTargetNode(nextNode)) {{
         const existing = connections.get(nextId);
         if (!existing || current.hops + 1 < existing.hops) {{
           if (!directEdgePairs.has(edgePairKey(startId, nextId))) {{
@@ -2190,6 +2199,7 @@ function findBridgeConnections(startId) {{
         }}
         return;
       }}
+      if (!isBridgeStartNode(nextNode)) return;
       hiddenQueue.push({{
         id: nextId,
         hops: current.hops + 1,
@@ -2206,7 +2216,7 @@ function deriveHiddenConnectionEdges() {{
   const hiddenConnections = new Map();
   displayedIds.forEach(startId => {{
     const startNode = nodeById.get(startId);
-    if (!startNode || isBridgeEndpoint(startNode)) return;
+    if (!isBridgeStartNode(startNode)) return;
     findBridgeConnections(startId).forEach(connection => {{
       const targetNode = nodeById.get(connection.target);
       if (!targetNode || !targetNode._visible) return;
@@ -2394,6 +2404,7 @@ function applyFilter() {{
       }});
     }}
     const upstreamVisited = new Set();
+    const stage3FocusOrgIds = new Set();
     if (stage3FocusActive) {{
       matchedNodeIds.forEach(id => {{
         const node = nodeById.get(id);
@@ -2402,6 +2413,7 @@ function applyFilter() {{
           const otherId = e.source === id ? e.target : e.source;
           const otherNode = nodeById.get(otherId);
           if (!otherNode || otherNode.kind !== "organisation") return;
+          stage3FocusOrgIds.add(otherId);
           otherNode._visible = true;
           (edgesByNodeId.get(otherId) || []).forEach(e2 => {{
             if (e2.kind !== "role") return;
@@ -2414,7 +2426,8 @@ function applyFilter() {{
     }} else {{
       matchedNodeIds.forEach(id => walkLane(id, upstreamVisited, (other, self) => other < self));
     }}
-    matchedNodeIds.forEach(startId => {{
+    const bridgeStartIds = stage3FocusActive ? [...stage3FocusOrgIds] : [...matchedNodeIds];
+    bridgeStartIds.forEach(startId => {{
       findBridgeConnections(startId).forEach(connection => {{
         const n = nodeById.get(connection.target);
         if (!n) return;
