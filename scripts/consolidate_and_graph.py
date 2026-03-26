@@ -2114,7 +2114,7 @@ function displayedNodeIds() {{
 
 function isBridgeStartNode(node) {{
   if (!node) return false;
-  return node.kind === "organisation" || node.kind === "address";
+  return node.kind === "organisation";
 }}
 
 function isBridgeTargetNode(node) {{
@@ -2405,7 +2405,8 @@ function applyFilter() {{
     }}
     const upstreamVisited = new Set();
     const stage3FocusOrgIds = new Set();
-    if (stage3FocusActive) {{
+    const useInspectUpstream = stage3FocusActive || peopleOnlySearch;
+    if (useInspectUpstream) {{
       matchedNodeIds.forEach(id => {{
         const node = nodeById.get(id);
         if (!node) return;
@@ -2426,7 +2427,7 @@ function applyFilter() {{
     }} else {{
       matchedNodeIds.forEach(id => walkLane(id, upstreamVisited, (other, self) => other < self));
     }}
-    const bridgeStartIds = stage3FocusActive ? [...stage3FocusOrgIds] : [...matchedNodeIds];
+    const bridgeStartIds = useInspectUpstream ? [...stage3FocusOrgIds] : [...matchedNodeIds];
     bridgeStartIds.forEach(startId => {{
       findBridgeConnections(startId).forEach(connection => {{
         const n = nodeById.get(connection.target);
