@@ -6,32 +6,38 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 ## Architecture
 
-![Pipeline Architecture](docs/architecture.svg)
+![Pipeline Architecture](docs/architecture.png)
 
-### Pipeline stages
+### How it works
 
-| Stage | What happens |
-|---|---|
-| **Step 1 — Seed Expansion** | Generate name variants from the seed, search the Charity Commission API, Companies House API, and web (Serper). A rules-first entity-resolution layer uses Gemini / OpenAI only for ambiguous candidates. |
-| **Step 2 — Org Expansion** | Walk linked charities and companies outward from Step 1 matches. An address-pivot search finds additional organisations registered at the same addresses. |
-| **Step 2b — PDF Enrichment** | Download charity/company PDFs (annual reports, accounts) and extract structured data via OpenDataLoader + Gemini, including connection phrasing and explanatory detail for mentions. |
-| **Step 3 — People Expansion** | Discover trustees, directors, secretaries, and officers for every scoped organisation. Rank people by the number and weight of their connections. |
-| **Step 4 — OFAC Screening** | Screen the ranked people list against the US Treasury OFAC SDN sanctions list. |
+1. **Seed Expansion** — Generate spelling and transliteration variants of the seed name, then search the Charity Commission, Companies House, and the web (Serper) for registry evidence.
 
-### Data sources & services
+2. **Identity Resolution** — Score each candidate match deterministically. Ambiguous mid-range candidates are sent to an LLM (Gemini or OpenAI) for a same-person judgement. Officers are keyed on name + birth month/year so distinct people with the same name stay separate.
 
-- **Charity Commission for England & Wales** — charity search, details, linked entities
-- **Companies House** — officer search, company profiles, appointments
-- **Gemini / OpenAI** — entity resolution, PDF extraction, name-variant generation
+3. **Org Expansion** — Walk linked charities and companies outward from confirmed matches. An address-pivot search discovers additional organisations registered at the same physical addresses.
+
+4. **People Expansion** — Pull trustees, directors, secretaries, and officers for every scoped organisation. People are ranked by the number and weight of their connections.
+
+5. **PDF Enrichment** — Download charity/company PDFs (annual reports, accounts) and extract structured mentions via Gemini, including the connection phrase and explanatory detail for each mention.
+
+6. **Graph Consolidation** — Merge person aliases and equivalent addresses across runs so shared edges collapse onto common nodes. Address merging uses deterministic normalisation first, with an LLM fallback for ambiguous near-matches.
+
+7. **Output** — Serve an interactive 4-lane HTML network graph, export JSON for the Netlify viewer, and screen ranked people against the OFAC SDN sanctions list.
+
+### Data sources
+
+- **Charity Commission for England & Wales** — charity search, trustee details, linked entities
+- **Companies House** — officer search, company profiles, appointments, date of birth
+- **Gemini / OpenAI** — entity resolution, address resolution, PDF extraction
 - **Serper** — web search for supplementary evidence
-- **OFAC SDN list** — sanctions screening
+- **OFAC SDN list** — US Treasury sanctions screening
 
 ### Storage & output
 
-- **SQLite** — all entities, relationships, resolution decisions, and run metadata
-- **Flask web UI** — serves an interactive network graph at `localhost:5000`
+- **SQLite** — entities, relationships, resolution decisions, and run metadata
+- **Flask web UI** — interactive network graph at `localhost:5000`
 - **JSON export** — graph payload for the Netlify viewer
-- **Graph rebuild** — merges person aliases and equivalent addresses across runs so shared edges collapse onto common nodes
+- **Graph rebuild** — cross-run merge of people and addresses into a single combined graph
 
 ## Quick start
 
@@ -58,18 +64,18 @@ python -m src.cli web-ui
 python scripts/rebuild_graph.py
 ```
 
-## CLI commands
+## CLI reference
 
 | Command | Description |
 |---|---|
 | `init-db` | Create the SQLite schema |
-| `step1-seed NAME` | Expand a single seed name |
-| `step2-orgs RUN_ID` | Expand connected organisations |
-| `pdf-enrich RUN_ID` | Enrich from charity/company PDFs |
-| `step3-people RUN_ID` | Expand connected people |
-| `step4-ofac RUN_ID` | OFAC sanctions screening |
 | `run-name NAME` | Full pipeline for one seed |
 | `run-seeds NAME [NAME ...]` | Full pipeline per seed + overlap |
+| `step1-seed NAME` | Seed expansion only |
+| `step2-orgs RUN_ID` | Org expansion only |
+| `pdf-enrich RUN_ID` | PDF enrichment only |
+| `step3-people RUN_ID` | People expansion only |
+| `step4-ofac RUN_ID` | OFAC screening only |
 | `rank` | Rank people by connections |
 | `export-network --run-id ID` | Export graph as JSON |
 | `web-ui` | Launch the Flask web UI |
