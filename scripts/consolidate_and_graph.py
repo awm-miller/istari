@@ -1302,10 +1302,7 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
 <body>
 <div class="topbar">
   <h1>Istari</h1>
-{identity_dropdown_html}  <div class="org-dropdown" id="people-dropdown">
-    <button class="org-dropdown-btn" id="people-dropdown-btn">People &#9662;</button>
-    <div class="org-dropdown-menu" id="people-dropdown-menu"></div>
-  </div>
+{identity_dropdown_html}
   <div class="org-dropdown" id="type-dropdown">
     <button class="org-dropdown-btn" id="type-dropdown-btn">Types &#9662;</button>
     <div class="org-dropdown-menu" id="type-dropdown-menu"></div>
@@ -1390,8 +1387,8 @@ const selectedPeople = new Set(peopleNodes.map(n => n.id));
 
 const identityDropdownBtn = document.getElementById("identity-dropdown-btn");
 const identityDropdownMenu = document.getElementById("identity-dropdown-menu");
-const peopleDropdownBtn = document.getElementById("people-dropdown-btn");
-const peopleDropdownMenu = document.getElementById("people-dropdown-menu");
+const peopleDropdownBtn = null;
+const peopleDropdownMenu = null;
 const typeDropdownBtn = document.getElementById("type-dropdown-btn");
 const typeDropdownMenu = document.getElementById("type-dropdown-menu");
 const legendEl = document.getElementById("legend");
@@ -1609,6 +1606,7 @@ function buildIdentityDropdown() {{
 }}
 
 function buildPeopleDropdown() {{
+  if (!peopleDropdownMenu) return;
   peopleDropdownMenu.innerHTML = "";
   const visList = visiblePeopleList();
 
@@ -1696,7 +1694,7 @@ identityDropdownBtn?.addEventListener("click", (e) => {{
   e.stopPropagation();
   identityDropdownMenu.classList.toggle("open");
 }});
-peopleDropdownBtn.addEventListener("click", (e) => {{
+peopleDropdownBtn?.addEventListener("click", (e) => {{
   e.stopPropagation();
   peopleDropdownMenu.classList.toggle("open");
 }});
@@ -1706,11 +1704,11 @@ typeDropdownBtn?.addEventListener("click", (e) => {{
 }});
 document.addEventListener("click", () => {{
   identityDropdownMenu?.classList.remove("open");
-  peopleDropdownMenu.classList.remove("open");
+  peopleDropdownMenu?.classList.remove("open");
   typeDropdownMenu?.classList.remove("open");
 }});
 identityDropdownMenu?.addEventListener("click", (e) => e.stopPropagation());
-peopleDropdownMenu.addEventListener("click", (e) => e.stopPropagation());
+peopleDropdownMenu?.addEventListener("click", (e) => e.stopPropagation());
 typeDropdownMenu?.addEventListener("click", (e) => e.stopPropagation());
 
 // -- measure text widths via hidden canvas --
@@ -2119,6 +2117,30 @@ function isBridgeEndpoint(node) {{
   return node.kind === "address" || node.lane === 1 || node.lane === 4;
 }}
 
+function applyNodeTypeFilter() {{
+  allNodes.forEach(n => {{
+    if (!n._visible || n.kind === "seed") return;
+    if (!selectedNodeTypes.has(nodeTypeKey(n))) n._visible = false;
+  }});
+  let changed = true;
+  while (changed) {{
+    changed = false;
+    allNodes.forEach(n => {{
+      if (!n._visible) return;
+      if (n.kind === "organisation" || n.kind === "seed") return;
+      const hasVisibleOrg = (edgesByNodeId.get(n.id) || []).some(e => {{
+        const otherId = e.source === n.id ? e.target : e.source;
+        const otherNode = nodeById.get(otherId);
+        return !!otherNode?._visible && otherNode.kind === "organisation";
+      }});
+      if (!hasVisibleOrg) {{
+        n._visible = false;
+        changed = true;
+      }}
+    }});
+  }}
+}}
+
 function findBridgeConnections(startId) {{
   const connections = new Map();
   const hiddenQueue = [];
@@ -2323,10 +2345,6 @@ function applyFilter() {{
 
   allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
 
-  allNodes.forEach(n => {{
-    n._visible = n._visible && selectedNodeTypes.has(nodeTypeKey(n));
-  }});
-
   const indirectOrgsActive = !q && indirectOrgsToggle?.checked;
   const stage3FocusActive = !indirectOrgsActive && !!stage3FocusNodeId;
   if (q || indirectOrgsActive || stage3FocusActive) {{
@@ -2338,7 +2356,7 @@ function applyFilter() {{
     }} else if (q) {{
       matchedNodeIds = new Set(
         allNodes
-          .filter(n => nodeMatchesQuery(n, q) && selectedNodeTypes.has(nodeTypeKey(n)))
+          .filter(n => nodeMatchesQuery(n, q))
           .map(n => n.id)
       );
     }} else if (indirectOrgsActive) {{
@@ -2425,6 +2443,8 @@ function applyFilter() {{
     searchOrFocusMode = false;
   }}
 
+  applyNodeTypeFilter();
+
   positionNodes();
   updatePositions();
   syncVisibility();
@@ -2437,12 +2457,6 @@ function applyFilter() {{
       ? "Identities \u25BE"
       : `${{selectedCount}}/${{totalCount}} identities \u25BE`;
   }}
-  const visList = visiblePeopleList();
-  const selCount = visList.filter(n => selectedPeople.has(n.id)).length;
-  const totalCount = visList.length;
-  peopleDropdownBtn.textContent = selCount === totalCount
-    ? "People \u25BE"
-    : `${{selCount}}/${{totalCount}} people \u25BE`;
 }}
 
 searchInput.addEventListener("input", () => {{
