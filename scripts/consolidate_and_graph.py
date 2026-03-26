@@ -1322,6 +1322,10 @@ svg text {{ font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }}
     <input id="overlaps-only" type="checkbox" />
     <span>show overlaps only</span>
   </label>
+  <label class="toggle">
+    <input id="indirect-orgs" type="checkbox" />
+    <span>reveal indirectly connected orgs</span>
+  </label>
   <div class="search-box">
     <input id="search" type="search" placeholder="Filter by name..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
@@ -1344,6 +1348,7 @@ const clearBtn = document.getElementById("clear-search");
 const stage3MultiOrgToggle = document.getElementById("stage3-multi-org-only");
 const orgMultiPersonToggle = document.getElementById("org-multi-person-only");
 const overlapsOnlyToggle = document.getElementById("overlaps-only");
+const indirectOrgsToggle = document.getElementById("indirect-orgs");
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -1441,6 +1446,44 @@ allEdges.filter(e => e.kind === "org_link").forEach(e => {{
   if (!orgLinkIds.has(e.target)) orgLinkIds.set(e.target, new Set());
   orgLinkIds.get(e.source).add(e.target);
   orgLinkIds.get(e.target).add(e.source);
+}});
+
+const orgAddressIds = new Map();
+const addressOrgIds = new Map();
+allEdges.filter(e => e.kind === "address_link").forEach(e => {{
+  const sourceNode = nodeById.get(e.source);
+  const targetNode = nodeById.get(e.target);
+  const orgId = sourceNode?.kind === "organisation" ? e.source : targetNode?.kind === "organisation" ? e.target : null;
+  const addrId = sourceNode?.kind === "address" ? e.source : targetNode?.kind === "address" ? e.target : null;
+  if (!orgId || !addrId) return;
+  if (!orgAddressIds.has(orgId)) orgAddressIds.set(orgId, new Set());
+  orgAddressIds.get(orgId).add(addrId);
+  if (!addressOrgIds.has(addrId)) addressOrgIds.set(addrId, new Set());
+  addressOrgIds.get(addrId).add(orgId);
+}});
+
+const indirectOrgIndividuals = new Map();
+allNodes.filter(n => n.lane === 1 || n.lane === 4).forEach(individual => {{
+  const directOrgs = new Set();
+  (edgesByNodeId.get(individual.id) || []).forEach(e => {{
+    if (e.kind !== "role") return;
+    const otherId = e.source === individual.id ? e.target : e.source;
+    const other = nodeById.get(otherId);
+    if (other?.kind === "organisation") directOrgs.add(otherId);
+  }});
+  if (!directOrgs.size) return;
+  const reachableOrgs = new Set();
+  directOrgs.forEach(orgId => {{
+    (orgLinkIds.get(orgId) || new Set()).forEach(id => reachableOrgs.add(id));
+    (orgAddressIds.get(orgId) || new Set()).forEach(addrId => {{
+      (addressOrgIds.get(addrId) || new Set()).forEach(id => reachableOrgs.add(id));
+    }});
+  }});
+  directOrgs.forEach(id => reachableOrgs.delete(id));
+  reachableOrgs.forEach(orgId => {{
+    if (!indirectOrgIndividuals.has(orgId)) indirectOrgIndividuals.set(orgId, new Set());
+    indirectOrgIndividuals.get(orgId).add(individual.id);
+  }});
 }});
 
 function expandOrgIdsThroughOrgLinks(startOrgIds) {{
@@ -2209,13 +2252,13 @@ function applyFilter() {{
     if (visible) visiblePeople.add(n.id);
   }});
 
-  let addressOrgIds = visibleOrgs;
+  let addressFilterOrgIds = visibleOrgs;
   if (stage3MultiOrgToggle?.checked) {{
-    addressOrgIds = new Set(
+    addressFilterOrgIds = new Set(
       [...orgIdsForVisiblePeople(visiblePeople)].filter(orgId => visibleOrgs.has(orgId))
     );
   }}
-  const visibleAddresses = visibleAddressIdsForVisibleOrgs(addressOrgIds);
+  const visibleAddresses = visibleAddressIdsForVisibleOrgs(addressFilterOrgIds);
 
   allNodes.filter(n => n.kind === "organisation").forEach(n => {{ n._visible = visibleOrgs.has(n.id); }});
   allNodes.filter(n => n.kind === "address").forEach(n => {{ n._visible = visibleAddresses.has(n.id); }});
@@ -2240,20 +2283,36 @@ function applyFilter() {{
     n._visible = n._visible && selectedNodeTypes.has(nodeTypeKey(n));
   }});
 
-  if (q) {{
+  const indirectOrgsActive = !q && indirectOrgsToggle?.checked;
+  if (q || indirectOrgsActive) {{
     searchOrFocusMode = true;
     allNodes.forEach(n => {{ n._visible = false; }});
-    const matchedNodeIds = new Set(
-      allNodes
-        .filter(n => nodeMatchesQuery(n, q) && selectedNodeTypes.has(nodeTypeKey(n)))
-        .map(n => n.id)
-    );
+    let matchedNodeIds;
+    if (q) {{
+      matchedNodeIds = new Set(
+        allNodes
+          .filter(n => nodeMatchesQuery(n, q) && selectedNodeTypes.has(nodeTypeKey(n)))
+          .map(n => n.id)
+      );
+    }} else {{
+      matchedNodeIds = new Set();
+      indirectOrgIndividuals.forEach((individuals, orgId) => {{
+        let count = 0;
+        individuals.forEach(id => {{
+          const node = nodeById.get(id);
+          if (!node) return;
+          if (node.lane === 1 && activeIdentities.has(id)) count++;
+          else if (node.lane === 4 && selectedPeople.has(id)) count++;
+        }});
+        if (count >= 2) matchedNodeIds.add(orgId);
+      }});
+    }}
     matchedNodeIds.forEach(id => {{
       const n = nodeById.get(id);
       if (n) n._visible = true;
     }});
 
-    function walkDownstream(nodeId, visited) {{
+    function walkLane(nodeId, visited, directionFn) {{
       if (visited.has(nodeId)) return;
       visited.add(nodeId);
       const node = nodeById.get(nodeId);
@@ -2265,20 +2324,26 @@ function applyFilter() {{
         const otherNode = nodeById.get(otherId);
         if (!otherNode) return;
         const otherLane = otherNode.lane ?? 0;
-        if (otherLane > nodeLane) walkDownstream(otherId, visited);
+        if (directionFn(otherLane, nodeLane)) walkLane(otherId, visited, directionFn);
       }});
     }}
-    const downstreamVisited = new Set();
-    matchedNodeIds.forEach(id => walkDownstream(id, downstreamVisited));
+    const upstreamVisited = new Set();
+    matchedNodeIds.forEach(id => walkLane(id, upstreamVisited, (other, self) => other < self));
     matchedNodeIds.forEach(startId => {{
       findBridgeConnections(startId).forEach(connection => {{
         const n = nodeById.get(connection.target);
-        if (n) n._visible = true;
+        if (!n) return;
+        if (indirectOrgsActive && n.lane !== 1) return;
+        n._visible = true;
       }});
     }});
-    allNodes.filter(n => n._visible && n.kind === "organisation").forEach(n => {{
-      walkDownstream(n.id, downstreamVisited);
-    }});
+    if (!indirectOrgsActive) {{
+      const downstreamVisited = new Set();
+      matchedNodeIds.forEach(id => walkLane(id, downstreamVisited, (other, self) => other > self));
+      allNodes.filter(n => n._visible && n.kind === "organisation").forEach(n => {{
+        walkLane(n.id, downstreamVisited, (other, self) => other > self);
+      }});
+    }}
     allNodes.filter(n => n.kind === "seed").forEach(n => {{ n._visible = false; }});
   }} else {{
     searchOrFocusMode = false;
@@ -2317,6 +2382,10 @@ orgMultiPersonToggle?.addEventListener("change", () => {{
   applyFilter();
 }});
 overlapsOnlyToggle?.addEventListener("change", () => {{
+  buildPeopleDropdown();
+  applyFilter();
+}});
+indirectOrgsToggle?.addEventListener("change", () => {{
   buildPeopleDropdown();
   applyFilter();
 }});
