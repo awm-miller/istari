@@ -1,0 +1,89 @@
+<svg width="1400" height="860" viewBox="0 0 1400 860" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1400" height="860" fill="#09111F"/>
+  <rect x="40" y="40" width="1320" height="780" rx="28" fill="#0F1B31" stroke="#28426B" stroke-width="2"/>
+  <text x="90" y="110" fill="#F4F7FB" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="700">Istari Pipeline And Graph Consolidation</text>
+  <text x="90" y="148" fill="#9CB3D1" font-family="Segoe UI, Arial, sans-serif" font-size="22">Seeds expand into registry evidence, ambiguous matches go through the LLM, PDFs add relationship explanations, and the rebuild step merges both people and addresses.</text>
+
+  <defs>
+    <linearGradient id="seed" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#223A5E"/>
+      <stop offset="1" stop-color="#2B5B89"/>
+    </linearGradient>
+    <linearGradient id="expand" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#184F5E"/>
+      <stop offset="1" stop-color="#27849A"/>
+    </linearGradient>
+    <linearGradient id="llm" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#5D2368"/>
+      <stop offset="1" stop-color="#A33BB7"/>
+    </linearGradient>
+    <linearGradient id="graph" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#5E4518"/>
+      <stop offset="1" stop-color="#B98A2D"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6FA4FF"/>
+    </marker>
+  </defs>
+
+  <g>
+    <rect x="90" y="220" width="240" height="122" rx="20" fill="url(#seed)" stroke="#77A3D8" stroke-width="2"/>
+    <text x="118" y="266" fill="#F4F7FB" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">1. Seed Expansion</text>
+    <text x="118" y="302" fill="#D9E6F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">Name variants</text>
+    <text x="118" y="330" fill="#D9E6F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">Registry + web evidence</text>
+  </g>
+
+  <g>
+    <rect x="420" y="220" width="250" height="122" rx="20" fill="url(#llm)" stroke="#D59CE4" stroke-width="2"/>
+    <text x="448" y="266" fill="#FDF7FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">2. Identity Resolution</text>
+    <text x="448" y="302" fill="#F2D9F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">Rules first</text>
+    <text x="448" y="330" fill="#F2D9F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">LLM for ambiguous matches</text>
+  </g>
+
+  <g>
+    <rect x="760" y="220" width="250" height="122" rx="20" fill="url(#expand)" stroke="#7AD4E6" stroke-width="2"/>
+    <text x="788" y="266" fill="#F4FEFF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">3. Org Expansion</text>
+    <text x="788" y="302" fill="#D9FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Linked charities + companies</text>
+    <text x="788" y="330" fill="#D9FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Address pivot discovery</text>
+  </g>
+
+  <g>
+    <rect x="1090" y="220" width="220" height="122" rx="20" fill="url(#expand)" stroke="#7AD4E6" stroke-width="2"/>
+    <text x="1118" y="266" fill="#F4FEFF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">4. People Expansion</text>
+    <text x="1118" y="302" fill="#D9FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Trustees and officers</text>
+    <text x="1118" y="330" fill="#D9FAFF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Weighted ranking inputs</text>
+  </g>
+
+  <g>
+    <rect x="260" y="470" width="280" height="122" rx="20" fill="url(#llm)" stroke="#D59CE4" stroke-width="2"/>
+    <text x="288" y="516" fill="#FDF7FF" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">5. PDF Enrichment</text>
+    <text x="288" y="552" fill="#F2D9F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">Gemini extracts mentions</text>
+    <text x="288" y="580" fill="#F2D9F8" font-family="Segoe UI, Arial, sans-serif" font-size="20">Connection phrase + detail</text>
+  </g>
+
+  <g>
+    <rect x="640" y="470" width="300" height="122" rx="20" fill="url(#graph)" stroke="#E6C26A" stroke-width="2"/>
+    <text x="668" y="516" fill="#FFF8E6" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">6. Graph Consolidation</text>
+    <text x="668" y="552" fill="#FFF1C7" font-family="Segoe UI, Arial, sans-serif" font-size="20">Merge person aliases</text>
+    <text x="668" y="580" fill="#FFF1C7" font-family="Segoe UI, Arial, sans-serif" font-size="20">Merge equivalent addresses</text>
+  </g>
+
+  <g>
+    <rect x="1040" y="470" width="220" height="122" rx="20" fill="url(#graph)" stroke="#E6C26A" stroke-width="2"/>
+    <text x="1068" y="516" fill="#FFF8E6" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">7. Output</text>
+    <text x="1068" y="552" fill="#FFF1C7" font-family="Segoe UI, Arial, sans-serif" font-size="20">HTML graph</text>
+    <text x="1068" y="580" fill="#FFF1C7" font-family="Segoe UI, Arial, sans-serif" font-size="20">JSON export + web UI</text>
+  </g>
+
+  <path d="M330 281H420" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M670 281H760" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M1010 281H1090" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M1200 342V430H1150" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M1040 531H940" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M640 531H540" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M400 470V390H885V342" stroke="#6FA4FF" stroke-width="5" marker-end="url(#arrow)"/>
+
+  <rect x="90" y="665" width="1220" height="95" rx="18" fill="#101F39" stroke="#28426B" stroke-width="2"/>
+  <text x="120" y="715" fill="#F4F7FB" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700">Rebuild behavior:</text>
+  <text x="315" y="715" fill="#D9E6F8" font-family="Segoe UI, Arial, sans-serif" font-size="24">shared organisations stay shared, equivalent addresses collapse to one lane-3 node, and all linked org edges retarget to that merged address.</text>
+</svg>

@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.address_resolution import AddressMergeMatcher, address_bucket_keys, addresses_match
 from src.config import load_settings
 from src.ofac.screening import OFACScreener
 from src.resolution.features import person_name_similarity
@@ -374,6 +375,7 @@ def consolidate_run(run_id: int) -> dict:
             address_map[aid] = {
                 "id": f"addr:{aid}",
                 "label": str(row["address_label"] or ""),
+                "normalized_key": str(row["normalized_key"] or ""),
                 "postcode": str(row["postcode"] or ""),
                 "country": str(row["country"] or ""),
             }
@@ -559,6 +561,7 @@ def consolidate_run(run_id: int) -> dict:
                 "label": info["label"],
                 "kind": "address",
                 "lane": 3,
+                "normalized_key": info["normalized_key"],
                 "postcode": info["postcode"],
                 "country": info["country"],
                 "tooltip_lines": tooltip,
@@ -732,9 +735,31 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                         union_find.union(left_index, right_index)
         return comparisons
 
+    def _union_matching_addresses(entries: list[dict], union_find: UnionFind) -> int:
+        buckets: dict[str, list[int]] = defaultdict(list)
+        for index, entry in enumerate(entries):
+            for key in address_bucket_keys(entry):
+                buckets[key].append(index)
+        compared_pairs: set[tuple[int, int]] = set()
+        comparisons = 0
+        matcher = AddressMergeMatcher(load_settings())
+        for bucket in buckets.values():
+            if len(bucket) < 2:
+                continue
+            for offset, left_index in enumerate(bucket):
+                for right_index in bucket[offset + 1:]:
+                    pair = (left_index, right_index) if left_index < right_index else (right_index, left_index)
+                    if pair in compared_pairs:
+                        continue
+                    compared_pairs.add(pair)
+                    comparisons += 1
+                    if addresses_match(entries[left_index], entries[right_index], matcher=matcher):
+                        union_find.union(left_index, right_index)
+        return comparisons
+
     print(f"[graph] Building merge context for {len(runs)} runs", flush=True)
 
-    # Build per-run maps and gather lane-3 people for cross-run merging.
+    # Build per-run maps and gather entities for cross-run merging.
     run_contexts: list[dict] = []
     identity_entries: list[dict] = []
     person_entries: list[dict] = []
@@ -780,7 +805,58 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "person_ids": person_ids,
         })
 
-    print(f"[graph] Collected {len(person_entries)} people and {len(identity_entries)} identities", flush=True)
+    address_entries = list(address_nodes.values())
+    print(
+        f"[graph] Collected {len(person_entries)} people, {len(identity_entries)} identities, "
+        f"and {len(address_entries)} addresses",
+        flush=True,
+    )
+    print("[graph] Matching addresses across runs", flush=True)
+
+    address_uf = UnionFind()
+    address_comparisons = _union_matching_addresses(address_entries, address_uf)
+    print(f"[graph] Compared {address_comparisons} candidate address pairs", flush=True)
+
+    address_groups: dict[int, list[dict]] = {}
+    for i, entry in enumerate(address_entries):
+        address_groups.setdefault(address_uf.find(i), []).append(entry)
+    print(f"[graph] Built {len(address_groups)} merged address groups", flush=True)
+
+    address_entry_to_merged_id: dict[str, str] = {}
+    merged_address_nodes: dict[str, dict] = {}
+    for group_index, entries in enumerate(address_groups.values(), start=1):
+        merged_id = f"merged_address:{group_index}"
+        labels = sorted({str(entry["label"]).strip() for entry in entries if str(entry["label"]).strip()})
+        postcodes = sorted({str(entry.get("postcode") or "").strip() for entry in entries if str(entry.get("postcode") or "").strip()})
+        countries = sorted({str(entry.get("country") or "").strip() for entry in entries if str(entry.get("country") or "").strip()})
+        normalized_keys = sorted({
+            str(entry.get("normalized_key") or "").strip()
+            for entry in entries
+            if str(entry.get("normalized_key") or "").strip()
+        })
+        label = max(labels, key=len) if labels else str(entries[0].get("label") or "Unknown address")
+        for entry in entries:
+            address_entry_to_merged_id[str(entry["id"])] = merged_id
+        tooltip = [f"<strong>{label}</strong>"]
+        if len(labels) > 1:
+            tooltip.append(f"Address variants: {', '.join(labels[:6])}")
+        if postcodes:
+            tooltip.append(f"Postcode: {postcodes[0]}")
+        if countries:
+            tooltip.append(f"Country: {countries[0]}")
+        merged_address_nodes[merged_id] = {
+            "id": merged_id,
+            "label": label,
+            "kind": "address",
+            "lane": 3,
+            "aliases": labels,
+            "normalized_keys": normalized_keys,
+            "postcode": postcodes[0] if postcodes else "",
+            "country": countries[0] if countries else "",
+            "tooltip_lines": tooltip,
+            "shared": len(entries) > 1,
+        }
+
     print("[graph] Matching people across runs", flush=True)
 
     # Merge stage-4 people across runs using the existing alias matcher.
@@ -958,7 +1034,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     org_address_edges.append(
                         {
                             "source": org_id,
-                            "target": address_id,
+                            "target": address_entry_to_merged_id.get(address_id, address_id),
                             "kind": "address_link",
                             "role_type": "organisation_address",
                             "role_label": "registered_address",
@@ -1042,6 +1118,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     identity_org_edges = _dedupe_edges(identity_org_edges, ("source", "target", "phrase"))
     org_person_edges = _dedupe_edges(org_person_edges, ("source", "target", "phrase"))
     org_org_edges = _dedupe_edges(org_org_edges, ("source", "target", "phrase"))
+    org_address_edges = _dedupe_edges(org_address_edges, ("source", "target", "phrase"))
 
     for org_id, node in org_nodes.items():
         node["shared"] = len(org_seed_names.get(org_id, set())) > 1
@@ -1088,7 +1165,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     for edge in org_address_edges:
         address_org_ids[str(edge["target"])].add(str(edge["source"]))
 
-    for address_id, node in address_nodes.items():
+    for address_id, node in merged_address_nodes.items():
         linked_org_ids = sorted(address_org_ids.get(address_id, set()))
         seed_names = sorted({
             seed_name
