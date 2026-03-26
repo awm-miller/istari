@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS run_organisations (
 
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    canonical_name TEXT NOT NULL UNIQUE
+    canonical_name TEXT NOT NULL,
+    identity_key TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS identities (
@@ -128,6 +129,7 @@ CREATE TABLE IF NOT EXISTS resolution_decisions (
     status TEXT NOT NULL,
     confidence REAL NOT NULL,
     canonical_name TEXT NOT NULL,
+    person_identity_key TEXT NOT NULL DEFAULT '',
     explanation TEXT NOT NULL,
     rule_score REAL NOT NULL,
     alias_status TEXT NOT NULL DEFAULT 'none',
@@ -138,6 +140,7 @@ CREATE INDEX IF NOT EXISTS idx_candidate_matches_run_id ON candidate_matches(run
 CREATE INDEX IF NOT EXISTS idx_resolution_decisions_run_id ON resolution_decisions(run_id);
 CREATE INDEX IF NOT EXISTS idx_roles_org_id ON person_org_roles(organisation_id);
 CREATE INDEX IF NOT EXISTS idx_roles_person_id ON person_org_roles(person_id);
+CREATE INDEX IF NOT EXISTS idx_people_canonical_name ON people(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_run_id ON run_organisations(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_org_id ON run_organisations(organisation_id);
 CREATE INDEX IF NOT EXISTS idx_org_addresses_org_id ON organisation_addresses(organisation_id);

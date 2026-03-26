@@ -54,6 +54,7 @@ class ResolutionDecision:
     canonical_name: str
     explanation: str
     rule_score: float
+    person_identity_key: str = ""
     alias_status: str = "none"
     llm_payload: dict[str, Any] = field(default_factory=dict)
 

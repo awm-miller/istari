@@ -4,12 +4,14 @@ import logging
 from typing import Any
 
 from src.companies_house.client import CompaniesHouseClient
+from src.companies_house.client import extract_officer_id
 from src.companies_house.relationships import (
     company_relationship_kind,
     company_relationship_phrase,
     company_role_type,
 )
 from src.models import OrganisationRecord
+from src.resolution.features import build_person_identity_key
 from src.storage.repository import Repository
 
 log = logging.getLogger("istari.companies_house")
@@ -45,7 +47,17 @@ def expand_company_people(
         if not person_name:
             continue
         officer_role = item.get("officer_role")
-        person_id = repository.upsert_person(person_name)
+        person_id = repository.upsert_person(
+            person_name,
+            identity_key=build_person_identity_key(
+                person_name,
+                source="companies_house_company_officers",
+                raw_payload={
+                    "officer_id": extract_officer_id(item),
+                    "date_of_birth": item.get("date_of_birth"),
+                },
+            ),
+        )
         repository.upsert_role(
             person_id=person_id,
             organisation_id=organisation_id,

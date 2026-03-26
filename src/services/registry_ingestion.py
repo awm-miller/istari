@@ -64,6 +64,7 @@ def candidate_from_evidence_item(*, item: EvidenceItem, evidence_id: int) -> Can
         raw_payload={
             "candidate_name": candidate_name,
             "organisation_name": organisation_name,
+            "officer_id": item.raw_payload.get("officer_id"),
             "role_type": item.raw_payload.get("role_type", ""),
             "role_label": item.raw_payload.get("role_label", ""),
             "relationship_kind": item.raw_payload.get("relationship_kind", ""),

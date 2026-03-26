@@ -23,6 +23,7 @@ class Repository:
         schema = self.schema_path.read_text(encoding="utf-8")
         with self.connect() as connection:
             connection.executescript(schema)
+            self._migrate_people_table(connection)
             self._ensure_column(
                 connection,
                 "person_org_roles",
@@ -40,6 +41,12 @@ class Repository:
                 "resolution_decisions",
                 "alias_status",
                 "TEXT NOT NULL DEFAULT 'none'",
+            )
+            self._ensure_column(
+                connection,
+                "resolution_decisions",
+                "person_identity_key",
+                "TEXT NOT NULL DEFAULT ''",
             )
             self._ensure_column(
                 connection,
@@ -397,11 +404,12 @@ class Repository:
                     status,
                     confidence,
                     canonical_name,
+                    person_identity_key,
                     explanation,
                     rule_score,
                     alias_status,
                     llm_payload_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -409,6 +417,7 @@ class Repository:
                     decision.status,
                     decision.confidence,
                     decision.canonical_name,
+                    decision.person_identity_key,
                     decision.explanation,
                     decision.rule_score,
                     decision.alias_status,
@@ -417,15 +426,26 @@ class Repository:
             )
             return int(cursor.lastrowid)
 
-    def upsert_person(self, canonical_name: str) -> int:
+    def upsert_person(self, canonical_name: str, identity_key: str | None = None) -> int:
+        cleaned_name = " ".join(str(canonical_name).split()).strip()
+        cleaned_key = " ".join(str(identity_key or cleaned_name).split()).strip()
+        if not cleaned_name:
+            raise ValueError("Person name is required.")
+        if not cleaned_key:
+            raise ValueError("Person identity key is required.")
         with self.connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO people(canonical_name) VALUES(?)",
-                (canonical_name,),
+                """
+                INSERT INTO people(canonical_name, identity_key)
+                VALUES(?, ?)
+                ON CONFLICT(identity_key) DO UPDATE SET
+                    canonical_name = excluded.canonical_name
+                """,
+                (cleaned_name, cleaned_key),
             )
             row = connection.execute(
-                "SELECT id FROM people WHERE canonical_name = ?",
-                (canonical_name,),
+                "SELECT id FROM people WHERE identity_key = ?",
+                (cleaned_key,),
             ).fetchone()
             return int(row["id"])
 
@@ -884,6 +904,7 @@ class Repository:
                 SELECT
                     resolution_decisions.run_id,
                     resolution_decisions.canonical_name,
+                    resolution_decisions.person_identity_key,
                     organisations.id AS org_id,
                     resolution_decisions.confidence
                 FROM resolution_decisions
@@ -898,34 +919,35 @@ class Repository:
             ),
             person_agg AS (
                 SELECT
-                    matched.canonical_name,
+                    matched.person_identity_key,
+                    MIN(matched.canonical_name) AS canonical_name,
                     COUNT(DISTINCT matched.run_id) AS seed_count,
                     COUNT(DISTINCT matched.org_id) AS organisation_count,
                     COUNT(*) AS decision_count,
                     ROUND(AVG(matched.confidence), 4) AS avg_resolution_confidence,
                     ROUND(SUM(matched.confidence), 4) AS confidence_sum
                 FROM matched
-                GROUP BY matched.canonical_name
+                GROUP BY matched.person_identity_key
             ),
             person_org_weights AS (
                 SELECT
-                    people.canonical_name,
+                    people.identity_key AS person_identity_key,
                     person_org_roles.organisation_id,
                     MAX(person_org_roles.edge_weight) AS organisation_weight
                 FROM people
                 JOIN person_org_roles
                     ON person_org_roles.person_id = people.id
                 JOIN matched
-                    ON matched.canonical_name = people.canonical_name
+                    ON matched.person_identity_key = people.identity_key
                    AND matched.org_id = person_org_roles.organisation_id
-                GROUP BY people.canonical_name, person_org_roles.organisation_id
+                GROUP BY people.identity_key, person_org_roles.organisation_id
             ),
             person_weighted AS (
                 SELECT
-                    person_org_weights.canonical_name,
+                    person_org_weights.person_identity_key,
                     ROUND(SUM(person_org_weights.organisation_weight), 4) AS weighted_organisation_score
                 FROM person_org_weights
-                GROUP BY person_org_weights.canonical_name
+                GROUP BY person_org_weights.person_identity_key
             )
             SELECT
                 person_agg.canonical_name,
@@ -939,17 +961,17 @@ class Repository:
                     SELECT GROUP_CONCAT(DISTINCT runs.id)
                     FROM matched
                     JOIN runs ON runs.id = matched.run_id
-                    WHERE matched.canonical_name = person_agg.canonical_name
+                    WHERE matched.person_identity_key = person_agg.person_identity_key
                 ) AS run_ids,
                 (
                     SELECT GROUP_CONCAT(DISTINCT runs.seed_name)
                     FROM matched
                     JOIN runs ON runs.id = matched.run_id
-                    WHERE matched.canonical_name = person_agg.canonical_name
+                    WHERE matched.person_identity_key = person_agg.person_identity_key
                 ) AS seed_names
             FROM person_agg
             LEFT JOIN person_weighted
-                ON person_weighted.canonical_name = person_agg.canonical_name
+                ON person_weighted.person_identity_key = person_agg.person_identity_key
             ORDER BY
                 person_agg.seed_count DESC,
                 weighted_organisation_score DESC,
@@ -981,6 +1003,7 @@ class Repository:
                     organisations.registry_number,
                     organisations.suffix,
                     resolution_decisions.canonical_name,
+                    resolution_decisions.person_identity_key,
                     resolution_decisions.confidence
                 FROM resolution_decisions
                 JOIN candidate_matches
@@ -1000,7 +1023,7 @@ class Repository:
                     matched.registry_number,
                     matched.suffix,
                     COUNT(DISTINCT matched.run_id) AS seed_count,
-                    COUNT(DISTINCT matched.canonical_name) AS person_count,
+                    COUNT(DISTINCT matched.person_identity_key) AS person_count,
                     COUNT(*) AS decision_count,
                     ROUND(AVG(matched.confidence), 4) AS avg_resolution_confidence,
                     ROUND(SUM(matched.confidence), 4) AS confidence_sum
@@ -1015,15 +1038,15 @@ class Repository:
             org_person_weights AS (
                 SELECT
                     matched.org_id,
-                    people.canonical_name,
+                    people.identity_key AS person_identity_key,
                     MAX(person_org_roles.edge_weight) AS person_weight
                 FROM matched
                 JOIN people
-                    ON people.canonical_name = matched.canonical_name
+                    ON people.identity_key = matched.person_identity_key
                 JOIN person_org_roles
                     ON person_org_roles.person_id = people.id
                    AND person_org_roles.organisation_id = matched.org_id
-                GROUP BY matched.org_id, people.canonical_name
+                GROUP BY matched.org_id, people.identity_key
             ),
             org_weighted AS (
                 SELECT
@@ -1069,6 +1092,37 @@ class Repository:
         """
         with self.connect() as connection:
             return connection.execute(sql, params).fetchall()
+
+    def _migrate_people_table(self, connection: sqlite3.Connection) -> None:
+        columns = connection.execute("PRAGMA table_info(people)").fetchall()
+        if any(str(column["name"]) == "identity_key" for column in columns):
+            return
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS people_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    canonical_name TEXT NOT NULL,
+                    identity_key TEXT NOT NULL UNIQUE
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO people_new(id, canonical_name, identity_key)
+                SELECT id, canonical_name, canonical_name
+                FROM people
+                """
+            )
+            connection.execute("DROP TABLE people")
+            connection.execute("ALTER TABLE people_new RENAME TO people")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_people_canonical_name ON people(canonical_name)"
+            )
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     def _ensure_column(
         self,

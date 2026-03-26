@@ -7,7 +7,7 @@ from typing import Any
 
 from src.models import NameVariant, OrganisationRecord, ResolutionDecision
 from src.ranking import rank_people
-from src.resolution.features import build_candidate_match
+from src.resolution.features import build_candidate_match, build_person_identity_key
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import SearchProvider
 from src.search.queries import generate_name_variants, normalize_name
@@ -204,7 +204,10 @@ class ResolutionService:
                             metadata={"source": candidate.source},
                         )
                     )
-                    person_id = repository.upsert_person(decision.canonical_name)
+                    person_id = repository.upsert_person(
+                        decision.canonical_name,
+                        identity_key=decision.person_identity_key,
+                    )
                     confidence_class, edge_weight = _candidate_confidence(decision)
                     repository.upsert_role(
                         person_id=person_id,
@@ -287,6 +290,11 @@ def _decision_for_duplicate(base_decision: ResolutionDecision, candidate: Any) -
         status=base_decision.status,
         confidence=float(base_decision.confidence),
         canonical_name=canonical_name,
+        person_identity_key=build_person_identity_key(
+            canonical_name,
+            source=str(candidate.source or ""),
+            raw_payload=dict(candidate.raw_payload or {}),
+        ),
         explanation=str(base_decision.explanation),
         rule_score=float(base_decision.rule_score),
         alias_status="none",
@@ -329,5 +337,9 @@ def _resolution_group_key(candidate: Any) -> tuple[str, str, str, str, int, str]
         str(candidate.registry_type or ""),
         str(candidate.registry_number or ""),
         int(candidate.suffix or 0),
-        str(candidate.source or ""),
+        build_person_identity_key(
+            str(candidate.candidate_name or ""),
+            source=str(candidate.source or ""),
+            raw_payload=dict(candidate.raw_payload or {}),
+        ),
     )

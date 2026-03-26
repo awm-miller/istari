@@ -32,6 +32,50 @@ def person_name_similarity(left: str, right: str) -> float:
     return round(score, 4)
 
 
+def extract_birth_month_year(raw_payload: dict[str, Any]) -> tuple[int | None, int | None]:
+    evidence = raw_payload.get("evidence", {}) if isinstance(raw_payload, dict) else {}
+    officer_search_item = evidence.get("officer_search_item", {}) if isinstance(evidence, dict) else {}
+    date_of_birth = {}
+    if isinstance(officer_search_item, dict):
+        date_of_birth = officer_search_item.get("date_of_birth", {}) or {}
+    if not date_of_birth and isinstance(raw_payload, dict):
+        date_of_birth = raw_payload.get("date_of_birth", {}) or {}
+    month = date_of_birth.get("month")
+    year = date_of_birth.get("year")
+    try:
+        month_value = int(month) if month not in (None, "") else None
+    except (TypeError, ValueError):
+        month_value = None
+    try:
+        year_value = int(year) if year not in (None, "") else None
+    except (TypeError, ValueError):
+        year_value = None
+    return month_value, year_value
+
+
+def build_person_identity_key(
+    canonical_name: str,
+    *,
+    source: str = "",
+    raw_payload: dict[str, Any] | None = None,
+) -> str:
+    normalized_name = normalize_name(canonical_name)
+    if not normalized_name:
+        raise ValueError("Person name is required.")
+
+    payload = raw_payload or {}
+    evidence = payload.get("evidence", {}) if isinstance(payload, dict) else {}
+    officer_id = payload.get("officer_id") or (evidence.get("officer_id") if isinstance(evidence, dict) else None)
+    if officer_id and str(source or "").startswith("companies_house"):
+        return f"ch-officer:{str(officer_id).strip().lower()}"
+
+    birth_month, birth_year = extract_birth_month_year(payload)
+    if str(source or "").startswith("companies_house") and birth_month and birth_year:
+        return f"ch-name-dob:{normalized_name}:{birth_year:04d}-{birth_month:02d}"
+
+    return f"name:{normalized_name}"
+
+
 def build_candidate_match(
     *,
     name_variant: str,
@@ -51,6 +95,12 @@ def build_candidate_match(
     )
     has_registry_number = 1.0 if registry_number else 0.0
     source_weight = 0.55 if source == "charity_commission_search" else 1.0
+    birth_month, birth_year = extract_birth_month_year(raw_payload)
+    person_identity_key = build_person_identity_key(
+        candidate_name,
+        source=source,
+        raw_payload=raw_payload,
+    )
 
     feature_payload = {
         "name_similarity": round(name_similarity, 4),
@@ -59,6 +109,9 @@ def build_candidate_match(
         "has_registry_number": has_registry_number,
         "source_weight": source_weight,
         "source": source,
+        "birth_month": birth_month,
+        "birth_year": birth_year,
+        "person_identity_key": person_identity_key,
     }
 
     score = round(
