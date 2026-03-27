@@ -66,10 +66,14 @@ def build_person_identity_key(
     payload = raw_payload or {}
     evidence = payload.get("evidence", {}) if isinstance(payload, dict) else {}
     officer_id = payload.get("officer_id") or (evidence.get("officer_id") if isinstance(evidence, dict) else None)
-    if officer_id and str(source or "").startswith("companies_house"):
-        return f"ch-officer:{str(officer_id).strip().lower()}"
-
     birth_month, birth_year = extract_birth_month_year(payload)
+
+    if officer_id and str(source or "").startswith("companies_house"):
+        key = f"ch-officer:{str(officer_id).strip().lower()}"
+        if birth_month and birth_year:
+            key += f":{birth_year:04d}-{birth_month:02d}"
+        return key
+
     if str(source or "").startswith("companies_house") and birth_month and birth_year:
         return f"ch-name-dob:{normalized_name}:{birth_year:04d}-{birth_month:02d}"
 

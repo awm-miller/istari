@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sys
 import webbrowser
 from collections import defaultdict
@@ -88,7 +89,44 @@ def are_aliases(name_a: str, name_b: str) -> bool:
     return given_a.issubset(given_b) or given_b.issubset(given_a)
 
 
+_DOB_RE = re.compile(r"(\d{4}-\d{2})$")
+
+
+def _extract_birth_month(identity_key: str) -> str | None:
+    """Return 'YYYY-MM' from a 'ch-name-dob:...:YYYY-MM' key, or None."""
+    m = _DOB_RE.search(identity_key)
+    return m.group(1) if m else None
+
+
+def _birth_dates_conflict(key_a: str, key_b: str) -> bool:
+    """True when both keys carry birth-month info and it differs."""
+    if not key_a or not key_b:
+        return False
+    dob_a = _extract_birth_month(key_a)
+    dob_b = _extract_birth_month(key_b)
+    if dob_a and dob_b and dob_a != dob_b:
+        return True
+    return False
+
+
+def _any_birth_date_conflict(left: dict, right: dict) -> bool:
+    """Check identity_key (str) or identity_keys (list) for DOB conflicts."""
+    left_keys = left.get("identity_keys") or []
+    if not left_keys and left.get("identity_key"):
+        left_keys = [left["identity_key"]]
+    right_keys = right.get("identity_keys") or []
+    if not right_keys and right.get("identity_key"):
+        right_keys = [right["identity_key"]]
+    for lk in left_keys:
+        for rk in right_keys:
+            if _birth_dates_conflict(lk, rk):
+                return True
+    return False
+
+
 def names_match(left: dict, right: dict) -> bool:
+    if _any_birth_date_conflict(left, right):
+        return False
     left_names = [str(left["label"]), *(str(name) for name in left.get("aliases") or [])]
     right_names = [str(right["label"]), *(str(name) for name in right.get("aliases") or [])]
     for left_name in left_names:
@@ -258,6 +296,7 @@ def consolidate_run(run_id: int) -> dict:
         {
             "person_id": int(r["id"]),
             "name": str(r["canonical_name"]),
+            "identity_key": str(r["identity_key"] or ""),
             "org_count": int(r["organisation_count"]),
             "role_count": int(r["role_count"]),
             "score": float(r["weighted_organisation_score"]),
@@ -265,12 +304,27 @@ def consolidate_run(run_id: int) -> dict:
         for r in ranked
     ]
 
-    # --- alias grouping ---
+    # --- alias grouping (DOB-aware to prevent transitive bridging) ---
     uf = UnionFind()
+    person_dobs = [_extract_birth_month(p["identity_key"]) for p in people]
+    group_dobs: dict[int, set[str]] = {}
+    for i, dob in enumerate(person_dobs):
+        if dob:
+            group_dobs.setdefault(uf.find(i), set()).add(dob)
+
     for i, a in enumerate(people):
         for j in range(i + 1, len(people)):
-            if are_aliases(a["name"], people[j]["name"]):
-                uf.union(i, j)
+            if not are_aliases(a["name"], people[j]["name"]):
+                continue
+            root_i, root_j = uf.find(i), uf.find(j)
+            if root_i == root_j:
+                continue
+            combined = group_dobs.get(root_i, set()) | group_dobs.get(root_j, set())
+            if len(combined) > 1:
+                continue
+            uf.union(i, j)
+            new_root = uf.find(i)
+            group_dobs[new_root] = combined
 
     groups: dict[int, list[int]] = {}
     for i in range(len(people)):
@@ -294,10 +348,14 @@ def consolidate_run(run_id: int) -> dict:
                 role_keys.add(_role_key(edge))
                 total_weight += float(edge["edge_weight"] or 0)
 
+        identity_keys = sorted(set(
+            e["identity_key"] for e in entries if e.get("identity_key")
+        ))
         consolidated.append({
             "group_id": group_id,
             "label": label,
             "aliases": sorted(set(e["name"] for e in entries)),
+            "identity_keys": identity_keys,
             "person_ids": sorted(pid_set),
             "org_count": len(org_ids),
             "role_count": len(role_keys),
@@ -308,6 +366,36 @@ def consolidate_run(run_id: int) -> dict:
             person_id_to_group_id[pid] = group_id
 
     consolidated.sort(key=lambda c: (-c["score"], -c["org_count"], c["label"]))
+
+    # Determine the seed's birth month from a ch-name-dob key whose name
+    # tokens match the seed name tokens (order-independent, since CH uses
+    # surname-first while our normalize_name keeps given-names-first).
+    seed_tokens = set(normalize_name(seed_name).split())
+    seed_dob: str | None = None
+    for c in consolidated:
+        if not c["is_seed_alias"]:
+            continue
+        for key in c.get("identity_keys", []):
+            if not key.startswith("ch-name-dob:"):
+                continue
+            parts = key.rsplit(":", 2)
+            if len(parts) == 3 and set(parts[1].split()) == seed_tokens:
+                seed_dob = parts[2]
+                break
+        if seed_dob:
+            break
+
+    if seed_dob:
+        for c in consolidated:
+            if not c["is_seed_alias"]:
+                continue
+            group_dobs = {
+                _extract_birth_month(k)
+                for k in c.get("identity_keys", [])
+                if _extract_birth_month(k)
+            }
+            if group_dobs and seed_dob not in group_dobs:
+                c["is_seed_alias"] = False
 
     seed_aliases = [c for c in consolidated if c["is_seed_alias"]]
     expanded_people = [c for c in consolidated if not c["is_seed_alias"]]
@@ -519,6 +607,7 @@ def consolidate_run(run_id: int) -> dict:
             "kind": "seed_alias",
             "lane": 1,
             "aliases": entry["aliases"],
+            "identity_keys": entry.get("identity_keys", []),
             "org_count": entry["org_count"],
             "role_count": entry["role_count"],
             "score": entry["score"],
@@ -582,6 +671,7 @@ def consolidate_run(run_id: int) -> dict:
             "kind": "person",
             "lane": 4,
             "aliases": entry.get("aliases", []),
+            "identity_keys": entry.get("identity_keys", []),
             "org_count": entry["org_count"],
             "role_count": entry["role_count"],
             "score": entry["score"],
@@ -714,6 +804,16 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     keys.add(surname.replace(new, old))
         return keys
 
+    def _collect_entry_dobs(entries: list[dict]) -> dict[int, set[str]]:
+        """Extract known birth months from each entry's identity_keys."""
+        group_dobs: dict[int, set[str]] = {}
+        for i, entry in enumerate(entries):
+            for key in entry.get("identity_keys") or []:
+                dob = _extract_birth_month(key)
+                if dob:
+                    group_dobs.setdefault(i, set()).add(dob)
+        return group_dobs
+
     def _union_matching_entries(entries: list[dict], union_find: UnionFind) -> int:
         buckets: dict[str, list[int]] = defaultdict(list)
         for index, entry in enumerate(entries):
@@ -721,6 +821,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 buckets[key].append(index)
         compared_pairs: set[tuple[int, int]] = set()
         comparisons = 0
+        dob_groups = _collect_entry_dobs(entries)
         for bucket in buckets.values():
             if len(bucket) < 2:
                 continue
@@ -731,8 +832,17 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                         continue
                     compared_pairs.add(pair)
                     comparisons += 1
-                    if names_match(entries[left_index], entries[right_index]):
-                        union_find.union(left_index, right_index)
+                    if not names_match(entries[left_index], entries[right_index]):
+                        continue
+                    root_l, root_r = union_find.find(left_index), union_find.find(right_index)
+                    if root_l == root_r:
+                        continue
+                    combined = dob_groups.get(root_l, set()) | dob_groups.get(root_r, set())
+                    if len(combined) > 1:
+                        continue
+                    union_find.union(left_index, right_index)
+                    new_root = union_find.find(left_index)
+                    dob_groups[new_root] = combined
         return comparisons
 
     def _union_matching_addresses(entries: list[dict], union_find: UnionFind) -> int:
@@ -785,6 +895,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "orig_id": str(node["id"]),
                     "label": str(node["label"]),
                     "aliases": list(node.get("aliases") or []),
+                    "identity_keys": list(node.get("identity_keys") or []),
                 })
             if node["kind"] != "person":
                 continue
@@ -795,6 +906,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 "orig_id": str(node["id"]),
                 "label": str(node["label"]),
                 "aliases": list(node.get("aliases") or []),
+                "identity_keys": list(node.get("identity_keys") or []),
                 "tooltip_lines": list(node.get("tooltip_lines") or []),
             })
         run_contexts.append({

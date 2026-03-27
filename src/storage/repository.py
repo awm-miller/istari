@@ -657,6 +657,7 @@ class Repository:
                 SELECT
                     people.id,
                     people.canonical_name,
+                    people.identity_key,
                     COUNT(DISTINCT org_weights.organisation_id) AS organisation_count,
                     COUNT(person_org_roles.id) AS role_count,
                     ROUND(SUM(org_weights.organisation_weight), 4) AS weighted_organisation_score
