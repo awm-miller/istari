@@ -1,15 +1,12 @@
-"""Rebuild graph HTML from consolidate_and_graph.py, then copy to netlify."""
-import importlib.util
+"""Rebuild graph HTML from graph modules, then copy to netlify."""
 import pathlib
 import sys
-
-spec = importlib.util.spec_from_file_location("cg", str(pathlib.Path(__file__).parent / "consolidate_and_graph.py"))
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from src.config import load_settings
+from src.graph.build import consolidate_multi_run
+from src.graph.render import render_html
 from src.storage.repository import Repository
 
 settings = load_settings()
@@ -25,10 +22,10 @@ if not run_ids:
     raise SystemExit("No runs found.")
 
 print(f"Consolidating runs {run_ids}...", flush=True)
-data = m.consolidate_multi_run(run_ids)
+data = consolidate_multi_run(run_ids)
 print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 
-html = m.render_html(data)
+html = render_html(data)
 print(f"Rendered HTML ({len(html)} bytes)", flush=True)
 
 out = pathlib.Path("output/latest_graph.html")

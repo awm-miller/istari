@@ -13,7 +13,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import re
 import sys
@@ -25,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.address_resolution import AddressMergeMatcher, address_bucket_keys, addresses_match
 from src.config import load_settings
+from src.graph.render import render_html as _render_html
 from src.ofac.screening import OFACScreener
 from src.resolution.features import person_name_similarity
 from src.search.queries import (
@@ -1054,6 +1054,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     org_people: dict[str, list[dict]] = defaultdict(list)
     org_identities: dict[str, list[dict]] = defaultdict(list)
     org_seed_names: dict[str, set[str]] = defaultdict(set)
+    org_identity_seed_names: dict[str, set[str]] = defaultdict(set)
     identity_meta: dict[str, dict] = {}
 
     print("[graph] Building final merged nodes and edges", flush=True)
@@ -1177,6 +1178,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             org_seed_names[org_id].add(str(run["seed_name"]))
 
             if person_orig_id in identity_ids:
+                org_identity_seed_names[org_id].add(str(run["seed_name"]))
                 identity_id = f"identity:{run['run_id']}:{person_orig_id}"
                 identity_org_edges.append({
                     "source": identity_id,
@@ -1233,7 +1235,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     org_address_edges = _dedupe_edges(org_address_edges, ("source", "target", "phrase"))
 
     for org_id, node in org_nodes.items():
-        node["shared"] = len(org_seed_names.get(org_id, set())) > 1
+        node["shared"] = len(org_identity_seed_names.get(org_id, set())) > 1
         node["seed_names"] = sorted(org_seed_names.get(org_id, set()))
         identity_seen: set[tuple[str, str, str]] = set()
         identities = []
@@ -1254,8 +1256,8 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         tooltip = [f"<strong>{node['label']}</strong>"]
         if node.get("registry_type") or node.get("registry_number"):
             tooltip.append(f"{node.get('registry_type', '')} {node.get('registry_number', '')}".strip())
-        if len(org_seed_names.get(org_id, set())) > 1:
-            tooltip.append(f"Seen under: {', '.join(sorted(org_seed_names[org_id]))}")
+        if len(org_identity_seed_names.get(org_id, set())) > 1:
+            tooltip.append(f"Shared by: {', '.join(sorted(org_identity_seed_names[org_id]))}")
         if identities:
             tooltip.append(f"{len(identities)} linked identities:")
             for row in identities[:10]:
@@ -2745,6 +2747,9 @@ function zoomToVisible() {{
 </script>
 </body>
 </html>"""
+
+
+render_html = _render_html
 
 
 def main() -> None:
