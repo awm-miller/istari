@@ -246,6 +246,48 @@ const directEdgePairs = new Set(
     return `${{a}}||${{b}}`;
   }})
 );
+const orgLinkIds = new Map();
+allEdges.filter(edge => edge.kind === "org_link").forEach(edge => {{
+  if (!orgLinkIds.has(edge.source)) orgLinkIds.set(edge.source, new Set());
+  if (!orgLinkIds.has(edge.target)) orgLinkIds.set(edge.target, new Set());
+  orgLinkIds.get(edge.source).add(edge.target);
+  orgLinkIds.get(edge.target).add(edge.source);
+}});
+const orgAddressIds = new Map();
+const addressOrgIds = new Map();
+allEdges.filter(edge => edge.kind === "address_link").forEach(edge => {{
+  const sourceNode = nodeById.get(edge.source);
+  const targetNode = nodeById.get(edge.target);
+  const orgId = sourceNode?.kind === "organisation" ? edge.source : targetNode?.kind === "organisation" ? edge.target : null;
+  const addressId = sourceNode?.kind === "address" ? edge.source : targetNode?.kind === "address" ? edge.target : null;
+  if (!orgId || !addressId) return;
+  if (!orgAddressIds.has(orgId)) orgAddressIds.set(orgId, new Set());
+  orgAddressIds.get(orgId).add(addressId);
+  if (!addressOrgIds.has(addressId)) addressOrgIds.set(addressId, new Set());
+  addressOrgIds.get(addressId).add(orgId);
+}});
+const indirectIdentityIdsByOrg = new Map();
+allNodes.filter(node => node.lane === 1).forEach(identity => {{
+  const directOrgs = new Set();
+  (edgesByNodeId.get(identity.id) || []).forEach(edge => {{
+    if (edge.kind !== "role") return;
+    const otherId = edge.source === identity.id ? edge.target : edge.source;
+    if (nodeById.get(otherId)?.kind === "organisation") directOrgs.add(otherId);
+  }});
+  if (!directOrgs.size) return;
+  const reachableOrgs = new Set();
+  directOrgs.forEach(orgId => {{
+    (orgLinkIds.get(orgId) || new Set()).forEach(id => reachableOrgs.add(id));
+    (orgAddressIds.get(orgId) || new Set()).forEach(addressId => {{
+      (addressOrgIds.get(addressId) || new Set()).forEach(id => reachableOrgs.add(id));
+    }});
+  }});
+  directOrgs.forEach(id => reachableOrgs.delete(id));
+  reachableOrgs.forEach(orgId => {{
+    if (!indirectIdentityIdsByOrg.has(orgId)) indirectIdentityIdsByOrg.set(orgId, new Set());
+    indirectIdentityIdsByOrg.get(orgId).add(identity.id);
+  }});
+}});
 
 const svg = d3.select(container).append("svg")
   .attr("width", "100%")
@@ -655,10 +697,45 @@ function buildSearchProjection(matchedIds) {{
   }};
 }}
 
+function buildIndirectOrgProjection() {{
+  const qualifyingOrgIds = new Set();
+  indirectIdentityIdsByOrg.forEach((identityIds, orgId) => {{
+    if (identityIds.size >= 2) qualifyingOrgIds.add(orgId);
+  }});
+
+  const visibleIds = new Set(qualifyingOrgIds);
+  qualifyingOrgIds.forEach(orgId => {{
+    (edgesByNodeId.get(orgId) || []).forEach(edge => {{
+      if (edge.kind !== "role") return;
+      const otherId = edge.source === orgId ? edge.target : edge.source;
+      if (nodeById.get(otherId)?.lane === 1) visibleIds.add(otherId);
+    }});
+    (indirectIdentityIdsByOrg.get(orgId) || new Set()).forEach(identityId => visibleIds.add(identityId));
+  }});
+
+  const filteredVisibleIds = applyTypeFilters(visibleIds, qualifyingOrgIds, {{
+    keepDisconnectedIdentities: true,
+  }});
+  const edgeIds = allEdges.filter(edge => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target));
+  return {{
+    rootIds: qualifyingOrgIds,
+    visibleIds: filteredVisibleIds,
+    edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)),
+  }};
+}}
+
 function projectVisibleGraph() {{
   syncHiddenTypeState();
   const matchedIds = getMatchedNodeIds(viewerState.searchQuery);
   const rootIds = matchedIds.size ? matchedIds : new Set(viewerState.focusedNodeIds);
+
+  if (matchedIds.size) {{
+    return buildSearchProjection(matchedIds);
+  }}
+
+  if (viewerState.indirectOnly) {{
+    return buildIndirectOrgProjection();
+  }}
 
   if (!rootIds.size) {{
     const visibleIds = applyTypeFilters(
@@ -669,23 +746,9 @@ function projectVisibleGraph() {{
     return {{ rootIds, visibleIds, edgeIds }};
   }}
 
-  if (matchedIds.size && !viewerState.indirectOnly) {{
-    return buildSearchProjection(matchedIds);
-  }}
-
   const subgraph = collectConnectedSubgraph(rootIds);
-  const projectedIds = viewerState.indirectOnly
-    ? projectIndirectNodeIds(rootIds, subgraph)
-    : new Set(subgraph.reachableIds);
-  const visibleIds = applyTypeFilters(projectedIds, viewerState.indirectOnly ? new Set() : rootIds);
+  const visibleIds = applyTypeFilters(new Set(subgraph.reachableIds), rootIds);
   const edgeIds = allEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
-  if (viewerState.indirectOnly) {{
-    return {{
-      rootIds,
-      visibleIds,
-      edgeIds: edgeIds.concat(deriveHiddenConnectionEdges(rootIds, visibleIds, subgraph)),
-    }};
-  }}
   return {{ rootIds, visibleIds, edgeIds }};
 }}
 
@@ -725,8 +788,12 @@ function badgeTextInset(node) {{
   return badgeSpec(node) ? 34 : 16;
 }}
 
+function focusButtonWidth(node) {{
+  return node.kind === "seed" ? 0 : 24;
+}}
+
 function pillWidth(node) {{
-  return badgeWidth(node) + textWidth(node.label || "", fontSize(node)) + 32;
+  return badgeWidth(node) + textWidth(node.label || "", fontSize(node)) + 32 + focusButtonWidth(node);
 }}
 
 function nodeColor(node) {{

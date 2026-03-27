@@ -183,6 +183,10 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
 
         scoped_org_rows = repository.get_run_scoped_organisations(run_id)
         run_org_rows = repository.get_run_organisations(run_id)
+        run_org_rows = [
+            row for row in run_org_rows
+            if not _is_notice_org_mention(str(row["source"] or ""), _json_dict(row["run_metadata_json"]))
+        ]
         org_ids_in_run: set[int] = set()
         scoped_org_by_id: dict[int, Any] = {}
         org_registry_lookup: dict[tuple[str, str, int], int] = {}
@@ -263,7 +267,10 @@ def export_network_payload(repository: Repository, run_ids: list[int]) -> dict[s
                 explanation=f"{candidate_name} {relation_phrase} {org_name}.",
             )
 
-        graph_rows = repository.get_run_network_edges(run_id)
+        graph_rows = [
+            row for row in repository.get_run_network_edges(run_id)
+            if not _is_notice_role_row(row)
+        ]
         expanded_people: set[str] = set()
         for row in graph_rows:
             person_name = str(row["person_name"] or "").strip()
@@ -437,6 +444,47 @@ def _linked_org_phrase(source: str, metadata: dict[str, Any]) -> str:
 
 def _linked_org_detail(metadata: dict[str, Any]) -> str:
     return str(metadata.get("connection_detail") or "").strip()
+
+
+def _is_notice_boilerplate_text(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if "gives notice" in text:
+        return True
+    if "issuing authority" in text or "issuing the gazette notice" in text:
+        return True
+    if "regulatory body issuing a notice" in text:
+        return True
+    if ("registrar of companies" in text or "companies house" in text) and any(
+        token in text for token in ("notice", "gazette", "strike off", "striking off")
+    ):
+        return True
+    return False
+
+
+def _is_notice_org_mention(source: str, metadata: dict[str, Any]) -> bool:
+    if source != "pdf_org_mention":
+        return False
+    return any(
+        _is_notice_boilerplate_text(str(metadata.get(key) or ""))
+        for key in ("entity_name", "connection_phrase", "connection_detail")
+    )
+
+
+def _is_notice_role_row(row: Any) -> bool:
+    if str(row["source"] or "") != "pdf_gemini_extraction":
+        return False
+    if _is_notice_boilerplate_text(str(row["relationship_phrase"] or "")):
+        return True
+    if _is_notice_boilerplate_text(str(row["role_label"] or "")):
+        return True
+    provenance = _json_dict(row["provenance_json"])
+    pdf_entity = provenance.get("pdf_entity", {}) if isinstance(provenance, dict) else {}
+    return any(
+        _is_notice_boilerplate_text(str(pdf_entity.get(key) or ""))
+        for key in ("name", "role_label", "connection_phrase", "notes")
+    )
 
 
 def _pdf_person_detail(row: Any) -> str:

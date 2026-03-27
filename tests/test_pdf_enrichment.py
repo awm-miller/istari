@@ -215,6 +215,92 @@ class PdfEnrichmentTests(unittest.TestCase):
         del service
         del repository
 
+    def test_enrich_run_ignores_notice_boilerplate_entities(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        settings = build_test_settings(root)
+        repository = Repository(
+            settings.database_path,
+            settings.project_root / "src" / "storage" / "schema.sql",
+        )
+        schema_src = Path(__file__).resolve().parents[1] / "src" / "storage" / "schema.sql"
+        target_schema = settings.project_root / "src" / "storage" / "schema.sql"
+        target_schema.parent.mkdir(parents=True, exist_ok=True)
+        target_schema.write_text(schema_src.read_text(encoding="utf-8"), encoding="utf-8")
+        repository.init_db()
+
+        parent_org_id = repository.upsert_organisation(
+            OrganisationRecord(
+                registry_type="company",
+                registry_number="11301882",
+                suffix=0,
+                organisation_number=None,
+                name="BILAL YASIN PHOTOGRAPHY LTD",
+                status="active",
+                metadata={},
+            )
+        )
+        run_id = repository.create_run("Bilal Khalil Hasan Yasin", "balanced")
+        repository.link_run_organisation(run_id, parent_org_id, stage="step1_seed_match", source="seed")
+
+        service = PdfEnrichmentService(
+            settings=settings,
+            repository=repository,
+            charity_client=FakeCharityClient(settings),
+        )
+        document = PdfSourceDocument(
+            organisation_name="BILAL YASIN PHOTOGRAPHY LTD",
+            document_url="https://example.test/gazette.pdf",
+            title="BILAL YASIN PHOTOGRAPHY LTD - gazette notice",
+            source_provider="companies_house_filing",
+            local_pdf_path=str(root / "gazette.pdf"),
+            markdown_path=str(root / "gazette.md"),
+            markdown_text="The Registrar of Companies gives notice that the company will be struck off.",
+            filing_description="gazette-notice-compulsory (2024-07-09)",
+        )
+
+        with (
+            patch.object(service, "find_documents_for_organisation", return_value=[document]),
+            patch.object(service, "_prepare_document", return_value=document),
+            patch.object(
+                service,
+                "extract_entities_from_document",
+                return_value=[
+                    PdfExtractedEntity(
+                        name="The Registrar of Companies",
+                        entity_type="organisation",
+                        role_category="other_professional",
+                        role_label="Registrar of Companies",
+                        organisation_name="BILAL YASIN PHOTOGRAPHY LTD",
+                        source_document_url=document.document_url,
+                        connection_phrase="gives notice regarding",
+                        notes="The official body issuing the gazette notice for striking off the company.",
+                        confidence=1.0,
+                    ),
+                ],
+            ),
+        ):
+            summary = service.enrich_run(
+                run_id=run_id,
+                organisations=repository.get_run_organisations(run_id, stages=["step1_seed_match"]),
+            )
+
+        self.assertEqual(summary["entity_count"], 0)
+        self.assertEqual(summary["people_added"], 0)
+        self.assertEqual(summary["organisation_mentions_seen"], 0)
+        self.assertEqual(summary["organisation_mentions_resolved"], 0)
+
+        with repository.connect() as connection:
+            roles = connection.execute("SELECT COUNT(*) AS count FROM person_org_roles").fetchone()
+            linked = connection.execute(
+                "SELECT COUNT(*) AS count FROM run_organisations WHERE run_id = ? AND source = 'pdf_org_mention'",
+                (run_id,),
+            ).fetchone()
+            self.assertEqual(int(roles["count"]), 0)
+            self.assertEqual(int(linked["count"]), 0)
+
+        del service
+        del repository
+
 
 if __name__ == "__main__":
     unittest.main()

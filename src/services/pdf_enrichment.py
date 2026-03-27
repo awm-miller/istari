@@ -184,6 +184,35 @@ def parse_pdf_entities_document(
     return entities
 
 
+def _is_notice_boilerplate_text(value: str) -> bool:
+    text = _clean_text(value).lower()
+    if not text:
+        return False
+    if "gives notice" in text:
+        return True
+    if "issuing authority" in text or "issuing the gazette notice" in text:
+        return True
+    if "regulatory body issuing a notice" in text:
+        return True
+    if ("registrar of companies" in text or "companies house" in text) and any(
+        token in text for token in ("notice", "gazette", "strike off", "striking off")
+    ):
+        return True
+    return False
+
+
+def _is_notice_boilerplate_entity(entity: PdfExtractedEntity) -> bool:
+    return any(
+        _is_notice_boilerplate_text(value)
+        for value in (
+            entity.name,
+            entity.role_label,
+            entity.connection_phrase,
+            entity.notes,
+        )
+    )
+
+
 def role_mapping_for_entity(entity: PdfExtractedEntity) -> tuple[str, str, str, str, float] | None:
     label = entity.role_label or entity.role_category or entity.entity_type
     phrase = entity.connection_phrase.strip()
@@ -250,6 +279,7 @@ Rules:
 - Use role_category=organisation for named organisations mentioned as counterparties, linked entities, subsidiaries, parent entities, auditors, accountants, or service firms.
 - Use role_category=accountant_or_auditor for people or firms acting as auditor, examiner, accountant, or accounting practice.
 - Use role_category=ignore for incidental names that are not useful for registry/company pivoting.
+- Use role_category=ignore for boilerplate notice issuers like Companies House / Registrar of Companies when they are only giving or issuing a notice.
 - Set connection_phrase to a short natural-language phrase that explains the relationship to the scoped organisation, e.g. "is listed as a director of", "is named as auditor for", "is identified as a subsidiary of", "is described as providing services to".
 - Use notes to briefly explain how the document makes that link, quoting or paraphrasing the relevant context.
 - Prefer precision over recall.
@@ -452,6 +482,9 @@ class PdfEnrichmentService:
 
             log.info("PDF enrichment: [%s] doc %d extracted %d entities", org_name, doc_index, len(entities))
             for index, entity in enumerate(entities, start=1):
+                if _is_notice_boilerplate_entity(entity):
+                    log.info("PDF enrichment: [%s] doc %d skipping notice boilerplate entity: %s", org_name, doc_index, entity.name)
+                    continue
                 evidence_id = self._store_entity_evidence(
                     run_id=run_id,
                     organisation_name=org_name,

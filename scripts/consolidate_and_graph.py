@@ -233,6 +233,47 @@ def _linked_org_detail(metadata: dict[str, object]) -> str:
     return str(metadata.get("connection_detail") or "").strip()
 
 
+def _is_notice_boilerplate_text(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    if "gives notice" in text:
+        return True
+    if "issuing authority" in text or "issuing the gazette notice" in text:
+        return True
+    if "regulatory body issuing a notice" in text:
+        return True
+    if ("registrar of companies" in text or "companies house" in text) and any(
+        token in text for token in ("notice", "gazette", "strike off", "striking off")
+    ):
+        return True
+    return False
+
+
+def _is_notice_org_mention(source: str, metadata: dict[str, object]) -> bool:
+    if source != "pdf_org_mention":
+        return False
+    return any(
+        _is_notice_boilerplate_text(str(metadata.get(key) or ""))
+        for key in ("entity_name", "connection_phrase", "connection_detail")
+    )
+
+
+def _is_notice_role_edge(edge) -> bool:
+    if _row_str(edge, "source") != "pdf_gemini_extraction":
+        return False
+    if _is_notice_boilerplate_text(_row_str(edge, "relationship_phrase")):
+        return True
+    if _is_notice_boilerplate_text(_row_str(edge, "role_label")):
+        return True
+    provenance = _json_dict(edge["provenance_json"])
+    pdf_entity = provenance.get("pdf_entity", {}) if isinstance(provenance, dict) else {}
+    return any(
+        _is_notice_boilerplate_text(str(pdf_entity.get(key) or ""))
+        for key in ("name", "role_label", "connection_phrase", "notes")
+    )
+
+
 def _pdf_role_detail(edge) -> str:
     if _row_str(edge, "source") != "pdf_gemini_extraction":
         return ""
@@ -291,6 +332,11 @@ def consolidate_run(run_id: int) -> dict:
     address_rows = repository.get_run_address_edges(run_id)
     run_row = repository.get_run(run_id)
     seed_name = str(run_row["seed_name"]) if run_row else "Seed"
+    raw_edges = [edge for edge in raw_edges if not _is_notice_role_edge(edge)]
+    run_org_rows = [
+        row for row in run_org_rows
+        if not _is_notice_org_mention(str(row["source"] or ""), _json_dict(row["run_metadata_json"]))
+    ]
 
     people = [
         {
