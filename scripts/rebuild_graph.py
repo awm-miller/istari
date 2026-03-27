@@ -16,8 +16,7 @@ repository = Repository(
 )
 repository.init_db()
 
-rows = repository.connect().execute("select id from runs order by id").fetchall()
-run_ids = [int(row["id"]) for row in rows]
+run_ids = repository.get_latest_unique_run_ids()
 if not run_ids:
     raise SystemExit("No runs found.")
 

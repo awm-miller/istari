@@ -7,6 +7,22 @@ from src.resolution.features import person_name_similarity
 from src.search.queries import is_low_information_person_name, normalize_name
 
 
+def _middle_name_tokens_conflict(left: str, right: str) -> bool:
+    left_tokens = normalize_name(left).split()
+    right_tokens = normalize_name(right).split()
+    if len(left_tokens) < 3 or len(right_tokens) < 3:
+        return False
+    if left_tokens[0] != right_tokens[0]:
+        return False
+    if left_tokens[-1] != right_tokens[-1]:
+        return False
+    left_middle = set(left_tokens[1:-1])
+    right_middle = set(right_tokens[1:-1])
+    if not left_middle or not right_middle:
+        return False
+    return left_middle.isdisjoint(right_middle)
+
+
 def candidate_role_type(candidate: Any) -> str:
     direct = str(candidate.raw_payload.get("role_type") or "").strip()
     if direct:
@@ -119,6 +135,37 @@ def apply_weak_name_match_guard(
         explanation=(
             "Rejected because the candidate name is too dissimilar to the seed name "
             "to treat shared organisation metadata as identity evidence."
+        ),
+        rule_score=decision.rule_score,
+        alias_status="none",
+        llm_payload=dict(decision.llm_payload) if decision.llm_payload else {},
+    )
+
+
+def apply_conflicting_middle_name_guard(
+    *,
+    seed_name: str,
+    candidate: Any,
+    decision: ResolutionDecision,
+) -> ResolutionDecision:
+    candidate_name = str(candidate.candidate_name or decision.canonical_name or "").strip()
+    canonical_name = str(decision.canonical_name or candidate_name).strip()
+    if not candidate_name:
+        return decision
+    if normalize_name(candidate_name) == normalize_name(seed_name):
+        return decision
+    if canonical_name and normalize_name(canonical_name) == normalize_name(seed_name):
+        return decision
+    if not _middle_name_tokens_conflict(seed_name, candidate_name):
+        return decision
+
+    return ResolutionDecision(
+        status="no_match",
+        confidence=min(float(decision.confidence or 0.0), 0.2),
+        canonical_name=candidate_name or canonical_name,
+        explanation=(
+            "Rejected because the seed and candidate share first name and surname "
+            "but have conflicting middle-name tokens."
         ),
         rule_score=decision.rule_score,
         alias_status="none",

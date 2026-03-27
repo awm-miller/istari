@@ -13,6 +13,7 @@ from src.search.provider import SearchProvider
 from src.search.queries import generate_name_variants, normalize_name
 from src.services.registry_ingestion import ingest_registry_evidence_items
 from src.services.relation_semantics import (
+    apply_conflicting_middle_name_guard,
     apply_low_information_name_guard,
     apply_weak_name_match_guard,
     candidate_relationship_kind,
@@ -161,6 +162,11 @@ class ResolutionService:
                 decision=base_decision,
             )
             base_decision = apply_weak_name_match_guard(
+                seed_name=str(run["seed_name"]),
+                candidate=representative_candidate,
+                decision=base_decision,
+            )
+            base_decision = apply_conflicting_middle_name_guard(
                 seed_name=str(run["seed_name"]),
                 candidate=representative_candidate,
                 decision=base_decision,
