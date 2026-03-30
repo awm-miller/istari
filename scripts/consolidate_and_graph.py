@@ -282,6 +282,55 @@ def _pdf_role_detail(edge) -> str:
     return str(pdf_entity.get("notes") or "").strip()
 
 
+def _parse_page_number(page_hint: str) -> int | None:
+    match = re.search(r"(\d+)", str(page_hint or ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _pdf_role_evidence(edge) -> dict[str, object] | None:
+    if _row_str(edge, "source") != "pdf_gemini_extraction":
+        return None
+    provenance = _json_dict(edge["provenance_json"])
+    if not isinstance(provenance, dict):
+        return None
+    pdf_entity = provenance.get("pdf_entity", {})
+    document = provenance.get("document", {})
+    if not isinstance(pdf_entity, dict) or not isinstance(document, dict):
+        return None
+    page_hint = str(pdf_entity.get("source_page_hint") or "").strip()
+    return {
+        "title": str(document.get("title") or "").strip(),
+        "document_url": str(document.get("url") or "").strip(),
+        "local_pdf_path": str(document.get("local_pdf_path") or "").strip(),
+        "filing_description": str(document.get("filing_description") or "").strip(),
+        "page_hint": page_hint,
+        "page_number": _parse_page_number(page_hint),
+        "notes": str(pdf_entity.get("notes") or "").strip(),
+        "evidence_id": provenance.get("evidence_id"),
+    }
+
+
+def _pdf_org_evidence(metadata: dict[str, object]) -> dict[str, object] | None:
+    if not metadata:
+        return None
+    page_hint = str(metadata.get("source_page_hint") or "").strip()
+    return {
+        "title": str(metadata.get("document_title") or "").strip(),
+        "document_url": str(metadata.get("document_url") or "").strip(),
+        "local_pdf_path": str(metadata.get("local_pdf_path") or "").strip(),
+        "filing_description": str(metadata.get("filing_description") or "").strip(),
+        "page_hint": page_hint,
+        "page_number": _parse_page_number(page_hint),
+        "notes": str(metadata.get("connection_detail") or "").strip(),
+        "evidence_id": metadata.get("evidence_id"),
+    }
+
+
 def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
     if "named as a trustee" in phrase.lower():
@@ -499,6 +548,7 @@ def consolidate_run(run_id: int) -> dict:
             "confidence": "medium",
             "weight": 0.55,
             "tooltip": f"{target_label} {phrase} {source_label}",
+            "evidence": _pdf_org_evidence(metadata),
         })
 
     address_map: dict[int, dict] = {}
@@ -540,6 +590,7 @@ def consolidate_run(run_id: int) -> dict:
         role_label = str(edge["role_label"] or "")
         phrase = _role_phrase(edge)
         detail = _pdf_role_detail(edge)
+        evidence = _pdf_role_evidence(edge)
         key = (gid, org_id, phrase)
         if key not in seen_po:
             seen_po.add(key)
@@ -553,6 +604,7 @@ def consolidate_run(run_id: int) -> dict:
                 "source_provider": str(edge["source"] or ""),
                 "confidence": str(edge["confidence_class"] or ""),
                 "weight": float(edge["edge_weight"] or 0.35),
+                "evidence": evidence,
             })
         group_entry = next((c for c in consolidated if c["group_id"] == gid), None)
         person_label = group_entry["label"] if group_entry else ""
@@ -1183,6 +1235,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                             "confidence": edge.get("confidence", ""),
                             "weight": float(edge.get("weight") or 0.55),
                             "tooltip": edge.get("tooltip", ""),
+                            "evidence": edge.get("evidence"),
                         }
                     )
                 continue
@@ -1202,6 +1255,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                             "confidence": edge.get("confidence", ""),
                             "weight": float(edge.get("weight") or 0.8),
                             "tooltip": edge.get("tooltip", ""),
+                            "evidence": edge.get("evidence"),
                         }
                     )
                 continue
@@ -1237,6 +1291,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "confidence": edge.get("confidence", ""),
                     "weight": float(edge.get("weight") or 0.35),
                     "tooltip": edge.get("tooltip", ""),
+                    "evidence": edge.get("evidence"),
                 })
                 org_identities[org_id].append({
                     "identity": identity_meta[identity_id]["label"],
@@ -1264,6 +1319,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "confidence": edge.get("confidence", ""),
                     "weight": float(edge.get("weight") or 0.35),
                     "tooltip": edge.get("tooltip", ""),
+                    "evidence": edge.get("evidence"),
                 })
                 person_label = merged_person_nodes[merged_person_id]["label"]
                 org_people[org_id].append({

@@ -1000,6 +1000,34 @@ function registryActionForNode(node) {{
   return null;
 }}
 
+function evidenceActionUrl(evidence) {{
+  const documentUrl = String(evidence?.document_url || "").trim();
+  if (!documentUrl) return "";
+  const pageNumber = Number(evidence?.page_number || 0);
+  if (!pageNumber || documentUrl.includes("#") || !/\\.pdf($|[?#])/i.test(documentUrl)) return documentUrl;
+  return `${{documentUrl}}#page=${{pageNumber}}`;
+}}
+
+function evidenceActionsForNode(node) {{
+  const seen = new Set();
+  const actions = [];
+  (edgesByNodeId.get(node.id) || []).forEach(edge => {{
+    const evidence = edge?.evidence;
+    const url = evidenceActionUrl(evidence);
+    if (!url) return;
+    const title = String(evidence?.title || edge.tooltip || "Evidence").trim();
+    const pageHint = String(evidence?.page_hint || "").trim();
+    const key = `${{url}}||${{title}}||${{pageHint}}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    actions.push({{
+      label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
+      url,
+    }});
+  }});
+  return actions.slice(0, 6);
+}}
+
 function closeContextMenu() {{
   contextMenuEl.style.display = "none";
   contextMenuEl.innerHTML = "";
@@ -1014,6 +1042,7 @@ function openContextMenu(event, node) {{
   const actions = [];
   const registryAction = registryActionForNode(node);
   if (registryAction) actions.push(registryAction);
+  evidenceActionsForNode(node).forEach(action => actions.push(action));
 
   contextMenuEl._actions = actions;
   contextMenuEl.innerHTML = [

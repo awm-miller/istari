@@ -93,6 +93,53 @@ class GraphMergeTests(unittest.TestCase):
         self.assertEqual(len(address_edges), 2)
         self.assertEqual({edge["target"] for edge in address_edges}, {address_nodes[0]["id"]})
 
+    def test_multi_run_preserves_pdf_evidence_on_role_edges(self) -> None:
+        run_one = {
+            "seed_name": "Seed One",
+            "run_id": 1,
+            "nodes": [
+                {"id": "org:1", "label": "Org One", "kind": "organisation", "lane": 2, "tooltip_lines": []},
+                {"id": "person:10", "label": "Jane Trustee", "kind": "person", "lane": 4, "tooltip_lines": []},
+            ],
+            "edges": [
+                {
+                    "source": "org:1",
+                    "target": "person:10",
+                    "kind": "role",
+                    "phrase": "is named as a trustee of",
+                    "source_provider": "pdf_gemini_extraction",
+                    "confidence": "medium",
+                    "weight": 0.45,
+                    "evidence": {
+                        "title": "Org One Annual Report",
+                        "document_url": "https://example.test/report.pdf",
+                        "page_hint": "page 14",
+                        "page_number": 14,
+                    },
+                }
+            ],
+            "consolidated": [
+                {
+                    "group_id": "person:10",
+                    "label": "Jane Trustee",
+                    "aliases": ["Jane Trustee"],
+                    "person_ids": [],
+                    "org_count": 1,
+                    "role_count": 1,
+                    "score": 0.45,
+                    "is_seed_alias": False,
+                }
+            ],
+        }
+
+        with patch.object(cg, "consolidate_run", return_value=run_one):
+            merged = cg.consolidate_multi_run([1])
+
+        role_edges = [edge for edge in merged["edges"] if edge["kind"] == "role"]
+        self.assertEqual(len(role_edges), 1)
+        self.assertEqual(role_edges[0]["evidence"]["title"], "Org One Annual Report")
+        self.assertEqual(role_edges[0]["evidence"]["page_number"], 14)
+
 
 if __name__ == "__main__":
     unittest.main()

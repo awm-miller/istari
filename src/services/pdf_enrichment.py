@@ -495,7 +495,13 @@ class PdfEnrichmentService:
                 summary["entity_count"] += 1
                 if entity.role_category == "organisation":
                     summary["organisation_mentions_seen"] += 1
-                    if self._resolve_organisation_entity(run_id=run_id, parent_org=organisation, entity=entity, evidence_id=evidence_id):
+                    if self._resolve_organisation_entity(
+                        run_id=run_id,
+                        parent_org=organisation,
+                        document=hydrated,
+                        entity=entity,
+                        evidence_id=evidence_id,
+                    ):
                         summary["organisation_mentions_resolved"] += 1
                     continue
 
@@ -519,6 +525,7 @@ class PdfEnrichmentService:
                         "document": {
                             "title": hydrated.title,
                             "url": hydrated.document_url,
+                            "local_pdf_path": hydrated.local_pdf_path,
                             "markdown_path": hydrated.markdown_path,
                             "filing_description": hydrated.filing_description,
                         },
@@ -779,6 +786,7 @@ class PdfEnrichmentService:
         *,
         run_id: int,
         parent_org: Any,
+        document: PdfSourceDocument,
         entity: PdfExtractedEntity,
         evidence_id: int,
     ) -> bool:
@@ -794,11 +802,15 @@ class PdfEnrichmentService:
             metadata={
                 "parent_organisation_id": int(parent_org["id"]),
                 "parent_organisation_name": _clean_text(parent_org["name"]),
+                "document_title": document.title,
                 "document_url": entity.source_document_url,
+                "local_pdf_path": document.local_pdf_path,
+                "filing_description": document.filing_description,
                 "entity_name": entity.name,
                 "role_category": entity.role_category,
                 "connection_phrase": entity.connection_phrase,
                 "connection_detail": entity.notes,
+                "source_page_hint": entity.source_page_hint,
                 "evidence_id": evidence_id,
             },
         )

@@ -149,6 +149,7 @@ class PdfEnrichmentTests(unittest.TestCase):
                         organisation_name="Known Org",
                         source_document_url=document.document_url,
                         connection_phrase="is named as a trustee of",
+                        source_page_hint="page 14",
                         notes="The annual report trustee section lists Jane Trustee.",
                         confidence=0.9,
                     ),
@@ -160,6 +161,7 @@ class PdfEnrichmentTests(unittest.TestCase):
                         organisation_name="Known Org",
                         source_document_url=document.document_url,
                         connection_phrase="is named as auditor for",
+                        source_page_hint="page 33",
                         notes="The accounts section names Acme Audit Limited as auditor.",
                         confidence=0.9,
                     ),
@@ -198,6 +200,8 @@ class PdfEnrichmentTests(unittest.TestCase):
             self.assertEqual(str(roles[0]["source"]), "pdf_gemini_extraction")
             self.assertEqual(str(roles[0]["relationship_phrase"]), "is named as a trustee of")
             self.assertIn("trustee section", str(roles[0]["provenance_json"]))
+            self.assertIn("page 14", str(roles[0]["provenance_json"]))
+            self.assertIn("local_pdf_path", str(roles[0]["provenance_json"]))
 
             linked = connection.execute(
                 """
@@ -211,6 +215,8 @@ class PdfEnrichmentTests(unittest.TestCase):
             self.assertEqual([str(row["name"]) for row in linked], ["Acme Audit Limited"])
             self.assertIn("is named as auditor for", str(linked[0]["metadata_json"]))
             self.assertIn("accounts section", str(linked[0]["metadata_json"]))
+            self.assertIn("page 33", str(linked[0]["metadata_json"]))
+            self.assertIn("document_title", str(linked[0]["metadata_json"]))
 
         del service
         del repository
