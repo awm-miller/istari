@@ -853,8 +853,10 @@ class Repository:
                     organisations.name AS organisation_name,
                     person_org_roles.role_type,
                     person_org_roles.role_label,
+                    person_org_roles.relationship_phrase,
                     person_org_roles.source,
-                    person_org_roles.edge_weight
+                    person_org_roles.edge_weight,
+                    person_org_roles.provenance_json
                 FROM person_org_roles
                 JOIN people
                     ON people.id = person_org_roles.person_id
@@ -867,6 +869,18 @@ class Repository:
                 """,
                 (run_id, run_id, run_id, limit),
             ).fetchall()
+
+    def delete_stage3_candidate_matches(self, run_id: int) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM candidate_matches
+                WHERE run_id = ?
+                  AND instr(raw_payload_json, '"stage3_resolution": true') > 0
+                """,
+                (run_id,),
+            )
+            return int(cursor.rowcount or 0)
 
     def get_matched_organisations_for_run(self, run_id: int) -> list[sqlite3.Row]:
         with self.connect() as connection:

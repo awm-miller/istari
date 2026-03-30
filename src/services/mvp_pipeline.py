@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from src.address_pivot import AddressPivotSearcher, build_organisation_record
@@ -17,6 +18,7 @@ from src.config import Settings
 from src.models import OrganisationRecord
 from src.ofac.screening import OFACScreener
 from src.ofac.screening import extract_identity_key_birth_month_year
+from src.resolution.features import build_candidate_match
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import SearchProvider
 from src.services.pipeline_services import (
@@ -214,6 +216,8 @@ def step3_expand_connected_people(
 ) -> dict[str, Any]:
     companies_house_client = CompaniesHouseClient(settings)
     ranking_service = RankingService()
+    matcher = HybridMatcher(settings)
+    resolution_service = ResolutionService()
     scoped_organisations = repository.get_run_organisations(
         run_id,
         stages=[STEP1_STAGE, STEP2_STAGE],
@@ -245,10 +249,17 @@ def step3_expand_connected_people(
                     organisation["registry_number"],
                     exc,
                 )
+    stage3_resolution = _resolve_stage3_people(
+        repository=repository,
+        matcher=matcher,
+        resolution_service=resolution_service,
+        run_id=run_id,
+    )
     return {
         "run_id": run_id,
         "processed_organisation_count": processed,
         "inserted_roles": inserted_roles,
+        "stage3_resolution": stage3_resolution,
         "ranking": ranking_service.rank(repository, run_id=run_id, limit=limit),
     }
 
@@ -572,3 +583,68 @@ def _store_organisation_addresses(
         )
         stored.append({"address_id": address_id, "address": address})
     return stored
+
+
+def _resolve_stage3_people(
+    *,
+    repository: Repository,
+    matcher: HybridMatcher,
+    resolution_service: ResolutionService,
+    run_id: int,
+) -> dict[str, Any]:
+    run = repository.get_run(run_id)
+    if run is None:
+        raise RuntimeError(f"Run {run_id} does not exist.")
+
+    repository.delete_stage3_candidate_matches(run_id)
+    expanded_people = repository.get_expanded_people_for_run(run_id, limit=5000)
+    inserted_candidates = 0
+    seed_name = str(run["seed_name"] or "").strip()
+    seed_name_key = seed_name.lower()
+    for row in expanded_people:
+        candidate_name = str(row["person_name"] or "").strip()
+        if not candidate_name or candidate_name.lower() == seed_name_key:
+            continue
+        raw_payload = _build_stage3_candidate_payload(row)
+        candidate = build_candidate_match(
+            name_variant=seed_name,
+            candidate_name=candidate_name,
+            organisation_name=str(row["organisation_name"] or "").strip(),
+            registry_type=str(row["registry_type"] or "").strip() or None,
+            registry_number=str(row["registry_number"] or "").strip() or None,
+            suffix=int(row["suffix"] or 0),
+            source=str(row["source"] or "").strip(),
+            evidence_id=None,
+            raw_payload=raw_payload,
+        )
+        repository.insert_candidate_match(run_id, candidate)
+        inserted_candidates += 1
+
+    decisions = resolution_service.resolve_candidates(
+        repository=repository,
+        matcher=matcher,
+        run_id=run_id,
+    ) if inserted_candidates else []
+    return {
+        "candidate_count": inserted_candidates,
+        "decision_count": len(decisions),
+        "resolution_metrics": dict(getattr(resolution_service, "last_metrics", {})),
+    }
+
+
+def _build_stage3_candidate_payload(row: Any) -> dict[str, Any]:
+    try:
+        provenance = json.loads(str(row["provenance_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        provenance = {}
+    return {
+        "stage3_resolution": True,
+        "organisation_name": str(row["organisation_name"] or "").strip(),
+        "role_type": str(row["role_type"] or "").strip(),
+        "role_label": str(row["role_label"] or "").strip(),
+        "relationship_phrase": str(row["relationship_phrase"] or "").strip(),
+        "registry_type": str(row["registry_type"] or "").strip(),
+        "registry_number": str(row["registry_number"] or "").strip(),
+        "source": str(row["source"] or "").strip(),
+        **(provenance if isinstance(provenance, dict) else {}),
+    }

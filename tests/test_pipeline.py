@@ -515,6 +515,84 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(step1["matched_organisation_count"], 0)
             self.assertEqual(len(repository.get_run_organisations(run_id, stages=["step1_seed_match"])), 0)
 
+    def test_step3_runs_resolution_over_expanded_people(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+
+            run_id = repository.create_run("Alex Smith", "balanced")
+            company_id = repository.upsert_organisation(
+                OrganisationRecord(
+                    registry_type="company",
+                    registry_number="001",
+                    name="Alpha Ltd",
+                )
+            )
+            repository.link_run_organisation(
+                run_id,
+                company_id,
+                stage="step1_seed_match",
+                source="test_seed",
+                metadata={},
+            )
+
+            with (
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_profile",
+                    return_value={
+                        "company_name": "Alpha Ltd",
+                        "company_status": "active",
+                    },
+                ),
+                patch(
+                    "src.companies_house.client.CompaniesHouseClient.get_company_officers",
+                    return_value={
+                        "items": [
+                            {
+                                "name": "Alex Smith",
+                                "officer_role": "director",
+                                "appointed_on": "2020-01-01",
+                                "date_of_birth": {"month": 1, "year": 1980},
+                            },
+                            {
+                                "name": "Jamie Carter",
+                                "officer_role": "director",
+                                "appointed_on": "2020-01-01",
+                            },
+                        ]
+                    },
+                ),
+            ):
+                summary = step3_expand_connected_people(
+                    repository=repository,
+                    settings=settings,
+                    charity_client=charity_client,
+                    run_id=run_id,
+                    limit=10,
+                )
+
+            self.assertGreaterEqual(summary["stage3_resolution"]["candidate_count"], 1)
+            self.assertGreaterEqual(summary["stage3_resolution"]["decision_count"], 1)
+
+            connection = repository.connect()
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT candidate_name, raw_payload_json
+                    FROM candidate_matches
+                    WHERE run_id = ?
+                    ORDER BY id ASC
+                    """,
+                    (run_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertTrue(any("Jamie Carter" == str(row["candidate_name"]) for row in rows))
+            self.assertTrue(any('"stage3_resolution": true' in str(row["raw_payload_json"]) for row in rows))
+
     def test_add_organisation_to_run_links_org_and_reruns_downstream_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
