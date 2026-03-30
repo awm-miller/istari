@@ -607,6 +607,11 @@ function applyTypeFilters(visibleIds, rootIds, options = {{}}) {{
     }})
   );
 
+  // When browsing the full graph without a focused/search root, keep the
+  // remaining visible node types even if hiding their connectors makes them
+  // appear disconnected.
+  if (!rootIds.size) return filteredIds;
+
   if (viewerState.indirectOnly) return filteredIds;
 
   let changed = true;
