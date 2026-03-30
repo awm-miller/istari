@@ -168,6 +168,50 @@ body {{
 .tooltip strong {{ color: var(--text-bright); }}
 .tooltip em {{ color: var(--green); font-style: normal; }}
 .tooltip .dim {{ color: var(--text-dim); }}
+.context-menu {{
+  position: fixed;
+  min-width: 220px;
+  max-width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.55);
+  padding: 8px;
+  z-index: 120;
+  display: none;
+}}
+.context-menu-title {{
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+}}
+.context-menu-subtitle {{
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  text-transform: capitalize;
+}}
+.context-menu-item {{
+  width: 100%;
+  border: 0;
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}}
+.context-menu-item:hover {{
+  background: rgba(88,166,255,0.15);
+  color: var(--text-bright);
+}}
+.context-menu-empty {{
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 6px 4px 2px;
+}}
 .focus-btn {{
   cursor: pointer;
 }}
@@ -212,6 +256,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <div id="graph"></div>
 <div class="legend" id="legend"></div>
 <div class="tooltip" id="tooltip"></div>
+<div class="context-menu" id="context-menu"></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script>
 const allNodes = {nodes_json};
@@ -228,6 +273,7 @@ const container = document.getElementById("graph");
 const tooltipEl = document.getElementById("tooltip");
 const legendEl = document.getElementById("legend");
 const statsEl = document.getElementById("stats");
+const contextMenuEl = document.getElementById("context-menu");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const showIdentitiesInput = document.getElementById("show-identities");
@@ -331,6 +377,15 @@ function iconSvgMarkup(spec) {{
   return `<span class="icon-chip" style="background:${{spec.fill}};color:${{spec.color}}">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${{spec.path}}"></path></svg>
   </span>`;
+}}
+
+function escapeHtml(value) {{
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }}
 
 function renderLegend() {{
@@ -856,6 +911,59 @@ function hideTooltip() {{
   tooltipEl.style.display = "none";
 }}
 
+function registryActionForNode(node) {{
+  const registryType = String(node?.registry_type || "").toLowerCase();
+  const registryNumber = String(node?.registry_number || "").trim();
+  if (!registryType || !registryNumber) return null;
+  if (registryType === "company") {{
+    return {{
+      label: "Open Companies House page",
+      url: `https://find-and-update.company-information.service.gov.uk/company/${{encodeURIComponent(registryNumber)}}`,
+    }};
+  }}
+  if (registryType === "charity") {{
+    return {{
+      label: "Open Charity Commission page",
+      url: `https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/${{encodeURIComponent(registryNumber)}}`,
+    }};
+  }}
+  return null;
+}}
+
+function closeContextMenu() {{
+  contextMenuEl.style.display = "none";
+  contextMenuEl.innerHTML = "";
+  contextMenuEl._actions = [];
+}}
+
+function openContextMenu(event, node) {{
+  event.preventDefault();
+  event.stopPropagation();
+  hideTooltip();
+
+  const actions = [];
+  const registryAction = registryActionForNode(node);
+  if (registryAction) actions.push(registryAction);
+
+  contextMenuEl._actions = actions;
+  contextMenuEl.innerHTML = [
+    `<div class="context-menu-title">${{escapeHtml(node.label || "Node")}}</div>`,
+    `<div class="context-menu-subtitle">${{escapeHtml(nodeTypeKey(node))}}</div>`,
+    actions.length
+      ? actions
+          .map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${{index}}">${{escapeHtml(action.label)}}</button>`)
+          .join("")
+      : `<div class="context-menu-empty">No external links are available for this node yet.</div>`,
+  ].join("");
+  contextMenuEl.style.display = "block";
+
+  const rect = contextMenuEl.getBoundingClientRect();
+  const maxLeft = window.innerWidth - rect.width - 10;
+  const maxTop = window.innerHeight - rect.height - 10;
+  contextMenuEl.style.left = Math.max(10, Math.min(event.clientX, maxLeft)) + "px";
+  contextMenuEl.style.top = Math.max(10, Math.min(event.clientY, maxTop)) + "px";
+}}
+
 function layoutRow(nodes, yTop, xMin, xMax) {{
   if (!nodes.length) return 0;
   const spacing = 16;
@@ -1092,7 +1200,22 @@ focusButtons
 pills
   .on("mouseover", (event, node) => showTooltip(event, node.tooltip_lines || [node.label]))
   .on("mousemove", positionTooltip)
-  .on("mouseout", hideTooltip);
+  .on("mouseout", hideTooltip)
+  .on("contextmenu", openContextMenu);
+
+contextMenuEl.addEventListener("click", (event) => {{
+  const button = event.target.closest("[data-action-index]");
+  if (!button) return;
+  const index = Number(button.getAttribute("data-action-index"));
+  const action = Array.isArray(contextMenuEl._actions) ? contextMenuEl._actions[index] : null;
+  if (!action?.url) return;
+  window.open(action.url, "_blank", "noopener,noreferrer");
+  closeContextMenu();
+}});
+
+document.addEventListener("click", closeContextMenu);
+window.addEventListener("resize", closeContextMenu);
+window.addEventListener("blur", closeContextMenu);
 
 const drag = d3.drag()
   .filter(event => !(event.target.classList && event.target.classList.contains("focus-btn")))
