@@ -4,7 +4,11 @@ import unittest
 from types import SimpleNamespace
 
 from src.models import ResolutionDecision
-from src.services.relation_semantics import apply_conflicting_middle_name_guard
+from src.services.relation_semantics import (
+    apply_birth_month_year_guard,
+    apply_conflicting_middle_name_guard,
+    candidate_matches_known_birth_month_year,
+)
 
 
 class RelationSemanticsTests(unittest.TestCase):
@@ -53,6 +57,58 @@ class RelationSemanticsTests(unittest.TestCase):
         )
 
         self.assertEqual(guarded.status, "match")
+
+    def test_birth_month_year_guard_rejects_conflicting_known_dob(self) -> None:
+        candidate = SimpleNamespace(
+            candidate_name="Omer Hasem EL-HAMDOON",
+            feature_payload={"name_similarity": 0.9},
+            raw_payload={"date_of_birth": {"month": 11, "year": 1974}},
+        )
+        decision = ResolutionDecision(
+            status="match",
+            confidence=0.95,
+            canonical_name="Omer Hasem EL-HAMDOON",
+            explanation="LLM accepted the candidate.",
+            rule_score=0.9,
+        )
+
+        guarded = apply_birth_month_year_guard(
+            candidate=candidate,
+            decision=decision,
+            known_birth_month_years={(10, 1974)},
+        )
+
+        self.assertEqual(guarded.status, "no_match")
+        self.assertLessEqual(guarded.confidence, 0.2)
+        self.assertIn("birth month/year conflicts", guarded.explanation)
+
+    def test_birth_month_year_guard_allows_matching_known_dob(self) -> None:
+        candidate = SimpleNamespace(
+            candidate_name="Omer Hasem EL-HAMDOON",
+            feature_payload={"name_similarity": 0.42},
+            raw_payload={"date_of_birth": {"month": 11, "year": 1974}},
+        )
+        decision = ResolutionDecision(
+            status="match",
+            confidence=0.95,
+            canonical_name="Omer Hasem EL-HAMDOON",
+            explanation="LLM accepted the candidate.",
+            rule_score=0.42,
+        )
+
+        guarded = apply_birth_month_year_guard(
+            candidate=candidate,
+            decision=decision,
+            known_birth_month_years={(11, 1974)},
+        )
+
+        self.assertEqual(guarded.status, "match")
+        self.assertTrue(
+            candidate_matches_known_birth_month_year(
+                candidate=candidate,
+                known_birth_month_years={(11, 1974)},
+            )
+        )
 
 
 if __name__ == "__main__":

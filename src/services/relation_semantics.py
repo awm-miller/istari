@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.models import ResolutionDecision
-from src.resolution.features import person_name_similarity
+from src.resolution.features import extract_birth_month_year, person_name_similarity
 from src.search.queries import is_low_information_person_name, normalize_name
 
 
@@ -166,6 +166,55 @@ def apply_conflicting_middle_name_guard(
         explanation=(
             "Rejected because the seed and candidate share first name and surname "
             "but have conflicting middle-name tokens."
+        ),
+        rule_score=decision.rule_score,
+        alias_status="none",
+        llm_payload=dict(decision.llm_payload) if decision.llm_payload else {},
+    )
+
+
+def candidate_birth_month_year(candidate: Any) -> tuple[int | None, int | None]:
+    raw_payload = candidate.raw_payload if isinstance(getattr(candidate, "raw_payload", None), dict) else {}
+    return extract_birth_month_year(raw_payload)
+
+
+def candidate_matches_known_birth_month_year(
+    *,
+    candidate: Any,
+    known_birth_month_years: set[tuple[int, int]],
+) -> bool:
+    if not known_birth_month_years:
+        return False
+    birth_month, birth_year = candidate_birth_month_year(candidate)
+    if not birth_month or not birth_year:
+        return False
+    return (birth_month, birth_year) in known_birth_month_years
+
+
+def apply_birth_month_year_guard(
+    *,
+    candidate: Any,
+    decision: ResolutionDecision,
+    known_birth_month_years: set[tuple[int, int]],
+) -> ResolutionDecision:
+    if not known_birth_month_years:
+        return decision
+
+    birth_month, birth_year = candidate_birth_month_year(candidate)
+    if not birth_month or not birth_year:
+        return decision
+    if (birth_month, birth_year) in known_birth_month_years:
+        return decision
+
+    candidate_name = str(candidate.candidate_name or decision.canonical_name or "").strip()
+    canonical_name = str(decision.canonical_name or candidate_name).strip()
+    return ResolutionDecision(
+        status="no_match",
+        confidence=min(float(decision.confidence or 0.0), 0.2),
+        canonical_name=candidate_name or canonical_name,
+        explanation=(
+            "Rejected because the candidate Companies House birth month/year "
+            "conflicts with an already-confirmed birth month/year for this seed."
         ),
         rule_score=decision.rule_score,
         alias_status="none",

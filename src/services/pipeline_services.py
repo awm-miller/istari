@@ -13,7 +13,10 @@ from src.search.provider import SearchProvider
 from src.search.queries import generate_name_variants, normalize_name
 from src.services.registry_ingestion import ingest_registry_evidence_items
 from src.services.relation_semantics import (
+    apply_birth_month_year_guard,
     apply_conflicting_middle_name_guard,
+    candidate_birth_month_year,
+    candidate_matches_known_birth_month_year,
     apply_low_information_name_guard,
     apply_weak_name_match_guard,
     candidate_relationship_kind,
@@ -150,6 +153,7 @@ class ResolutionService:
 
         total = len(unresolved)
         processed = 0
+        known_seed_birth_month_years: set[tuple[int, int]] = set()
         for group in unique_groups:
             _representative_row, representative_candidate = max(
                 group,
@@ -161,15 +165,25 @@ class ResolutionService:
                 candidate=representative_candidate,
                 decision=base_decision,
             )
+            minimum_similarity = 0.4 if candidate_matches_known_birth_month_year(
+                candidate=representative_candidate,
+                known_birth_month_years=known_seed_birth_month_years,
+            ) else 0.55
             base_decision = apply_weak_name_match_guard(
                 seed_name=str(run["seed_name"]),
                 candidate=representative_candidate,
                 decision=base_decision,
+                minimum_similarity=minimum_similarity,
             )
             base_decision = apply_conflicting_middle_name_guard(
                 seed_name=str(run["seed_name"]),
                 candidate=representative_candidate,
                 decision=base_decision,
+            )
+            base_decision = apply_birth_month_year_guard(
+                candidate=representative_candidate,
+                decision=base_decision,
+                known_birth_month_years=known_seed_birth_month_years,
             )
             group_size = len(group)
             if _decision_used_llm(base_decision):
@@ -238,6 +252,13 @@ class ResolutionService:
                             },
                         },
                     )
+                    birth_month, birth_year = candidate_birth_month_year(candidate)
+                    if (
+                        candidate.source.startswith("companies_house")
+                        and birth_month
+                        and birth_year
+                    ):
+                        known_seed_birth_month_years.add((birth_month, birth_year))
 
                 decisions.append(
                     {
