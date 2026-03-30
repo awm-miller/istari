@@ -146,6 +146,69 @@ body {{
   stroke-linecap: round;
   stroke-linejoin: round;
 }}
+.score-panel {{
+  position: absolute;
+  top: 212px;
+  right: 12px;
+  width: 320px;
+  max-height: calc(100vh - 230px);
+  overflow: auto;
+  z-index: 15;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+}}
+.score-panel h2 {{
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin-bottom: 6px;
+}}
+.score-panel p {{
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  margin-bottom: 10px;
+}}
+.score-list {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+.score-item {{
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: rgba(255,255,255,0.03);
+}}
+.score-item-title {{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}}
+.score-item-title strong {{
+  color: var(--text-bright);
+  font-weight: 600;
+}}
+.score-item-title span {{
+  color: var(--blue);
+  font-weight: 700;
+  white-space: nowrap;
+}}
+.score-item-meta {{
+  font-size: 11px;
+  color: var(--text-dim);
+}}
+.score-empty {{
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 4px 0 2px;
+}}
 #graph {{
   width: 100vw;
   height: calc(100vh - 58px);
@@ -255,6 +318,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 </div>
 <div id="graph"></div>
 <div class="legend" id="legend"></div>
+<div class="score-panel" id="score-panel"></div>
 <div class="tooltip" id="tooltip"></div>
 <div class="context-menu" id="context-menu"></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -272,6 +336,7 @@ const viewerState = {{
 const container = document.getElementById("graph");
 const tooltipEl = document.getElementById("tooltip");
 const legendEl = document.getElementById("legend");
+const scorePanelEl = document.getElementById("score-panel");
 const statsEl = document.getElementById("stats");
 const contextMenuEl = document.getElementById("context-menu");
 const searchInput = document.getElementById("search");
@@ -419,6 +484,11 @@ function nodeMatchesQuery(node, query) {{
   const q = query.toLowerCase();
   if ((node.label || "").toLowerCase().includes(q)) return true;
   return (node.aliases || []).some(alias => (alias || "").toLowerCase().includes(q));
+}}
+
+function nodeRankScore(node) {{
+  const score = Number(node?.score || 0);
+  return Number.isFinite(score) ? score : 0;
 }}
 
 function getMatchedNodeIds(query) {{
@@ -1005,21 +1075,20 @@ function layoutRow(nodes, yTop, xMin, xMax) {{
   return rows.length * rowStep;
 }}
 
-function sortByNeighborX(nodes) {{
-  return nodes.sort((left, right) => {{
-    function avgNeighborX(node) {{
-      const xs = [];
-      (edgesByNodeId.get(node.id) || []).forEach(edge => {{
-        if (!visibleEdges.includes(edge)) return;
-        const otherId = edge.source === node.id ? edge.target : edge.source;
-        const other = nodeById.get(otherId);
-        if (other && other._visible && other.x != null && other.lane !== node.lane) xs.push(other.x);
-      }});
-      if (!xs.length) return W / 2;
-      return xs.reduce((sum, value) => sum + value, 0) / xs.length;
-    }}
-    return avgNeighborX(left) - avgNeighborX(right);
+function avgNeighborX(node) {{
+  const xs = [];
+  (edgesByNodeId.get(node.id) || []).forEach(edge => {{
+    if (!visibleEdges.includes(edge)) return;
+    const otherId = edge.source === node.id ? edge.target : edge.source;
+    const other = nodeById.get(otherId);
+    if (other && other._visible && other.x != null && other.lane !== node.lane) xs.push(other.x);
   }});
+  if (!xs.length) return W / 2;
+  return xs.reduce((sum, value) => sum + value, 0) / xs.length;
+}}
+
+function sortByNeighborX(nodes) {{
+  return nodes.sort((left, right) => avgNeighborX(left) - avgNeighborX(right));
 }}
 
 function positionNodes() {{
@@ -1027,7 +1096,15 @@ function positionNodes() {{
   let curY = 70;
   [1, 2, 3, 4].forEach(lane => {{
     const laneNodes = visible.filter(node => node.lane === lane);
-    if (lane > 1) sortByNeighborX(laneNodes);
+    if (lane === 1 || lane === 4) {{
+      laneNodes.sort((left, right) => {{
+        const scoreDiff = nodeRankScore(right) - nodeRankScore(left);
+        if (scoreDiff !== 0) return scoreDiff;
+        return avgNeighborX(left) - avgNeighborX(right);
+      }});
+    }} else if (lane > 1) {{
+      sortByNeighborX(laneNodes);
+    }}
     LANE_Y[lane] = curY;
     const height = layoutRow(laneNodes, curY, 0, W);
     curY += Math.max(height, 30) + 50;
@@ -1248,6 +1325,37 @@ function updateFocusStyling(rootIds) {{
     .attr("fill-opacity", node => rootIds.has(node.id) ? 0.28 : node.sanctioned ? 0.35 : 0.18);
 }}
 
+function renderScorePanel() {{
+  const rankedNodes = allNodes
+    .filter(node => node._visible && nodeRankScore(node) > 0 && (node.lane === 1 || node.lane === 4))
+    .sort((left, right) => {{
+      const scoreDiff = nodeRankScore(right) - nodeRankScore(left);
+      if (scoreDiff !== 0) return scoreDiff;
+      const orgDiff = Number(right.org_count || 0) - Number(left.org_count || 0);
+      if (orgDiff !== 0) return orgDiff;
+      return String(left.label || "").localeCompare(String(right.label || ""));
+    }})
+    .slice(0, 12);
+
+  const body = rankedNodes.length
+    ? `<div class="score-list">${{rankedNodes.map(node => `
+        <div class="score-item">
+          <div class="score-item-title">
+            <strong>${{escapeHtml(node.label || "Unknown")}}</strong>
+            <span>${{nodeRankScore(node).toFixed(2)}}</span>
+          </div>
+          <div class="score-item-meta">${{Number(node.org_count || 0)}} orgs, ${{Number(node.role_count || 0)}} roles</div>
+        </div>
+      `).join("")}}</div>`
+    : `<div class="score-empty">No scored identity or person nodes are currently visible.</div>`;
+
+  scorePanelEl.innerHTML = `
+    <h2>Top ranked on screen</h2>
+    <p>Score is the current graph ranking signal. It grows as a person or identity picks up more and stronger weighted links across connected organisations and roles.</p>
+    ${{body}}
+  `;
+}}
+
 function applyViewerState() {{
   const projection = projectVisibleGraph();
   allNodes.forEach(node => {{
@@ -1260,6 +1368,7 @@ function applyViewerState() {{
   positionNodes();
   syncVisibility();
   updateFocusStyling(projection.rootIds);
+  renderScorePanel();
   zoomToVisible();
 
   const shownNodes = allNodes.filter(node => node._visible).length;
