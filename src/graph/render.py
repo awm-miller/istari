@@ -1474,7 +1474,7 @@ function formatAnalysisCopyText(payload) {{
       lines.push(`${{index + 1}}. ${{String(claim.text || "").trim()}}${{refs.length ? ` [${{refs.join("; ")}}]` : ""}}`);
     }});
   }}
-  return lines.join("\n");
+  return lines.join("\\n");
 }}
 
 function renderAnalysisResult(payload) {{
@@ -1487,7 +1487,7 @@ function renderAnalysisResult(payload) {{
   const claims = Array.isArray(payload.claims) ? payload.claims : [];
   analysisBodyEl.innerHTML = [
     `<div class="analysis-selection">${{escapeHtml(sourceNode?.label || payload.sourceNodeId)}} to ${{escapeHtml(targetNode?.label || payload.targetNodeId)}}</div>`,
-    `<div class="analysis-text">${{escapeHtml(payload.summary || "No explanation returned.").replaceAll("\n", "<br>")}}</div>`,
+    `<div class="analysis-text">${{escapeHtml(payload.summary || "No explanation returned.").replaceAll("\\n", "<br>")}}</div>`,
     claims.length
       ? `<div class="analysis-claims">${{claims.map((claim, index) => {{
           const links = (Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [])
