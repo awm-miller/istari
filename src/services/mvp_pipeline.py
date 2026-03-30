@@ -16,6 +16,7 @@ from src.companies_house.expansion import expand_company_people
 from src.config import Settings
 from src.models import OrganisationRecord
 from src.ofac.screening import OFACScreener
+from src.ofac.screening import extract_identity_key_birth_month_year
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import SearchProvider
 from src.services.pipeline_services import (
@@ -286,23 +287,34 @@ def step4_ofac_screening(
         log.warning("OFAC screening skipped — no SDN data available")
         return {"ofac_hits": {}, "screened_count": 0, "sdn_entry_count": 0}
 
-    names = [str(entry.get("canonical_name", "")) for entry in ranking if entry.get("canonical_name")]
-    hits = screener.screen_names(names)
-
     for entry in ranking:
         name = str(entry.get("canonical_name", ""))
-        entry["ofac_hit"] = name in hits
-        entry["ofac_matches"] = hits.get(name, [])
+        birth_month, birth_year = extract_identity_key_birth_month_year(
+            str(entry.get("identity_key", ""))
+        )
+        hits = screener.screen_name(
+            name,
+            birth_month=birth_month,
+            birth_year=birth_year,
+        )
+        entry["ofac_hit"] = bool(hits)
+        entry["ofac_matches"] = hits
+        entry["ofac_birth_month"] = birth_month
+        entry["ofac_birth_year"] = birth_year
 
     log.info(
         "OFAC screening: %d names checked, %d hits from %d SDN entries",
-        len(names),
-        len(hits),
+        len(ranking),
+        sum(1 for entry in ranking if entry.get("ofac_hit")),
         screener.entry_count,
     )
     return {
-        "ofac_hits": hits,
-        "screened_count": len(names),
+        "ofac_hits": {
+            str(entry.get("canonical_name", "")): list(entry.get("ofac_matches") or [])
+            for entry in ranking
+            if entry.get("ofac_hit")
+        },
+        "screened_count": len(ranking),
         "sdn_entry_count": screener.entry_count,
     }
 

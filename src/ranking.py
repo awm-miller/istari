@@ -9,6 +9,7 @@ from src.storage.repository import Repository
 class RankedPerson:
     person_id: int
     canonical_name: str
+    identity_key: str
     organisation_count: int
     role_count: int
     weighted_organisation_score: float
@@ -27,6 +28,7 @@ def rank_people(
         RankedPerson(
             person_id=int(row["id"]),
             canonical_name=str(row["canonical_name"]),
+            identity_key=str(row["identity_key"] or ""),
             organisation_count=int(row["organisation_count"]),
             role_count=int(row["role_count"]),
             weighted_organisation_score=float(row["weighted_organisation_score"]),

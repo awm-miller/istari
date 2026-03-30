@@ -606,13 +606,14 @@ class Repository:
                 SELECT
                     people.id,
                     people.canonical_name,
+                    people.identity_key,
                     COUNT(DISTINCT org_weights.organisation_id) AS organisation_count,
                     COUNT(person_org_roles.id) AS role_count,
                     ROUND(SUM(org_weights.organisation_weight), 4) AS weighted_organisation_score
                 FROM people
                 JOIN org_weights ON org_weights.person_id = people.id
                 JOIN person_org_roles ON person_org_roles.person_id = people.id
-                GROUP BY people.id, people.canonical_name
+                GROUP BY people.id, people.canonical_name, people.identity_key
                 ORDER BY weighted_organisation_score DESC, organisation_count DESC, role_count DESC, people.canonical_name ASC
                 LIMIT ?
                 """,
@@ -665,7 +666,7 @@ class Repository:
                 JOIN org_weights ON org_weights.person_id = people.id
                 JOIN person_org_roles ON person_org_roles.person_id = people.id
                 JOIN scoped_orgs ON scoped_orgs.organisation_id = person_org_roles.organisation_id
-                GROUP BY people.id, people.canonical_name
+                GROUP BY people.id, people.canonical_name, people.identity_key
                 ORDER BY weighted_organisation_score DESC, organisation_count DESC, role_count DESC, people.canonical_name ASC
                 LIMIT ?
                 """,
