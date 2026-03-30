@@ -17,6 +17,12 @@ def render_html(data: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+>
 <style>
 :root {{
   --bg: #0c0e14;
@@ -66,6 +72,19 @@ body {{
   align-items: center;
   gap: 6px;
   margin-left: auto;
+}}
+.toolbar-btn {{
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}}
+.toolbar-btn:hover {{
+  border-color: var(--blue);
+  color: var(--text-bright);
 }}
 .search-box input {{
   width: 240px;
@@ -275,6 +294,61 @@ body {{
   color: var(--text-dim);
   padding: 6px 4px 2px;
 }}
+.modal-backdrop {{
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 16, 0.75);
+  z-index: 140;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}}
+.modal-backdrop.open {{
+  display: flex;
+}}
+.modal-card {{
+  width: min(920px, calc(100vw - 48px));
+  height: min(700px, calc(100vh - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}}
+.modal-header {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}}
+.modal-header h2 {{
+  font-size: 14px;
+  color: var(--text-bright);
+}}
+.modal-close {{
+  border: 0;
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}}
+.modal-status {{
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}}
+#address-map {{
+  flex: 1;
+  min-height: 320px;
+}}
 .focus-btn {{
   cursor: pointer;
 }}
@@ -312,6 +386,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
     </label>
   </div>
   <div class="search-box">
+    <button class="toolbar-btn" id="open-map" type="button">Map visible addresses</button>
     <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
   </div>
@@ -321,7 +396,18 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <div class="score-panel" id="score-panel"></div>
 <div class="tooltip" id="tooltip"></div>
 <div class="context-menu" id="context-menu"></div>
+<div class="modal-backdrop" id="map-modal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Visible addresses map</h2>
+      <button class="modal-close" id="close-map" type="button">Close</button>
+    </div>
+    <div class="modal-status" id="map-status">Open the map to geocode the visible addresses.</div>
+    <div id="address-map"></div>
+  </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const allNodes = {nodes_json};
 const allEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
@@ -339,6 +425,10 @@ const legendEl = document.getElementById("legend");
 const scorePanelEl = document.getElementById("score-panel");
 const statsEl = document.getElementById("stats");
 const contextMenuEl = document.getElementById("context-menu");
+const openMapButton = document.getElementById("open-map");
+const mapModalEl = document.getElementById("map-modal");
+const closeMapButton = document.getElementById("close-map");
+const mapStatusEl = document.getElementById("map-status");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const showIdentitiesInput = document.getElementById("show-identities");
@@ -347,6 +437,7 @@ const showCharitiesInput = document.getElementById("show-charities");
 const showPeopleInput = document.getElementById("show-people");
 const showAddressesInput = document.getElementById("show-addresses");
 const indirectOnlyInput = document.getElementById("indirect-only");
+const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -418,6 +509,10 @@ const gRoot = svg.append("g");
 const zoom = d3.zoom().scaleExtent([0.05, 6]).on("zoom", (event) => gRoot.attr("transform", event.transform));
 svg.call(zoom);
 svg.on("dblclick.zoom", null);
+
+let addressMap = null;
+let addressMarkersLayer = null;
+let currentMapRequestId = 0;
 
 function iconPath(kind) {{
   if (kind === "identity") return "M12 12a3 3 0 1 0 0-6a3 3 0 0 0 0 6Zm-5.5 7a5.5 5.5 0 0 1 11 0";
@@ -1034,6 +1129,118 @@ function closeContextMenu() {{
   contextMenuEl._actions = [];
 }}
 
+function loadGeocodeCache() {{
+  try {{
+    const raw = window.localStorage.getItem(GEOCODE_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {{}};
+    return parsed && typeof parsed === "object" ? parsed : {{}};
+  }} catch (_error) {{
+    return {{}};
+  }}
+}}
+
+function saveGeocodeCache(cache) {{
+  try {{
+    window.localStorage.setItem(GEOCODE_CACHE_KEY, JSON.stringify(cache));
+  }} catch (_error) {{
+  }}
+}}
+
+function visibleAddressNodes() {{
+  return allNodes.filter(node => node._visible && node.kind === "address");
+}}
+
+function ensureAddressMap() {{
+  if (addressMap) return;
+  addressMap = L.map("address-map", {{ zoomControl: true }});
+  L.tileLayer("https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png", {{
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors",
+  }}).addTo(addressMap);
+  addressMarkersLayer = L.layerGroup().addTo(addressMap);
+}}
+
+async function geocodeAddressNode(node) {{
+  const cacheKey = String(node.normalized_key || node.label || "").trim();
+  if (!cacheKey) return null;
+  const cache = loadGeocodeCache();
+  if (cache[cacheKey]) return cache[cacheKey];
+
+  const query = [node.label, node.postcode, node.country]
+    .filter(value => String(value || "").trim())
+    .join(", ");
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${{encodeURIComponent(query)}}`);
+  if (!response.ok) return null;
+  const rows = await response.json();
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const first = rows[0];
+  const resolved = {{
+    lat: Number(first.lat),
+    lon: Number(first.lon),
+    label: String(first.display_name || node.label || ""),
+  }};
+  if (!Number.isFinite(resolved.lat) || !Number.isFinite(resolved.lon)) return null;
+  cache[cacheKey] = resolved;
+  saveGeocodeCache(cache);
+  return resolved;
+}}
+
+function closeMapModal() {{
+  mapModalEl.classList.remove("open");
+}}
+
+async function openMapModal() {{
+  closeContextMenu();
+  hideTooltip();
+  mapModalEl.classList.add("open");
+
+  const addressNodes = visibleAddressNodes();
+  if (!addressNodes.length) {{
+    mapStatusEl.textContent = "No visible address nodes are on screen right now.";
+    return;
+  }}
+
+  ensureAddressMap();
+  currentMapRequestId += 1;
+  const requestId = currentMapRequestId;
+  const limitedNodes = addressNodes.slice(0, 50);
+  const markers = [];
+
+  mapStatusEl.textContent = `Geocoding ${{limitedNodes.length}} visible addresses...`;
+  for (let index = 0; index < limitedNodes.length; index += 1) {{
+    if (requestId !== currentMapRequestId) return;
+    const node = limitedNodes[index];
+    const result = await geocodeAddressNode(node);
+    if (result) markers.push({{ node, ...result }});
+  }}
+
+  if (requestId !== currentMapRequestId) return;
+
+  addressMarkersLayer.clearLayers();
+  if (!markers.length) {{
+    mapStatusEl.textContent = "No visible addresses could be geocoded yet.";
+    addressMap.setView([20, 0], 2);
+    window.setTimeout(() => addressMap.invalidateSize(), 0);
+    return;
+  }}
+
+  markers.forEach(marker => {{
+    L.marker([marker.lat, marker.lon])
+      .bindPopup(`<strong>${{escapeHtml(marker.node.label || "Address")}}</strong><br>${{escapeHtml(marker.label || "")}}`)
+      .addTo(addressMarkersLayer);
+  }});
+
+  const bounds = L.latLngBounds(markers.map(marker => [marker.lat, marker.lon]));
+  addressMap.fitBounds(bounds.pad(0.15));
+  window.setTimeout(() => addressMap.invalidateSize(), 0);
+  mapStatusEl.textContent = markers.length === limitedNodes.length
+    ? `Mapped ${{markers.length}} visible addresses.`
+    : `Mapped ${{markers.length}} of ${{limitedNodes.length}} visible addresses.`;
+  if (addressNodes.length > limitedNodes.length) {{
+    mapStatusEl.textContent += ` Showing the first ${{limitedNodes.length}} only.`;
+  }}
+}}
+
 function openContextMenu(event, node) {{
   event.preventDefault();
   event.stopPropagation();
@@ -1322,6 +1529,15 @@ contextMenuEl.addEventListener("click", (event) => {{
 document.addEventListener("click", closeContextMenu);
 window.addEventListener("resize", closeContextMenu);
 window.addEventListener("blur", closeContextMenu);
+openMapButton.addEventListener("click", () => {{
+  openMapModal().catch(() => {{
+    mapStatusEl.textContent = "Address geocoding failed.";
+  }});
+}});
+closeMapButton.addEventListener("click", closeMapModal);
+mapModalEl.addEventListener("click", (event) => {{
+  if (event.target === mapModalEl) closeMapModal();
+}});
 
 const drag = d3.drag()
   .filter(event => !(event.target.classList && event.target.classList.contains("focus-btn")))
