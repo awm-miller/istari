@@ -345,6 +345,35 @@ body {{
   color: var(--text-dim);
   border-bottom: 1px solid rgba(255,255,255,0.05);
 }}
+.analysis-body {{
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}}
+.analysis-selection {{
+  font-size: 12px;
+  color: var(--text-dim);
+}}
+.analysis-text {{
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}}
+.analysis-path {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+.analysis-path-item {{
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+}}
 #address-map {{
   flex: 1;
   min-height: 320px;
@@ -387,6 +416,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   </div>
   <div class="search-box">
     <button class="toolbar-btn" id="open-map" type="button">Map visible addresses</button>
+    <button class="toolbar-btn" id="open-analysis" type="button">Explain selected connection (0/2)</button>
     <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
     <button class="clear-btn" id="clear-search">&times;</button>
   </div>
@@ -406,6 +436,16 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
     <div id="address-map"></div>
   </div>
 </div>
+<div class="modal-backdrop" id="analysis-modal">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Connection analysis</h2>
+      <button class="modal-close" id="close-analysis" type="button">Close</button>
+    </div>
+    <div class="modal-status" id="analysis-status">Select two nodes and ask for an explanation.</div>
+    <div class="analysis-body" id="analysis-body"></div>
+  </div>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
@@ -413,6 +453,7 @@ const allNodes = {nodes_json};
 const allEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
 const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
 const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
+const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
 
 function mergeKindForNode(node) {{
   if (node?.kind === "address") return "address";
@@ -573,6 +614,7 @@ const viewerState = {{
   hiddenNodeTypes: new Set(),
   indirectOnly: false,
   pendingMergeNodeId: "",
+  analysisNodeIds: [],
 }};
 
 const container = document.getElementById("graph");
@@ -582,9 +624,14 @@ const scorePanelEl = document.getElementById("score-panel");
 const statsEl = document.getElementById("stats");
 const contextMenuEl = document.getElementById("context-menu");
 const openMapButton = document.getElementById("open-map");
+const openAnalysisButton = document.getElementById("open-analysis");
 const mapModalEl = document.getElementById("map-modal");
 const closeMapButton = document.getElementById("close-map");
 const mapStatusEl = document.getElementById("map-status");
+const analysisModalEl = document.getElementById("analysis-modal");
+const closeAnalysisButton = document.getElementById("close-analysis");
+const analysisStatusEl = document.getElementById("analysis-status");
+const analysisBodyEl = document.getElementById("analysis-body");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const showIdentitiesInput = document.getElementById("show-identities");
@@ -1355,6 +1402,76 @@ async function syncLocalOverridesFromServer() {{
   }}
 }}
 
+function updateAnalysisButton() {{
+  openAnalysisButton.textContent = `Explain selected connection (${{viewerState.analysisNodeIds.length}}/2)`;
+}}
+
+function analysisActionsForNode(node) {{
+  const selected = viewerState.analysisNodeIds.includes(node.id);
+  if (selected) {{
+    return [{{
+      type: "analysis_remove",
+      nodeId: node.id,
+      label: "Remove from connection analysis",
+    }}];
+  }}
+  if (viewerState.analysisNodeIds.length < 2) {{
+    return [{{
+      type: "analysis_add",
+      nodeId: node.id,
+      label: "Select for connection analysis",
+    }}];
+  }}
+  return [{{
+    type: "analysis_clear",
+    label: "Clear selected analysis nodes",
+  }}];
+}}
+
+function closeAnalysisModal() {{
+  analysisModalEl.classList.remove("open");
+}}
+
+function renderAnalysisResult(payload) {{
+  const sourceNode = nodeById.get(payload.sourceNodeId);
+  const targetNode = nodeById.get(payload.targetNodeId);
+  const pathItems = Array.isArray(payload.path?.edges) ? payload.path.edges : [];
+  analysisBodyEl.innerHTML = [
+    `<div class="analysis-selection">${{escapeHtml(sourceNode?.label || payload.sourceNodeId)}} to ${{escapeHtml(targetNode?.label || payload.targetNodeId)}}</div>`,
+    `<div class="analysis-text">${{escapeHtml(payload.summary || "No explanation returned.").replaceAll("\n", "<br>")}}</div>`,
+    pathItems.length
+      ? `<div class="analysis-path">${{pathItems.map(edge => `
+          <div class="analysis-path-item">${{escapeHtml(edge.source_label || edge.source_id)}} ${{escapeHtml(edge.phrase || "is linked to")}} ${{escapeHtml(edge.target_label || edge.target_id)}}</div>
+        `).join("")}}</div>`
+      : "",
+  ].join("");
+}}
+
+async function openAnalysisModal() {{
+  if (viewerState.analysisNodeIds.length !== 2) {{
+    window.alert("Select exactly two nodes for connection analysis.");
+    return;
+  }}
+
+  analysisModalEl.classList.add("open");
+  analysisStatusEl.textContent = "Analyzing the selected connection...";
+  analysisBodyEl.innerHTML = "";
+  const [sourceNodeId, targetNodeId] = viewerState.analysisNodeIds;
+  const response = await fetch(ANALYZE_CONNECTION_URL, {{
+    method: "POST",
+    headers: {{ "Content-Type": "application/json" }},
+    body: JSON.stringify({{ sourceNodeId, targetNodeId }}),
+  }});
+  const payload = await response.json().catch(() => ({{}}));
+  if (!response.ok) {{
+    analysisStatusEl.textContent = payload.error || "Connection analysis failed.";
+    if (payload.summary) renderAnalysisResult({{ ...payload, sourceNodeId, targetNodeId }});
+    return;
+  }}
+  analysisStatusEl.textContent = "Connection analysis ready.";
+  renderAnalysisResult(payload);
+}}
+
 function closeContextMenu() {{
   contextMenuEl.style.display = "none";
   contextMenuEl.innerHTML = "";
@@ -1483,6 +1600,7 @@ function openContextMenu(event, node) {{
   if (registryAction) actions.push(registryAction);
   evidenceActionsForNode(node).forEach(action => actions.push(action));
   mergeActionsForNode(node).forEach(action => actions.push(action));
+  analysisActionsForNode(node).forEach(action => actions.push(action));
 
   contextMenuEl._actions = actions;
   contextMenuEl.innerHTML = [
@@ -1783,6 +1901,24 @@ contextMenuEl.addEventListener("click", (event) => {{
     persistMergeOverride(String(action.kind || ""), String(action.sourceId || ""), String(action.targetId || "")).catch(() => {{
       window.alert("Saving the merge failed.");
     }});
+    return;
+  }}
+  if (action.type === "analysis_add") {{
+    viewerState.analysisNodeIds = [...viewerState.analysisNodeIds, String(action.nodeId || "")].slice(0, 2);
+    updateAnalysisButton();
+    closeContextMenu();
+    return;
+  }}
+  if (action.type === "analysis_remove") {{
+    viewerState.analysisNodeIds = viewerState.analysisNodeIds.filter(id => id !== String(action.nodeId || ""));
+    updateAnalysisButton();
+    closeContextMenu();
+    return;
+  }}
+  if (action.type === "analysis_clear") {{
+    viewerState.analysisNodeIds = [];
+    updateAnalysisButton();
+    closeContextMenu();
   }}
 }});
 
@@ -1797,6 +1933,15 @@ openMapButton.addEventListener("click", () => {{
 closeMapButton.addEventListener("click", closeMapModal);
 mapModalEl.addEventListener("click", (event) => {{
   if (event.target === mapModalEl) closeMapModal();
+}});
+openAnalysisButton.addEventListener("click", () => {{
+  openAnalysisModal().catch(() => {{
+    analysisStatusEl.textContent = "Connection analysis failed.";
+  }});
+}});
+closeAnalysisButton.addEventListener("click", closeAnalysisModal);
+analysisModalEl.addEventListener("click", (event) => {{
+  if (event.target === analysisModalEl) closeAnalysisModal();
 }});
 
 const drag = d3.drag()
@@ -1904,6 +2049,7 @@ showAddressesInput.addEventListener("change", applyViewerState);
 indirectOnlyInput.addEventListener("change", applyViewerState);
 
 applyViewerState();
+updateAnalysisButton();
 syncLocalOverridesFromServer();
 </script>
 </body>

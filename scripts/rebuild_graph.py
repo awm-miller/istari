@@ -1,4 +1,5 @@
 """Rebuild graph HTML from graph modules, then copy to netlify."""
+import json
 import pathlib
 import sys
 
@@ -32,9 +33,17 @@ out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(html, encoding="utf-8")
 print(f"Wrote {out} ({len(html)} bytes)", flush=True)
 
+graph_json = json.dumps(data, ensure_ascii=False, indent=2)
+graph_out = pathlib.Path("output/graph-data.json")
+graph_out.write_text(graph_json, encoding="utf-8")
+print(f"Wrote {graph_out} ({len(graph_json)} bytes)", flush=True)
+
 netlify = pathlib.Path("netlify_graph_viewer/index.html")
 if netlify.parent.exists():
     netlify.write_text(html, encoding="utf-8")
     print(f"Wrote {netlify} ({len(html)} bytes)", flush=True)
+    netlify_graph = netlify.parent / "graph-data.json"
+    netlify_graph.write_text(graph_json, encoding="utf-8")
+    print(f"Wrote {netlify_graph} ({len(graph_json)} bytes)", flush=True)
 
 print("Done.", flush=True)
