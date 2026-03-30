@@ -9,6 +9,7 @@ from src.charity_commission.search import CharityCommissionSearchProvider
 from src.config import Settings
 from src.models import EvidenceItem, NameVariant, OrganisationRecord, ResolutionDecision
 from src.pipeline import (
+    add_organisation_to_run,
     run_name_pipeline,
     step1_expand_seed,
     step2_expand_connected_organisations,
@@ -513,6 +514,42 @@ class PipelineTests(unittest.TestCase):
             run_id = int(step1["run_id"])
             self.assertEqual(step1["matched_organisation_count"], 0)
             self.assertEqual(len(repository.get_run_organisations(run_id, stages=["step1_seed_match"])), 0)
+
+    def test_add_organisation_to_run_links_org_and_reruns_downstream_steps(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            charity_client = FakeCharityClient(settings)
+            run_id = repository.create_run("Manual Run", "balanced")
+
+            with patch(
+                "src.address_pivot.AddressPivotSearcher.find_related_organisations",
+                return_value=[],
+            ):
+                result = add_organisation_to_run(
+                    repository=repository,
+                    settings=settings,
+                    charity_client=charity_client,
+                    run_id=run_id,
+                    registry_type="charity",
+                    registry_number="123456",
+                    suffix=0,
+                    limit=10,
+                )
+
+            scoped_seed_orgs = repository.get_run_organisations(run_id, stages=["step1_seed_match"])
+            scoped_connected_orgs = repository.get_run_organisations(run_id, stages=["step2_connected_org"])
+
+            self.assertEqual(result["registry_type"], "charity")
+            self.assertEqual(result["registry_number"], "123456")
+            self.assertTrue(result["reran_downstream"])
+            self.assertEqual(len(scoped_seed_orgs), 1)
+            self.assertEqual(scoped_seed_orgs[0]["name"], "Alex Smith Foundation")
+            self.assertEqual(len(scoped_connected_orgs), 1)
+            ranked_names = [row["canonical_name"] for row in result["ranking"]]
+            self.assertIn("Jane Trustee", ranked_names)
+            self.assertIn("John Linked", ranked_names)
 
 
 if __name__ == "__main__":

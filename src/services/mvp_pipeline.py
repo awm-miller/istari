@@ -366,6 +366,115 @@ def run_registry_only_mvp(
     }
 
 
+def add_organisation_to_run(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    run_id: int,
+    registry_type: str,
+    registry_number: str,
+    suffix: int = 0,
+    limit: int = 25,
+    rerun_downstream: bool = True,
+) -> dict[str, Any]:
+    run_row = repository.get_run(run_id)
+    if run_row is None:
+        raise ValueError(f"Run {run_id} does not exist.")
+
+    organisation = _load_registry_organisation(
+        settings=settings,
+        charity_client=charity_client,
+        registry_type=registry_type,
+        registry_number=registry_number,
+        suffix=suffix,
+    )
+    organisation_id = repository.upsert_organisation(organisation)
+    repository.link_run_organisation(
+        run_id,
+        organisation_id,
+        stage=STEP1_STAGE,
+        source="manual_add",
+        metadata={
+            "registry_type": organisation.registry_type,
+            "registry_number": organisation.registry_number,
+            "suffix": organisation.suffix,
+            "name": organisation.name,
+        },
+    )
+
+    result: dict[str, Any] = {
+        "run_id": run_id,
+        "organisation_id": organisation_id,
+        "registry_type": organisation.registry_type,
+        "registry_number": organisation.registry_number,
+        "suffix": organisation.suffix,
+        "name": organisation.name,
+        "reran_downstream": rerun_downstream,
+    }
+    if not rerun_downstream:
+        return result
+
+    step2 = step2_expand_connected_organisations(
+        repository=repository,
+        charity_client=charity_client,
+        run_id=run_id,
+    )
+    step2b = step2b_enrich_from_pdfs(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+    )
+    step3 = step3_expand_connected_people(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+        limit=limit,
+    )
+    result.update(
+        {
+            "step2": step2,
+            "step2b": step2b,
+            "step3": step3,
+            "ranking": step3["ranking"],
+        }
+    )
+    return result
+
+
+def _load_registry_organisation(
+    *,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    registry_type: str,
+    registry_number: str,
+    suffix: int = 0,
+) -> OrganisationRecord:
+    cleaned_type = str(registry_type).strip().lower()
+    cleaned_number = str(registry_number).strip()
+    if cleaned_type == "charity":
+        details = charity_client.get_all_charity_details(int(cleaned_number), int(suffix))
+        return build_charity_record(
+            details,
+            charity_number=int(cleaned_number),
+            suffix=int(suffix),
+        )
+    if cleaned_type == "company":
+        companies_house_client = CompaniesHouseClient(settings)
+        profile = companies_house_client.get_company_profile(cleaned_number)
+        return OrganisationRecord(
+            registry_type="company",
+            registry_number=cleaned_number,
+            suffix=0,
+            name=str(profile.get("company_name") or cleaned_number).strip(),
+            status=profile.get("company_status"),
+            metadata=profile,
+        )
+    raise ValueError(f"Unsupported registry type: {registry_type}")
+
+
 def _hydrate_organisation_for_addresses(
     *,
     repository: Repository,

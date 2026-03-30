@@ -6,6 +6,7 @@ from src.charity_commission.client import CharityCommissionClient
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import SearchProvider
 from src.services.mvp_pipeline import (
+    add_organisation_to_run,
     run_registry_only_mvp,
     step1_expand_seed,
     step2_expand_connected_organisations,
@@ -133,6 +134,7 @@ def _decorate_overlap_organisations(rows: list[dict[str, Any]]) -> list[dict[str
 __all__ = [
     "run_name_pipeline",
     "run_seed_batch_pipeline",
+    "add_organisation_to_run",
     "step1_expand_seed",
     "step2_expand_connected_organisations",
     "step2b_enrich_from_pdfs",

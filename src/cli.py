@@ -15,6 +15,7 @@ from src.config import load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.graph_export import export_network_payload
 from src.pipeline import (
+    add_organisation_to_run,
     run_name_pipeline,
     run_seed_batch_pipeline,
     step1_expand_seed,
@@ -51,6 +52,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="MVP step 2: expand connected companies and charities for a run.",
     )
     step2_parser.add_argument("run_id", type=int)
+
+    add_org_parser = subparsers.add_parser(
+        "add-org",
+        help="Add a specific company or charity into an existing run and rerun downstream steps.",
+    )
+    add_org_parser.add_argument("run_id", type=int)
+    add_org_parser.add_argument(
+        "--registry-type",
+        choices=["charity", "company"],
+        required=True,
+    )
+    add_org_parser.add_argument("--registry-number", required=True)
+    add_org_parser.add_argument("--suffix", type=int, default=0)
+    add_org_parser.add_argument("--limit", type=int, default=25)
+    add_org_parser.add_argument(
+        "--link-only",
+        action="store_true",
+        help="Only attach the organisation to the run without rerunning downstream steps.",
+    )
 
     step3_parser = subparsers.add_parser(
         "step3-people",
@@ -160,7 +180,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
-    if args.command in {"init-db", "step1-seed", "step2-orgs", "pdf-enrich", "step3-people", "run-name", "run-seeds"}:
+    if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-seeds"}:
         _startup_stop_other_pipeline_processes()
 
     repository = Repository(
@@ -193,6 +213,21 @@ def main() -> None:
             repository=repository,
             charity_client=charity_client,
             run_id=int(args.run_id),
+        )
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == "add-org":
+        result = add_organisation_to_run(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            run_id=int(args.run_id),
+            registry_type=str(args.registry_type),
+            registry_number=str(args.registry_number),
+            suffix=int(args.suffix),
+            limit=int(args.limit),
+            rerun_downstream=not bool(args.link_only),
         )
         print(json.dumps(result, indent=2))
         return
@@ -417,7 +452,7 @@ $targets = Get-CimInstance Win32_Process |
     $_.ProcessId -ne {current_pid} -and
     $_.CommandLine -and
     $_.CommandLine -match 'src\\.cli' -and
-    $_.CommandLine -match '(run-name|run-seeds|step1-seed|step2-orgs|step3-people)'
+    $_.CommandLine -match '(run-name|run-seeds|step1-seed|step2-orgs|step3-people|add-org)'
   }}
 $killed = @()
 foreach ($p in $targets) {{
