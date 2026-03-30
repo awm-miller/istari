@@ -374,6 +374,28 @@ body {{
   padding: 8px 10px;
   background: rgba(255,255,255,0.03);
 }}
+.analysis-claims {{
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}}
+.analysis-claim {{
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255,255,255,0.03);
+}}
+.analysis-claim-text {{
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 6px;
+}}
+.analysis-claim-evidence a {{
+  font-size: 11px;
+  color: var(--blue);
+  text-decoration: none;
+  margin-right: 8px;
+}}
 #address-map {{
   flex: 1;
   min-height: 320px;
@@ -440,6 +462,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   <div class="modal-card">
     <div class="modal-header">
       <h2>Connection analysis</h2>
+      <button class="toolbar-btn" id="copy-analysis" type="button" disabled>Copy</button>
       <button class="modal-close" id="close-analysis" type="button">Close</button>
     </div>
     <div class="modal-status" id="analysis-status">Select two nodes and ask for an explanation.</div>
@@ -629,6 +652,7 @@ const mapModalEl = document.getElementById("map-modal");
 const closeMapButton = document.getElementById("close-map");
 const mapStatusEl = document.getElementById("map-status");
 const analysisModalEl = document.getElementById("analysis-modal");
+const copyAnalysisButton = document.getElementById("copy-analysis");
 const closeAnalysisButton = document.getElementById("close-analysis");
 const analysisStatusEl = document.getElementById("analysis-status");
 const analysisBodyEl = document.getElementById("analysis-body");
@@ -641,6 +665,7 @@ const showPeopleInput = document.getElementById("show-people");
 const showAddressesInput = document.getElementById("show-addresses");
 const indirectOnlyInput = document.getElementById("indirect-only");
 const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
+let lastAnalysisPayload = null;
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -1432,13 +1457,57 @@ function closeAnalysisModal() {{
   analysisModalEl.classList.remove("open");
 }}
 
+function formatAnalysisCopyText(payload) {{
+  const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map(item => [String(item.id || ""), item]));
+  const lines = [String(payload.summary || "No explanation returned.").trim()];
+  const claims = Array.isArray(payload.claims) ? payload.claims : [];
+  if (claims.length) {{
+    lines.push("", "Claims:");
+    claims.forEach((claim, index) => {{
+      const refs = (Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [])
+        .map(id => evidenceById.get(String(id)))
+        .filter(Boolean)
+        .map(item => {{
+          const pageLabel = item.page_hint || (item.page_number ? `page ${{item.page_number}}` : "");
+          return pageLabel ? `${{item.title}} (${{pageLabel}})` : item.title;
+        }});
+      lines.push(`${{index + 1}}. ${{String(claim.text || "").trim()}}${{refs.length ? ` [${{refs.join("; ")}}]` : ""}}`);
+    }});
+  }}
+  return lines.join("\n");
+}}
+
 function renderAnalysisResult(payload) {{
+  lastAnalysisPayload = payload;
+  copyAnalysisButton.disabled = false;
   const sourceNode = nodeById.get(payload.sourceNodeId);
   const targetNode = nodeById.get(payload.targetNodeId);
   const pathItems = Array.isArray(payload.path?.edges) ? payload.path.edges : [];
+  const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map(item => [String(item.id || ""), item]));
+  const claims = Array.isArray(payload.claims) ? payload.claims : [];
   analysisBodyEl.innerHTML = [
     `<div class="analysis-selection">${{escapeHtml(sourceNode?.label || payload.sourceNodeId)}} to ${{escapeHtml(targetNode?.label || payload.targetNodeId)}}</div>`,
     `<div class="analysis-text">${{escapeHtml(payload.summary || "No explanation returned.").replaceAll("\n", "<br>")}}</div>`,
+    claims.length
+      ? `<div class="analysis-claims">${{claims.map((claim, index) => {{
+          const links = (Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [])
+            .map(id => evidenceById.get(String(id)))
+            .filter(Boolean)
+            .map(item => {{
+              const url = evidenceActionUrl(item);
+              const pageLabel = item.page_hint || (item.page_number ? `page ${{item.page_number}}` : "");
+              const label = pageLabel ? `${{item.title}} (${{pageLabel}})` : item.title;
+              return url ? `<a href="${{escapeHtml(url)}}" target="_blank" rel="noreferrer">${{escapeHtml(label)}}</a>` : "";
+            }})
+            .filter(Boolean)
+            .join("");
+          return `
+          <div class="analysis-claim">
+            <div class="analysis-claim-text">${{index + 1}}. ${{escapeHtml(claim.text || "")}}</div>
+            <div class="analysis-claim-evidence">${{links}}</div>
+          </div>`;
+        }}).join("")}}</div>`
+      : "",
     pathItems.length
       ? `<div class="analysis-path">${{pathItems.map(edge => `
           <div class="analysis-path-item">${{escapeHtml(edge.source_label || edge.source_id)}} ${{escapeHtml(edge.phrase || "is linked to")}} ${{escapeHtml(edge.target_label || edge.target_id)}}</div>
@@ -1456,6 +1525,8 @@ async function openAnalysisModal() {{
   analysisModalEl.classList.add("open");
   analysisStatusEl.textContent = "Analyzing the selected connection...";
   analysisBodyEl.innerHTML = "";
+  lastAnalysisPayload = null;
+  copyAnalysisButton.disabled = true;
   const [sourceNodeId, targetNodeId] = viewerState.analysisNodeIds;
   const response = await fetch(ANALYZE_CONNECTION_URL, {{
     method: "POST",
@@ -1938,6 +2009,15 @@ openAnalysisButton.addEventListener("click", () => {{
   openAnalysisModal().catch(() => {{
     analysisStatusEl.textContent = "Connection analysis failed.";
   }});
+}});
+copyAnalysisButton.addEventListener("click", async () => {{
+  if (!lastAnalysisPayload) return;
+  try {{
+    await navigator.clipboard.writeText(formatAnalysisCopyText(lastAnalysisPayload));
+    analysisStatusEl.textContent = "Connection analysis copied.";
+  }} catch (_error) {{
+    analysisStatusEl.textContent = "Copy failed.";
+  }}
 }});
 closeAnalysisButton.addEventListener("click", closeAnalysisModal);
 analysisModalEl.addEventListener("click", (event) => {{

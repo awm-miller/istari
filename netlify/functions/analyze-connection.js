@@ -9,6 +9,25 @@ function json(statusCode, body) {
   };
 }
 
+function tryParseJson(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(raw.slice(start, end + 1));
+      } catch (_error2) {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
 async function loadGraphData() {
   const graphPath = path.join(process.cwd(), "netlify_graph_viewer", "graph-data.json");
   const raw = await fs.readFile(graphPath, "utf8");
@@ -53,15 +72,46 @@ function shortestPath(data, sourceNodeId, targetNodeId) {
   return { nodeIds, edges: pathEdges };
 }
 
+function evidenceKey(evidence) {
+  return [
+    evidence.document_url || "",
+    evidence.title || "",
+    evidence.page_hint || "",
+    evidence.page_number || "",
+  ].join("||");
+}
+
 function buildPathContext(data, sourceNodeId, targetNodeId) {
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const path = shortestPath(data, sourceNodeId, targetNodeId);
   if (!path) return null;
 
+  const evidence = [];
+  const evidenceIdByKey = new Map();
   const edgeSummaries = path.edges.map((edge) => {
     const source = nodeById.get(edge.source);
     const target = nodeById.get(edge.target);
+    const evidenceIds = [];
+    if (edge.evidence && typeof edge.evidence === "object") {
+      const key = evidenceKey(edge.evidence);
+      if (key.trim()) {
+        let evidenceId = evidenceIdByKey.get(key);
+        if (!evidenceId) {
+          evidenceId = `e${evidence.length + 1}`;
+          evidenceIdByKey.set(key, evidenceId);
+          evidence.push({
+            id: evidenceId,
+            title: String(edge.evidence.title || "Evidence"),
+            document_url: String(edge.evidence.document_url || ""),
+            page_hint: String(edge.evidence.page_hint || ""),
+            page_number: edge.evidence.page_number || null,
+            notes: String(edge.evidence.notes || ""),
+          });
+        }
+        evidenceIds.push(evidenceId);
+      }
+    }
     return {
       source_id: edge.source,
       source_label: source ? source.label : edge.source,
@@ -70,7 +120,7 @@ function buildPathContext(data, sourceNodeId, targetNodeId) {
       kind: edge.kind,
       phrase: edge.phrase || edge.role_type || "is linked to",
       source_provider: edge.source_provider || "",
-      evidence: edge.evidence || null,
+      evidence_ids: evidenceIds,
     };
   });
   const nodeSummaries = path.nodeIds.map((nodeId) => {
@@ -88,9 +138,7 @@ function buildPathContext(data, sourceNodeId, targetNodeId) {
       nodes: nodeSummaries,
       edges: edgeSummaries,
     },
-    evidence: edgeSummaries
-      .map((edge) => edge.evidence)
-      .filter(Boolean),
+    evidence,
   };
 }
 
@@ -102,10 +150,21 @@ function fallbackSummary(context) {
     .join(". ");
 }
 
-async function generateSummary(context, sourceNodeId, targetNodeId) {
+function fallbackClaims(context) {
+  return (context.path.edges || []).map((edge) => ({
+    text: `${edge.source_label} ${edge.phrase} ${edge.target_label}.`,
+    evidence_ids: Array.isArray(edge.evidence_ids) ? edge.evidence_ids : [],
+  }));
+}
+
+async function generateAnalysis(context, sourceNodeId, targetNodeId) {
+  const fallback = {
+    summary: fallbackSummary(context),
+    claims: fallbackClaims(context),
+  };
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return fallbackSummary(context);
+    return fallback;
   }
 
   const model =
@@ -115,7 +174,15 @@ async function generateSummary(context, sourceNodeId, targetNodeId) {
   const baseUrl = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
   const prompt = [
     "Explain the connection between two graph nodes using only the supplied graph path and evidence.",
-    "Keep the answer concise and grounded. Do not invent facts.",
+    "Return JSON only with this shape:",
+    JSON.stringify({
+      summary: "",
+      claims: [{ text: "", evidence_ids: ["e1"] }],
+    }),
+    "Rules:",
+    "- Keep the summary concise and grounded.",
+    "- Each claim must be directly supported by supplied path edges.",
+    "- Use only evidence ids that exist in the evidence list.",
     `Source node id: ${sourceNodeId}`,
     `Target node id: ${targetNodeId}`,
     `Context JSON: ${JSON.stringify(context)}`,
@@ -137,7 +204,23 @@ async function generateSummary(context, sourceNodeId, targetNodeId) {
     throw new Error(`OpenAI request failed: ${response.status} ${errorText}`);
   }
   const payload = await response.json();
-  return String(payload.output_text || "").trim() || fallbackSummary(context);
+  const document = tryParseJson(payload.output_text || "");
+  if (!document || typeof document !== "object") {
+    return fallback;
+  }
+  return {
+    summary: String(document.summary || fallback.summary),
+    claims: Array.isArray(document.claims)
+      ? document.claims
+          .filter((claim) => claim && claim.text)
+          .map((claim) => ({
+            text: String(claim.text),
+            evidence_ids: Array.isArray(claim.evidence_ids)
+              ? claim.evidence_ids.map((value) => String(value))
+              : [],
+          }))
+      : fallback.claims,
+  };
 }
 
 exports.handler = async function handler(event) {
@@ -171,15 +254,22 @@ exports.handler = async function handler(event) {
   }
 
   try {
-    const summary = await generateSummary(context, sourceNodeId, targetNodeId);
+    const analysis = await generateAnalysis(context, sourceNodeId, targetNodeId);
     return json(200, {
       sourceNodeId,
       targetNodeId,
-      summary,
+      summary: analysis.summary,
+      claims: analysis.claims,
       path: context.path,
       evidence: context.evidence,
     });
   } catch (error) {
-    return json(500, { error: error.message, summary: fallbackSummary(context), path: context.path });
+    return json(500, {
+      error: error.message,
+      summary: fallbackSummary(context),
+      claims: fallbackClaims(context),
+      path: context.path,
+      evidence: context.evidence,
+    });
   }
 };
