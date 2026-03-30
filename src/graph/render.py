@@ -184,6 +184,14 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
       <span>identities</span>
     </label>
     <label class="toggle">
+      <input id="show-companies" type="checkbox" checked />
+      <span>companies</span>
+    </label>
+    <label class="toggle">
+      <input id="show-charities" type="checkbox" checked />
+      <span>charities</span>
+    </label>
+    <label class="toggle">
       <input id="show-people" type="checkbox" checked />
       <span>people</span>
     </label>
@@ -223,6 +231,8 @@ const statsEl = document.getElementById("stats");
 const searchInput = document.getElementById("search");
 const clearBtn = document.getElementById("clear-search");
 const showIdentitiesInput = document.getElementById("show-identities");
+const showCompaniesInput = document.getElementById("show-companies");
+const showCharitiesInput = document.getElementById("show-charities");
 const showPeopleInput = document.getElementById("show-people");
 const showAddressesInput = document.getElementById("show-addresses");
 const indirectOnlyInput = document.getElementById("indirect-only");
@@ -340,11 +350,13 @@ function nodeTypeKey(node) {{
   if (node.kind === "seed" || node.lane === 1) return "identity";
   if (node.kind === "address") return "address";
   if (node.kind === "person") return "person";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "charity") return "charity";
+  if (node.kind === "organisation" && (node.registry_type || "").toLowerCase() === "company") return "company";
   return "organisation";
 }}
 
 function isFilterableType(typeKey) {{
-  return typeKey === "identity" || typeKey === "address" || typeKey === "person";
+  return typeKey === "identity" || typeKey === "company" || typeKey === "charity" || typeKey === "address" || typeKey === "person";
 }}
 
 function nodeMatchesQuery(node, query) {{
@@ -575,6 +587,8 @@ function deriveHiddenConnectionEdges(rootIds, visibleIds, subgraph) {{
 function syncHiddenTypeState() {{
   viewerState.hiddenNodeTypes.clear();
   if (!showIdentitiesInput.checked) viewerState.hiddenNodeTypes.add("identity");
+  if (!showCompaniesInput.checked) viewerState.hiddenNodeTypes.add("company");
+  if (!showCharitiesInput.checked) viewerState.hiddenNodeTypes.add("charity");
   if (!showPeopleInput.checked) viewerState.hiddenNodeTypes.add("person");
   if (!showAddressesInput.checked) viewerState.hiddenNodeTypes.add("address");
   viewerState.indirectOnly = indirectOnlyInput.checked;
@@ -1141,6 +1155,8 @@ clearBtn.addEventListener("click", () => {{
 }});
 
 showIdentitiesInput.addEventListener("change", applyViewerState);
+showCompaniesInput.addEventListener("change", applyViewerState);
+showCharitiesInput.addEventListener("change", applyViewerState);
 showPeopleInput.addEventListener("change", applyViewerState);
 showAddressesInput.addEventListener("change", applyViewerState);
 indirectOnlyInput.addEventListener("change", applyViewerState);
