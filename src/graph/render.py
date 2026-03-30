@@ -411,12 +411,168 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <script>
 const allNodes = {nodes_json};
 const allEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
+const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
+const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
+
+function mergeKindForNode(node) {{
+  if (node?.kind === "address") return "address";
+  if (node?.kind === "person" && node?.lane === 4) return "person";
+  return "";
+}}
+
+function normalizeMergeOverrides(overrides) {{
+  const normalized = {{ address: [], person: [] }};
+  if (!overrides || typeof overrides !== "object") return normalized;
+  ["address", "person"].forEach(kind => {{
+    normalized[kind] = Array.isArray(overrides[kind])
+      ? overrides[kind]
+          .filter(row => row && row.sourceId && row.targetId)
+          .map(row => {{
+            return {{
+              sourceId: String(row.sourceId),
+              targetId: String(row.targetId),
+            }};
+          }})
+      : [];
+  }});
+  return normalized;
+}}
+
+function loadLocalMergeOverrides() {{
+  try {{
+    const raw = window.localStorage.getItem(MERGE_OVERRIDE_STORAGE_KEY);
+    return normalizeMergeOverrides(raw ? JSON.parse(raw) : null);
+  }} catch (_error) {{
+    return normalizeMergeOverrides(null);
+  }}
+}}
+
+function saveLocalMergeOverrides(overrides) {{
+  try {{
+    window.localStorage.setItem(MERGE_OVERRIDE_STORAGE_KEY, JSON.stringify(normalizeMergeOverrides(overrides)));
+  }} catch (_error) {{
+  }}
+}}
+
+function resolveMergeTarget(nodeId, redirects) {{
+  let current = String(nodeId || "");
+  const seen = new Set();
+  while (redirects.has(current) && !seen.has(current)) {{
+    seen.add(current);
+    current = String(redirects.get(current) || current);
+  }}
+  return current;
+}}
+
+function updateMergedNodeTooltip(node) {{
+  const summary = `${{Number(node.org_count || 0)}} orgs, ${{Number(node.role_count || 0)}} roles, score ${{Number(node.score || 0)}}`;
+  const tooltip = Array.isArray(node.tooltip_lines) ? node.tooltip_lines.slice() : [];
+  const index = tooltip.findIndex(line => String(line).includes(" orgs, ") && String(line).includes(" roles, score "));
+  if (index >= 0) tooltip[index] = summary;
+  else tooltip.splice(Math.min(1, tooltip.length), 0, summary);
+  node.tooltip_lines = tooltip;
+}}
+
+function applyManualMergeOverrides(nodes, edges, overrides) {{
+  const normalized = normalizeMergeOverrides(overrides);
+  const nodeMap = new Map(nodes.map(node => [node.id, node]));
+  const redirects = new Map();
+
+  ["address", "person"].forEach(kind => {{
+    normalized[kind].forEach(override => {{
+      const sourceId = resolveMergeTarget(override.sourceId, redirects);
+      const targetId = resolveMergeTarget(override.targetId, redirects);
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      const sourceNode = nodeMap.get(sourceId);
+      const targetNode = nodeMap.get(targetId);
+      if (!sourceNode || !targetNode) return;
+      if (mergeKindForNode(sourceNode) !== kind || mergeKindForNode(targetNode) !== kind) return;
+
+      redirects.set(sourceId, targetId);
+      const aliases = new Set([
+        ...(targetNode.aliases || []),
+        targetNode.label,
+        ...(sourceNode.aliases || []),
+        sourceNode.label,
+      ].filter(Boolean));
+      targetNode.aliases = [...aliases].sort();
+
+      if (kind === "person") {{
+        if (String(sourceNode.label || "").length > String(targetNode.label || "").length) {{
+          targetNode.label = sourceNode.label;
+        }}
+        targetNode.identity_keys = [
+          ...new Set([...(targetNode.identity_keys || []), ...(sourceNode.identity_keys || [])]),
+        ].sort();
+      }} else {{
+        if (!targetNode.postcode && sourceNode.postcode) targetNode.postcode = sourceNode.postcode;
+        if (!targetNode.country && sourceNode.country) targetNode.country = sourceNode.country;
+        if (!targetNode.normalized_key && sourceNode.normalized_key) targetNode.normalized_key = sourceNode.normalized_key;
+      }}
+
+      const tooltip = Array.isArray(targetNode.tooltip_lines) ? targetNode.tooltip_lines.slice() : [];
+      const mergeNotice = kind === "person"
+        ? `Manually merged with: ${{sourceNode.label}}`
+        : `Manually merged address: ${{sourceNode.label}}`;
+      if (!tooltip.includes(mergeNotice)) tooltip.push(mergeNotice);
+      targetNode.tooltip_lines = tooltip;
+    }});
+  }});
+
+  if (!redirects.size) return;
+
+  const remappedEdges = [];
+  const seenEdges = new Set();
+  edges.forEach(edge => {{
+    const nextSource = resolveMergeTarget(edge.source, redirects);
+    const nextTarget = resolveMergeTarget(edge.target, redirects);
+    if (!nextSource || !nextTarget || nextSource === nextTarget) return;
+    const nextEdge = {{ ...edge, source: nextSource, target: nextTarget }};
+    const key = [
+      nextEdge.kind,
+      nextEdge.source,
+      nextEdge.target,
+      nextEdge.phrase || "",
+      nextEdge.role_type || "",
+      nextEdge.tooltip || "",
+    ].join("||");
+    if (seenEdges.has(key)) return;
+    seenEdges.add(key);
+    remappedEdges.push(nextEdge);
+  }});
+  edges.splice(0, edges.length, ...remappedEdges);
+
+  const survivingNodes = nodes.filter(node => resolveMergeTarget(node.id, redirects) === node.id);
+  nodes.splice(0, nodes.length, ...survivingNodes);
+  const survivingNodeMap = new Map(nodes.map(node => [node.id, node]));
+  nodes.forEach(node => {{
+    if (mergeKindForNode(node) !== "person") return;
+    const linkedEdges = edges.filter(edge => edge.kind === "role" && (edge.source === node.id || edge.target === node.id));
+    const orgIds = new Set();
+    const roleKeys = new Set();
+    let score = 0;
+    linkedEdges.forEach(edge => {{
+      const otherId = edge.source === node.id ? edge.target : edge.source;
+      if (survivingNodeMap.get(otherId)?.kind === "organisation") orgIds.add(otherId);
+      roleKeys.add(`${{otherId}}||${{edge.phrase || edge.role_type || ""}}`);
+      score += Number(edge.weight || 0);
+    }});
+    node.org_count = orgIds.size;
+    node.role_count = roleKeys.size;
+    node.score = Number(score.toFixed(4));
+    updateMergedNodeTooltip(node);
+  }});
+}}
+
+const localMergeOverrides = loadLocalMergeOverrides();
+applyManualMergeOverrides(allNodes, allEdges, localMergeOverrides);
 
 const viewerState = {{
   focusedNodeIds: new Set(),
   searchQuery: "",
   hiddenNodeTypes: new Set(),
   indirectOnly: false,
+  pendingMergeNodeId: "",
 }};
 
 const container = document.getElementById("graph");
@@ -1082,12 +1238,14 @@ function registryActionForNode(node) {{
   if (!registryType || !registryNumber) return null;
   if (registryType === "company") {{
     return {{
+      type: "open_url",
       label: "Open Companies House page",
       url: `https://find-and-update.company-information.service.gov.uk/company/${{encodeURIComponent(registryNumber)}}`,
     }};
   }}
   if (registryType === "charity") {{
     return {{
+      type: "open_url",
       label: "Open Charity Commission page",
       url: `https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/${{encodeURIComponent(registryNumber)}}`,
     }};
@@ -1116,11 +1274,85 @@ function evidenceActionsForNode(node) {{
     if (seen.has(key)) return;
     seen.add(key);
     actions.push({{
+      type: "open_url",
       label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
       url,
     }});
   }});
   return actions.slice(0, 6);
+}}
+
+function mergeActionsForNode(node) {{
+  const kind = mergeKindForNode(node);
+  if (!kind) return [];
+  const actions = [];
+  const pendingNode = nodeById.get(viewerState.pendingMergeNodeId);
+
+  if (pendingNode && pendingNode.id !== node.id && mergeKindForNode(pendingNode) === kind) {{
+    actions.push({{
+      type: "merge_commit",
+      kind,
+      sourceId: pendingNode.id,
+      targetId: node.id,
+      label: `Merge ${{pendingNode.label}} into this ${{kind}} permanently`,
+    }});
+    actions.push({{
+      type: "merge_clear",
+      label: "Clear merge selection",
+    }});
+    return actions;
+  }}
+
+  if (viewerState.pendingMergeNodeId === node.id) {{
+    actions.push({{
+      type: "merge_clear",
+      label: "Clear merge selection",
+    }});
+    return actions;
+  }}
+
+  actions.push({{
+    type: "merge_prepare",
+    nodeId: node.id,
+    label: `Use this ${{kind}} as the merge source`,
+  }});
+  return actions;
+}}
+
+async function persistMergeOverride(kind, sourceId, targetId) {{
+  const overrides = loadLocalMergeOverrides();
+  overrides[kind].push({{ sourceId, targetId }});
+  saveLocalMergeOverrides(overrides);
+  try {{
+    const response = await fetch(MERGE_OVERRIDE_URL, {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{ kind, sourceId, targetId }}),
+    }});
+    if (response.ok) {{
+      const payload = await response.json();
+      saveLocalMergeOverrides(payload?.overrides || overrides);
+    }}
+  }} catch (_error) {{
+  }}
+  window.location.reload();
+}}
+
+async function syncLocalOverridesFromServer() {{
+  try {{
+    const response = await fetch(MERGE_OVERRIDE_URL);
+    if (!response.ok) return;
+    const payload = await response.json();
+    const remote = normalizeMergeOverrides(payload?.overrides || payload);
+    const local = loadLocalMergeOverrides();
+    const remoteCount = remote.address.length + remote.person.length;
+    const localCount = local.address.length + local.person.length;
+    if (remoteCount > localCount) {{
+      saveLocalMergeOverrides(remote);
+      window.location.reload();
+    }}
+  }} catch (_error) {{
+  }}
 }}
 
 function closeContextMenu() {{
@@ -1250,6 +1482,7 @@ function openContextMenu(event, node) {{
   const registryAction = registryActionForNode(node);
   if (registryAction) actions.push(registryAction);
   evidenceActionsForNode(node).forEach(action => actions.push(action));
+  mergeActionsForNode(node).forEach(action => actions.push(action));
 
   contextMenuEl._actions = actions;
   contextMenuEl.innerHTML = [
@@ -1521,9 +1754,36 @@ contextMenuEl.addEventListener("click", (event) => {{
   if (!button) return;
   const index = Number(button.getAttribute("data-action-index"));
   const action = Array.isArray(contextMenuEl._actions) ? contextMenuEl._actions[index] : null;
-  if (!action?.url) return;
-  window.open(action.url, "_blank", "noopener,noreferrer");
-  closeContextMenu();
+  if (!action) return;
+  if (action.type === "open_url" && action.url) {{
+    window.open(action.url, "_blank", "noopener,noreferrer");
+    closeContextMenu();
+    return;
+  }}
+  if (action.type === "merge_prepare") {{
+    viewerState.pendingMergeNodeId = String(action.nodeId || "");
+    closeContextMenu();
+    window.alert("Merge source selected. Right-click the target node to finish the permanent merge.");
+    return;
+  }}
+  if (action.type === "merge_clear") {{
+    viewerState.pendingMergeNodeId = "";
+    closeContextMenu();
+    return;
+  }}
+  if (action.type === "merge_commit") {{
+    closeContextMenu();
+    const sourceNode = nodeById.get(action.sourceId);
+    const targetNode = nodeById.get(action.targetId);
+    const confirmed = window.confirm(
+      `Permanently merge "${{sourceNode?.label || action.sourceId}}" into "${{targetNode?.label || action.targetId}}"?`
+    );
+    if (!confirmed) return;
+    viewerState.pendingMergeNodeId = "";
+    persistMergeOverride(String(action.kind || ""), String(action.sourceId || ""), String(action.targetId || "")).catch(() => {{
+      window.alert("Saving the merge failed.");
+    }});
+  }}
 }});
 
 document.addEventListener("click", closeContextMenu);
@@ -1644,6 +1904,7 @@ showAddressesInput.addEventListener("change", applyViewerState);
 indirectOnlyInput.addEventListener("change", applyViewerState);
 
 applyViewerState();
+syncLocalOverridesFromServer();
 </script>
 </body>
 </html>"""
