@@ -17,6 +17,7 @@ class GeminiClient:
     api_key: str
     cache_dir: Path
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    timeout_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +65,7 @@ class GeminiClient:
         last_error: RuntimeError | None = None
         for attempt in range(attempts):
             try:
-                with request.urlopen(req) as resp:
+                with request.urlopen(req, timeout=self.timeout_seconds) as resp:
                     result = json.loads(resp.read().decode("utf-8"))
                     break
             except error.HTTPError as exc:

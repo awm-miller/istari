@@ -981,32 +981,44 @@ function rebuildActiveGraph() {{
   allEdges = baseEdges.slice();
   if (!viewerState.showLowConfidence || !lowConfidenceLoaded) return;
 
-  const activeLowEdges = lowConfidenceEdges.filter(
-    edge => mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)
-  );
   const activeLowNodeIds = new Set();
-  activeLowEdges.forEach(edge => {{
-    if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
-    if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
+  const activeLowEdgeIds = new Set();
+
+  lowConfidenceNodes.forEach(node => {{
+    if (node.kind === "organisation") activeLowNodeIds.add(node.id);
   }});
 
-  const expandedEdgeIds = new Set();
-  expandedLowConfidenceOrgIds.forEach(orgId => {{
-    if (!activeLowNodeIds.has(orgId)) return;
-    (lowConfidenceEdgesByNodeId.get(orgId) || []).forEach(edge => {{
-      const otherId = edge.source === orgId ? edge.target : edge.source;
-      if (mainNodeIds.has(otherId)) return;
-      const otherNode = lowConfidenceNodeById.get(otherId);
-      if (!otherNode || otherNode.kind !== "person") return;
-      activeLowNodeIds.add(otherId);
-      expandedEdgeIds.add(edge.id);
+  lowConfidenceEdges.forEach(edge => {{
+    if (
+      mainNodeIds.has(edge.source)
+      || mainNodeIds.has(edge.target)
+      || activeLowNodeIds.has(edge.source)
+      || activeLowNodeIds.has(edge.target)
+    ) {{
+      activeLowEdgeIds.add(edge.id);
+      if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
+      if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
+    }}
+  }});
+
+  const matchedLowSearchIds = new Set(
+    lowConfidenceNodes
+      .filter(node => nodeMatchesQuery(node, viewerState.searchQuery))
+      .map(node => node.id)
+  );
+  matchedLowSearchIds.forEach(nodeId => {{
+    activeLowNodeIds.add(nodeId);
+    (lowConfidenceEdgesByNodeId.get(nodeId) || []).forEach(edge => {{
+      activeLowEdgeIds.add(edge.id);
+      if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
+      if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
     }});
   }});
 
   const activeLowNodes = lowConfidenceNodes.filter(node => activeLowNodeIds.has(node.id));
-  const expandedLowEdges = lowConfidenceEdges.filter(edge => expandedEdgeIds.has(edge.id));
+  const activeLowEdges = lowConfidenceEdges.filter(edge => activeLowEdgeIds.has(edge.id));
   allNodes.push(...activeLowNodes);
-  allEdges.push(...activeLowEdges, ...expandedLowEdges);
+  allEdges.push(...activeLowEdges);
 }}
 
 function rebuildLowConfidenceIndexes() {{
@@ -1692,43 +1704,68 @@ function edgeStroke(edge) {{
   return "#2a3040";
 }}
 
-function lowConfidenceVisibilityNoteForEdge(edge) {{
-  if (!edge?.is_low_confidence) return "";
-  if (mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)) {{
-    return "Shown because this low-confidence link intersects the current graph.";
-  }}
-  return "Shown because you expanded linked low-confidence people from an intersecting organisation.";
+function stripLowConfidenceTitle(value) {{
+  return String(value || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
 }}
 
-function lowConfidenceVisibilityNoteForNode(node) {{
-  if (!node?.is_low_confidence) return "";
-  const linkedEdges = lowConfidenceEdgesByNodeId.get(node.id) || [];
-  if (linkedEdges.some(edge => {{
-    const otherId = edge.source === node.id ? edge.target : edge.source;
-    return mainNodeIds.has(otherId);
-  }})) {{
-    return "Shown because this low-confidence node intersects the current graph.";
+function lowConfidenceConnectionSummary(edge) {{
+  const sourceLabel = String(nodeById.get(edge?.source)?.label || edge?.source || "Source");
+  const targetLabel = String(nodeById.get(edge?.target)?.label || edge?.target || "Target");
+  const rawType = String(edge?.role_label || edge?.role_type || "").trim();
+  const baseType = stripLowConfidenceTitle(rawType).toLowerCase();
+  const titleMatch = rawType.match(/\(([^)]+)\)\s*$/);
+  const title = String(titleMatch?.[1] || "").trim();
+  const subject = title && !sourceLabel.toLowerCase().startsWith(title.toLowerCase() + " ")
+    ? `${{title}} ${{sourceLabel}}`
+    : sourceLabel;
+  if (baseType.includes("signatory")) return `${{subject}} is listed as a signatory for ${{targetLabel}}.`;
+  if (baseType.includes("affiliate")) return `${{subject}} is affiliated with ${{targetLabel}}.`;
+  if (baseType.includes("partner")) return `${{subject}} is a partner of ${{targetLabel}}.`;
+  if (baseType.includes("sponsor")) return `${{subject}} sponsors ${{targetLabel}}.`;
+  if (baseType.includes("member_of") || baseType.includes("member of")) return `${{subject}} is a member of ${{targetLabel}}.`;
+  if (baseType.includes("hosted_by") || baseType.includes("hosted by")) return `${{subject}} is hosted by ${{targetLabel}}.`;
+  if (baseType.includes("funded_by") || baseType.includes("funded by")) return `${{subject}} is funded by ${{targetLabel}}.`;
+  if (baseType.includes("parent")) return `${{subject}} is a parent organisation of ${{targetLabel}}.`;
+  if (baseType.includes("subsidiary")) return `${{subject}} is a subsidiary of ${{targetLabel}}.`;
+  if (edge?.phrase) return `${{subject}} ${{String(edge.phrase).trim()}} ${{targetLabel}}.`;
+  if (rawType) return `${{subject}} is linked to ${{targetLabel}} as ${{stripLowConfidenceTitle(rawType)}}.`;
+  return `${{subject}} is linked to ${{targetLabel}}.`;
+}}
+
+function lowConfidenceDocumentSummaryFromEdge(edge) {{
+  const evidenceItems = Array.isArray(edge?.evidence_items) ? edge.evidence_items : [];
+  for (const item of evidenceItems) {{
+    const summary = String(item?.notes || "").trim();
+    if (summary) return summary;
   }}
-  if (linkedEdges.some(edge => {{
-    const otherId = edge.source === node.id ? edge.target : edge.source;
-    return expandedLowConfidenceOrgIds.has(otherId);
-  }})) {{
-    return "Shown because you expanded linked low-confidence people from an intersecting organisation.";
+  const fallback = String(edge?.evidence?.notes || "").trim();
+  return fallback;
+}}
+
+function lowConfidenceNodeSummary(node) {{
+  const linkedEdges = lowConfidenceEdgesByNodeId.get(node?.id) || [];
+  for (const edge of linkedEdges) {{
+    const summary = lowConfidenceDocumentSummaryFromEdge(edge);
+    if (summary) return summary;
   }}
-  return "Shown as part of the low-confidence overlay.";
+  return "";
 }}
 
 function tooltipLinesForEdge(edge) {{
-  const lines = Array.isArray(edge?.tooltip_lines) ? edge.tooltip_lines.slice() : [edge?.tooltip || "link"];
-  const note = lowConfidenceVisibilityNoteForEdge(edge);
-  if (note && !lines.includes(note)) lines.push(note);
-  return lines;
+  if (!edge?.is_low_confidence) {{
+    return Array.isArray(edge?.tooltip_lines) ? edge.tooltip_lines.slice() : [edge?.tooltip || "link"];
+  }}
+  return [escapeHtml(lowConfidenceConnectionSummary(edge))];
 }}
 
 function tooltipLinesForNode(node) {{
-  const lines = Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
-  const note = lowConfidenceVisibilityNoteForNode(node);
-  if (note && !lines.includes(note)) lines.push(note);
+  if (!node?.is_low_confidence) {{
+    return Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
+  }}
+  const summary = lowConfidenceNodeSummary(node);
+  const lines = [`<strong>${{escapeHtml(node?.label || "Node")}}</strong>`];
+  if (summary) lines.push(escapeHtml(summary));
+  else if (node?.label) lines.push(escapeHtml(String(node.label)));
   return lines;
 }}
 
@@ -1873,29 +1910,7 @@ function mergeActionsForNode(node) {{
 }}
 
 function lowConfidenceOrganisationActionsForNode(node) {{
-  if (!viewerState.showLowConfidence) return [];
-  if (!node?.is_low_confidence || node.kind !== "organisation") return [];
-  const hiddenPeople = new Set();
-  (lowConfidenceEdgesByNodeId.get(node.id) || []).forEach(edge => {{
-    const otherId = edge.source === node.id ? edge.target : edge.source;
-    if (mainNodeIds.has(otherId)) return;
-    const otherNode = lowConfidenceNodeById.get(otherId);
-    if (!otherNode || otherNode.kind !== "person") return;
-    hiddenPeople.add(otherId);
-  }});
-  if (!hiddenPeople.size) return [];
-  if (expandedLowConfidenceOrgIds.has(node.id)) {{
-    return [{{
-      type: "low_confidence_org_collapse",
-      nodeId: node.id,
-      label: "Collapse linked low-confidence people",
-    }}];
-  }}
-  return [{{
-    type: "low_confidence_org_expand",
-    nodeId: node.id,
-    label: `Expand ${{hiddenPeople.size}} linked low-confidence people`,
-  }}];
+  return [];
 }}
 
 async function persistMergeOverride(kind, sourceId, targetId) {{

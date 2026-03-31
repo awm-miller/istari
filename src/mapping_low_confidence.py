@@ -10,6 +10,25 @@ _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _PLAIN_URL_RE = re.compile(r"(?<!\()(?P<url>https?://[^\s)>\]]+)")
 
 
+def _ensure_text_column(
+    connection: sqlite3.Connection,
+    *,
+    table_name: str,
+    column_name: str,
+    default_value: str = "",
+) -> None:
+    columns = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name in columns:
+        return
+    escaped = str(default_value).replace("'", "''")
+    connection.execute(
+        f"ALTER TABLE {table_name} ADD COLUMN {column_name} TEXT NOT NULL DEFAULT '{escaped}'"
+    )
+
+
 def normalize_mapping_label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
 
@@ -144,6 +163,11 @@ class MappingStore:
                     ON mapping_matches(run_key);
                 """
             )
+            _ensure_text_column(
+                connection,
+                table_name="mapping_evidence",
+                column_name="document_summary",
+            )
 
     def clear_all(self) -> None:
         with self.connect() as connection:
@@ -258,6 +282,7 @@ class MappingStore:
         title: str,
         url: str,
         snippet: str,
+        document_summary: str = "",
     ) -> None:
         with self.connect() as connection:
             connection.execute(
@@ -268,8 +293,9 @@ class MappingStore:
                     evidence_kind,
                     title,
                     url,
-                    snippet
-                ) VALUES(?, ?, ?, ?, ?, ?)
+                    snippet,
+                    document_summary
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     mapping_link_id,
@@ -278,6 +304,7 @@ class MappingStore:
                     title,
                     url,
                     snippet,
+                    document_summary,
                 ),
             )
 
@@ -610,12 +637,20 @@ def build_low_confidence_overlay(
                 "document_url": str(item["url"] or "").strip(),
                 "page_hint": "",
                 "page_number": None,
-                "notes": str(item["snippet"] or "").strip(),
+                "notes": str(item["document_summary"] or item["snippet"] or "").strip(),
             }
             for item in evidence_by_link_id.get(int(link_row["id"]), [])
             if str(item["url"] or "").strip()
         ]
-        description = str(link_row["description"] or "").strip()
+        summary_text = next(
+            (
+                str(item["document_summary"] or "").strip()
+                for item in evidence_by_link_id.get(int(link_row["id"]), [])
+                if str(item["document_summary"] or "").strip()
+            ),
+            "",
+        )
+        description = summary_text or str(link_row["description"] or "").strip()
         phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
         tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), description] if line]
         tooltip_lines.append(

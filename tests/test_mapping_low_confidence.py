@@ -138,6 +138,5 @@ class MappingLowConfidenceTests(unittest.TestCase):
             self.assertEqual(matches[0]["endpoint"], "from")
             self.assertEqual(matches[0]["matched_node_id"], "person:1")
 
-
 if __name__ == "__main__":
     unittest.main()
