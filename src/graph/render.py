@@ -127,7 +127,6 @@ body {{
   top: 74px;
   right: 12px;
   z-index: 15;
-  width: 220px;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
