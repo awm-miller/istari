@@ -897,6 +897,7 @@ const searchInput = document.getElementById("search");
 let showIdentitiesInput = null;
 let showCompaniesInput = null;
 let showCharitiesInput = null;
+let showOrganisationsInput = null;
 let showPeopleInput = null;
 let showAddressesInput = null;
 let showLowConfidenceInput = null;
@@ -1109,9 +1110,10 @@ function renderLegend() {{
       <span class="legend-key">${{iconSvgMarkup(iconSpec("company"))}} Company</span>
       <input class="legend-toggle" id="show-companies" type="checkbox" checked aria-label="Companies" />
     </label>`,
-    `<div class="row" title="Other organisations">
+    `<label class="row" title="Other organisations">
       <span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span>
-    </div>`,
+      <input class="legend-toggle" id="show-organisations" type="checkbox" checked aria-label="Other organisations" />
+    </label>`,
     `<label class="row" title="Addresses">
       <span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span>
       <input class="legend-toggle" id="show-addresses" type="checkbox" checked aria-label="Addresses" />
@@ -1133,6 +1135,7 @@ renderLegend();
 showIdentitiesInput = document.getElementById("show-identities");
 showCompaniesInput = document.getElementById("show-companies");
 showCharitiesInput = document.getElementById("show-charities");
+showOrganisationsInput = document.getElementById("show-organisations");
 showPeopleInput = document.getElementById("show-people");
 showAddressesInput = document.getElementById("show-addresses");
 showLowConfidenceInput = document.getElementById("show-low-confidence");
@@ -1161,7 +1164,7 @@ function nodeTypeKey(node) {{
 }}
 
 function isFilterableType(typeKey) {{
-  return typeKey === "identity" || typeKey === "company" || typeKey === "charity" || typeKey === "address" || typeKey === "person";
+  return typeKey === "identity" || typeKey === "company" || typeKey === "charity" || typeKey === "organisation" || typeKey === "address" || typeKey === "person";
 }}
 
 function nodeMatchesQuery(node, query) {{
@@ -1418,6 +1421,7 @@ function syncHiddenTypeState() {{
   if (!showIdentitiesInput.checked) viewerState.hiddenNodeTypes.add("identity");
   if (!showCompaniesInput.checked) viewerState.hiddenNodeTypes.add("company");
   if (!showCharitiesInput.checked) viewerState.hiddenNodeTypes.add("charity");
+  if (!showOrganisationsInput.checked) viewerState.hiddenNodeTypes.add("organisation");
   if (!showPeopleInput.checked) viewerState.hiddenNodeTypes.add("person");
   if (!showAddressesInput.checked) viewerState.hiddenNodeTypes.add("address");
   viewerState.showLowConfidence = !!showLowConfidenceInput.checked;
@@ -1686,6 +1690,46 @@ function edgeStroke(edge) {{
   if (roleType.includes("director")) return "var(--purple)";
   if (roleType.includes("secretary")) return "#0ea5e9";
   return "#2a3040";
+}}
+
+function lowConfidenceVisibilityNoteForEdge(edge) {{
+  if (!edge?.is_low_confidence) return "";
+  if (mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)) {{
+    return "Shown because this low-confidence link intersects the current graph.";
+  }}
+  return "Shown because you expanded linked low-confidence people from an intersecting organisation.";
+}}
+
+function lowConfidenceVisibilityNoteForNode(node) {{
+  if (!node?.is_low_confidence) return "";
+  const linkedEdges = lowConfidenceEdgesByNodeId.get(node.id) || [];
+  if (linkedEdges.some(edge => {{
+    const otherId = edge.source === node.id ? edge.target : edge.source;
+    return mainNodeIds.has(otherId);
+  }})) {{
+    return "Shown because this low-confidence node intersects the current graph.";
+  }}
+  if (linkedEdges.some(edge => {{
+    const otherId = edge.source === node.id ? edge.target : edge.source;
+    return expandedLowConfidenceOrgIds.has(otherId);
+  }})) {{
+    return "Shown because you expanded linked low-confidence people from an intersecting organisation.";
+  }}
+  return "Shown as part of the low-confidence overlay.";
+}}
+
+function tooltipLinesForEdge(edge) {{
+  const lines = Array.isArray(edge?.tooltip_lines) ? edge.tooltip_lines.slice() : [edge?.tooltip || "link"];
+  const note = lowConfidenceVisibilityNoteForEdge(edge);
+  if (note && !lines.includes(note)) lines.push(note);
+  return lines;
+}}
+
+function tooltipLinesForNode(node) {{
+  const lines = Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
+  const note = lowConfidenceVisibilityNoteForNode(node);
+  if (note && !lines.includes(note)) lines.push(note);
+  return lines;
 }}
 
 function showTooltip(event, lines) {{
@@ -2398,7 +2442,7 @@ function renderEdges() {{
     .style("pointer-events", "none");
 
   groups.select("line.role-edge-hit")
-    .on("mouseover", (event, edge) => showTooltip(event, edge.tooltip_lines || [edge.tooltip || "link"]))
+    .on("mouseover", (event, edge) => showTooltip(event, tooltipLinesForEdge(edge)))
     .on("mousemove", positionTooltip)
     .on("mouseout", hideTooltip)
     .on("contextmenu", openEdgeContextMenu);
@@ -2469,7 +2513,7 @@ function renderNodeJoin() {{
           }});
 
         pill
-          .on("mouseover", (event, node) => showTooltip(event, node.tooltip_lines || [node.label]))
+          .on("mouseover", (event, node) => showTooltip(event, tooltipLinesForNode(node)))
           .on("mousemove", positionTooltip)
           .on("mouseout", hideTooltip)
           .on("contextmenu", openContextMenu);
@@ -2747,6 +2791,7 @@ searchInput.addEventListener("search", () => {{
 showIdentitiesInput.addEventListener("change", applyViewerState);
 showCompaniesInput.addEventListener("change", applyViewerState);
 showCharitiesInput.addEventListener("change", applyViewerState);
+showOrganisationsInput.addEventListener("change", applyViewerState);
 showPeopleInput.addEventListener("change", applyViewerState);
 showAddressesInput.addEventListener("change", applyViewerState);
 showLowConfidenceInput.addEventListener("change", async () => {{

@@ -4,11 +4,11 @@ const STORE_NAME = "istari-manual-merges";
 const STORE_KEY = "overrides";
 
 function normalizeOverrides(overrides) {
-  const normalized = { address: [], person: [] };
+  const normalized = { address: [], person: [], identity: [] };
   if (!overrides || typeof overrides !== "object") {
     return normalized;
   }
-  for (const kind of ["address", "person"]) {
+  for (const kind of ["address", "person", "identity"]) {
     normalized[kind] = Array.isArray(overrides[kind])
       ? overrides[kind]
           .filter((row) => row && row.sourceId && row.targetId)
@@ -51,7 +51,7 @@ exports.handler = async function handler(event) {
   const kind = String(payload.kind || "");
   const sourceId = String(payload.sourceId || "");
   const targetId = String(payload.targetId || "");
-  if (!["address", "person"].includes(kind)) {
+  if (!["address", "person", "identity"].includes(kind)) {
     return json(400, { error: "Unsupported merge kind." });
   }
   if (!sourceId || !targetId || sourceId === targetId) {
