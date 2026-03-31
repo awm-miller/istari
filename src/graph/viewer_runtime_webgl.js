@@ -340,6 +340,11 @@
         } else {
           nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned ? 1 : 0.7) });
         }
+        if (node.sanctioned) {
+          overlayLayer.roundRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6, (bounds.height + 6) / 2);
+          overlayLayer.fill({ color: 0xff2222, alpha: 0.08 });
+          overlayLayer.stroke({ color: 0xff6b6b, width: isHovered ? 2.8 : 2.2, alpha: 0.95 });
+        }
 
       });
 

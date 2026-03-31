@@ -6,6 +6,12 @@ The main implementation lives in:
 
 - `scripts/consolidate_and_graph.py`
 - `src/graph/render.py`
+- `src/graph/render_context.py`
+- `src/graph/render_page.py`
+- `src/graph/viewer_app.js`
+- `src/graph/viewer_runtime_webgl.js`
+- `src/graph/viewer_styles.css`
+- `src/graph/viewer_markup.html`
 - `scripts/rebuild_graph.py`
 - `src/mapping_low_confidence.py`
 
@@ -28,7 +34,11 @@ The normal development/build path is:
    `netlify_graph_viewer/graph-data.json`
    `netlify_graph_viewer/graph-data-low-confidence.json`
 
-`render.py` produces a fully self-contained HTML viewer with embedded graph data and embedded viewer JavaScript.
+`src/graph/render.py` is now just a thin entry point.
+`render_context.py` prepares the JSON payloads, `render_page.py` assembles the page shell, and the browser runtime lives in the split viewer asset files.
+
+The main graph is embedded directly into the HTML.
+The low-confidence overlay is built alongside it as a separate JSON file and loaded at runtime when the overlay toggle is enabled.
 
 ## Two Graph Layers
 
@@ -39,7 +49,8 @@ There are now two graph layers:
 - `low-confidence overlay`
   Optional mapping/imported links from `src/mapping_low_confidence.py`.
 
-The overlay is only built if the mapping SQLite database exists. In the viewer, `render.py` embeds both layers separately and then concatenates them in the browser.
+The overlay is only built if the mapping SQLite database exists.
+In the viewer, the main graph is present immediately, while the low-confidence layer is fetched from `graph-data-low-confidence.json` on demand and then merged into the in-browser graph state.
 
 The low-confidence overlay is intentionally optional and visually distinct.
 
@@ -142,6 +153,7 @@ Current permanent merge kinds in the viewer are:
 - `identity`
 
 Viewer merge state is handled in `src/graph/render.py` and synced via `/.netlify/functions/merge-overrides`.
+The current viewer runtime no longer exposes merge actions in the node context menu, but the merge override function still exists on the Netlify side.
 
 ## Role Semantics
 
@@ -222,7 +234,7 @@ This is important because a visible edge may be the result of several equivalent
 
 ### Evidence URLs In The Viewer
 
-`src/graph/render.py` converts evidence payloads into browser URLs.
+`src/graph/viewer_app.js` converts evidence payloads into browser URLs.
 
 Special handling exists for Companies House document API URLs:
 
@@ -237,7 +249,7 @@ This is how browser `401` problems are avoided for Companies House documents.
 There are now two different right-click flows.
 
 - `node context menu`
-  Used for node actions such as registry page links, merge actions, and selecting nodes for connection analysis.
+  Used for node actions such as registry page links, clearing focus, and selecting nodes for connection analysis.
 - `edge context menu`
   Used for evidence on the specific link that was clicked.
 
@@ -248,16 +260,16 @@ This separation is intentional:
 
 ## Connection Analysis
 
-Connection analysis is no longer a sidebar tab.
+Connection analysis is no longer a popup flow.
 
 The current flow is:
 
 1. right-click nodes to select two analysis nodes
-2. trigger `Explain selected connection`
+2. trigger `Analyze connection`
 3. the viewer calls `/.netlify/functions/analyze-connection`
-4. the result opens in a popup window
+4. the result renders into the `Ranked` sidebar tab
 
-The popup can include:
+The analysis result can include:
 
 - summary text
 - claims
@@ -269,7 +281,7 @@ Low-confidence overlay nodes are excluded from this analysis flow.
 
 ## Sidebar, Legend, And Compact Legend
 
-The viewer has a right-hand tools sidebar plus a compact legend shown when the sidebar is hidden.
+The viewer has a right-hand tools sidebar.
 
 Current sidebar tabs are:
 
@@ -281,15 +293,8 @@ Important related UI pieces:
 
 - `legend`
   Full legend/filter section inside the sidebar.
-- `compact-legend`
-  Small floating legend shown when the sidebar is hidden.
 - `sidebar-handle`
   Arrow button that shows or hides the sidebar.
-
-The compact legend and full legend are similar, but not identical:
-
-- the sidebar legend includes toggles
-- the compact legend is display-only
 
 ## Filters
 
@@ -305,7 +310,7 @@ Current filterable concepts include:
 - low-confidence overlay
 - indirect-only mode
 
-Filtering is implemented in `applyTypeFilters()` and related projection functions in `src/graph/render.py`.
+Filtering is implemented in `applyTypeFilters()` and related projection helpers in `src/graph/viewer_app.js`.
 
 ## Search And Projection
 
@@ -319,7 +324,7 @@ Instead it computes a visible projection based on:
 - whether low-confidence overlay is enabled
 - focused nodes
 
-Important projection helpers in `render.py` include:
+Important projection helpers in `src/graph/viewer_app.js` include:
 
 - search projection
 - indirect-org projection
@@ -370,15 +375,17 @@ The panel is view-dependent:
 
 ## Map
 
-The `Map` tab renders visible address nodes on a Leaflet map.
+The `Map` tab renders connected address nodes on a Leaflet map.
 
 Current behavior:
 
-- only visible address nodes are considered
-- geocoding is attempted from the currently visible address set
-- geocoding uses multiple query variants
-- primary/fallback geocoding services are used
-- only the first chunk of visible addresses is mapped when necessary
+- visible address nodes are considered
+- addresses attached to currently visible organisations are also considered
+- coordinates are prefetched during `scripts/rebuild_graph.py`
+- the prefetched results are written to `output/address-coordinates.json`
+- the same file is copied to `netlify_graph_viewer/address-coordinates.json`
+- the browser fetches that coordinate payload once and then only shows or hides markers for the currently connected address set
+- the map refreshes automatically when the visible graph projection changes while the map tab is open
 
 Address nodes can be merged across runs, so one map point may represent several equivalent address records.
 
@@ -397,11 +404,14 @@ Overlay edges are matched back onto main graph nodes by normalized label or alia
 
 If a mapping endpoint cannot be matched uniquely, an overlay-only node is created.
 
+Overlay-only organisation nodes now infer `registry_type` where possible so the current viewer can style charity and company pills consistently with the main graph.
+
 Overlay items are marked with:
 
 - `is_low_confidence: True`
 
 In the viewer they are styled differently and gated behind the low-confidence toggle.
+Low-confidence edges are drawn dashed, and low-confidence nodes keep their normal type fill but use a yellow dashed outline.
 
 The overlay can also carry evidence extracted from workbook row descriptions, including URLs.
 
@@ -445,7 +455,11 @@ When debugging a graph issue, the fastest order is usually:
 3. `output/graph-data.json`
    Check whether the final graph payload actually contains the node/edge/evidence you expect.
 4. `src/graph/render.py`
-   Check whether the viewer is filtering, restyling, or dropping it.
+   Check whether the page shell is embedding the expected runtime assets.
+5. `src/graph/viewer_app.js`
+   Check whether projection, tooltips, context actions, evidence labels, or low-confidence loading are changing it.
+6. `src/graph/viewer_runtime_webgl.js`
+   Check whether the renderer is restyling, culling, or hit-testing it incorrectly.
 
 This is especially important for evidence bugs because evidence can disappear at any of these layers:
 

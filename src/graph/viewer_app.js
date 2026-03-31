@@ -27,9 +27,8 @@
   const sidebarTabEls = [...document.querySelectorAll(".sidebar-tab")];
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
-  const refreshMapButton = document.getElementById("refresh-map");
-  const mapStatusEl = document.getElementById("map-status");
   const indirectOnlyInput = document.getElementById("indirect-only");
+  const ADDRESS_COORDINATES_URL = "address-coordinates.json";
 
   let showIdentitiesInput;
   let showCompaniesInput;
@@ -62,8 +61,10 @@
   let renderer = null;
   let addressMap = null;
   let addressMarkersLayer = null;
-  let addressGeocodeByNodeId = new Map();
   let addressMarkerByNodeId = new Map();
+  let addressCoordinateByNodeId = new Map();
+  let addressCoordinatesLoaded = false;
+  let addressCoordinatesLoadingPromise = null;
 
   const viewerState = {
     searchQuery: "",
@@ -1098,10 +1099,6 @@
     scorePanelEl.innerHTML = renderAnalysisHtml(payload);
   }
 
-  function geocodeQueryForNode(node) {
-    return [node.label, node.source_label, node.country, node.region, node.locality].filter(Boolean).join(", ");
-  }
-
   function ensureAddressMap() {
     if (addressMap) return;
     addressMap = L.map("address-map", { zoomControl: true });
@@ -1112,28 +1109,52 @@
     addressMarkersLayer = L.layerGroup().addTo(addressMap);
   }
 
-  async function ensureAddressMarkers(nodes) {
-    for (const node of nodes) {
-      if (addressMarkerByNodeId.has(node.id)) continue;
-      const query = geocodeQueryForNode(node);
-      if (!query) continue;
-      if (!addressGeocodeByNodeId.has(node.id)) {
-        try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`);
-          const rows = await response.json();
-          const row = Array.isArray(rows) && rows.length ? rows[0] : null;
-          addressGeocodeByNodeId.set(node.id, row ? { lat: Number(row.lat), lon: Number(row.lon), label: node.label || query } : null);
-        } catch (error) {
-          console.warn("Geocoding failed", node.label || node.id, error);
-          addressGeocodeByNodeId.set(node.id, null);
-        }
-      }
-      const point = addressGeocodeByNodeId.get(node.id);
-      if (!point) continue;
-      const marker = L.marker([point.lat, point.lon], { title: point.label });
-      marker.bindPopup(`<strong>${escapeHtml(point.label)}</strong>`);
+  async function ensureAddressCoordinatesLoaded() {
+    if (addressCoordinatesLoaded) return true;
+    if (addressCoordinatesLoadingPromise) return addressCoordinatesLoadingPromise;
+    addressCoordinatesLoadingPromise = fetch(ADDRESS_COORDINATES_URL)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Failed to load address coordinates (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        const coordinates = Array.isArray(payload?.coordinates) ? payload.coordinates : [];
+        addressCoordinateByNodeId = new Map(
+          coordinates
+            .filter((item) => item && item.node_id != null && Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lon)))
+            .map((item) => [
+              String(item.node_id),
+              {
+                lat: Number(item.lat),
+                lon: Number(item.lon),
+                label: String(item.label || ""),
+              },
+            ]),
+        );
+        addressCoordinatesLoaded = true;
+        return true;
+      })
+      .catch((error) => {
+        console.error(error);
+        addressCoordinateByNodeId = new Map();
+        addressCoordinatesLoaded = false;
+        return false;
+      })
+      .finally(() => {
+        addressCoordinatesLoadingPromise = null;
+      });
+    return addressCoordinatesLoadingPromise;
+  }
+
+  function ensureAddressMarkers(nodes) {
+    nodes.forEach((node) => {
+      if (addressMarkerByNodeId.has(node.id)) return;
+      const point = addressCoordinateByNodeId.get(node.id);
+      if (!point) return;
+      const marker = L.marker([point.lat, point.lon], { title: point.label || node.label || node.id });
+      marker.bindPopup(`<strong>${escapeHtml(point.label || node.label || node.id)}</strong>`);
       addressMarkerByNodeId.set(node.id, marker);
-    }
+    });
   }
 
   function mapAddressNodes() {
@@ -1154,26 +1175,25 @@
     });
     const markers = [...visibleAddressIds].map((nodeId) => addressMarkerByNodeId.get(nodeId)).filter(Boolean);
     if (!markers.length) {
-      mapStatusEl.textContent = "No connected addresses are on screen right now.";
       addressMap.setView([20, 0], 2);
       return;
     }
     addressMap.invalidateSize();
     const bounds = L.latLngBounds(markers.map((marker) => marker.getLatLng()));
     addressMap.fitBounds(bounds.pad(0.2));
-    mapStatusEl.textContent = `Mapped ${markers.length} connected addresses. Preloaded ${addressMarkerByNodeId.size} total markers.`;
   }
 
   async function openMapView() {
     ensureAddressMap();
     setSidebarTab("map");
-    const addressNodes = mapAddressNodes();
-    if (!addressNodes.length) {
-      syncVisibleAddressMarkers();
+    const ok = await ensureAddressCoordinatesLoaded();
+    if (!ok) {
+      addressMarkersLayer.clearLayers();
+      addressMap.setView([20, 0], 2);
       return;
     }
-    mapStatusEl.textContent = `Preloading ${addressNodes.length} addresses for the map...`;
-    await ensureAddressMarkers(addressNodes);
+    const addressNodes = mapAddressNodes();
+    ensureAddressMarkers(addressNodes);
     syncVisibleAddressMarkers();
   }
 
@@ -1197,9 +1217,7 @@
     renderScorePanel();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
-      openMapView().catch(() => {
-        mapStatusEl.textContent = "Address geocoding failed.";
-      });
+      openMapView().catch(() => {});
     }
 
     statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges`;
@@ -1225,20 +1243,13 @@
       }
       applyViewerState();
     });
-    refreshMapButton.addEventListener("click", () => {
-      openMapView().catch(() => {
-        mapStatusEl.textContent = "Address geocoding failed.";
-      });
-    });
     toggleSidebarButton.addEventListener("click", () => toggleSidebar());
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
         setSidebarTab(tabName);
         if (tabName === "map") {
-          openMapView().catch(() => {
-            mapStatusEl.textContent = "Address geocoding failed.";
-          });
+          openMapView().catch(() => {});
         }
       });
     });
