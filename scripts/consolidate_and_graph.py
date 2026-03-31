@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.address_resolution import AddressMergeMatcher, address_bucket_keys, addresses_match
 from src.config import load_settings
 from src.graph.render import render_html as _render_html
+from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
 from src.ofac.screening import OFACScreener
 from src.resolution.features import person_name_similarity
 from src.search.queries import (
@@ -331,21 +332,100 @@ def _pdf_org_evidence(metadata: dict[str, object]) -> dict[str, object] | None:
     }
 
 
+def _companies_house_role_evidence(edge) -> dict[str, object] | None:
+    source = _row_str(edge, "source")
+    if source not in {"companies_house_company_officers", "companies_house_officer_appointments"}:
+        return None
+    provenance = _json_dict(edge["provenance_json"])
+    if not isinstance(provenance, dict):
+        return None
+
+    web_root = "https://find-and-update.company-information.service.gov.uk"
+    candidate_match = provenance.get("candidate_match", {})
+    nested_evidence = candidate_match.get("evidence", {}) if isinstance(candidate_match, dict) else {}
+    appointment = nested_evidence.get("appointment", {}) if isinstance(nested_evidence, dict) else {}
+    officer_search_item = nested_evidence.get("officer_search_item", {}) if isinstance(nested_evidence, dict) else {}
+
+    url = ""
+    title = ""
+    notes = ""
+
+    if isinstance(officer_search_item, dict):
+        officer_path = str((officer_search_item.get("links") or {}).get("self") or "").strip()
+        if officer_path:
+            url = officer_path if officer_path.startswith("http") else f"{web_root}{officer_path}"
+        title = str(officer_search_item.get("title") or "").strip()
+        notes = str(officer_search_item.get("description") or "").strip()
+
+    if not url and isinstance(provenance.get("links"), dict):
+        links = provenance.get("links") or {}
+        officer_appointments = str(((links.get("officer") or {}).get("appointments")) or "").strip()
+        self_path = str(links.get("self") or "").strip()
+        next_path = officer_appointments or self_path
+        if next_path:
+            url = next_path if next_path.startswith("http") else f"{web_root}{next_path}"
+        title = title or str(provenance.get("name") or "").strip()
+        notes = notes or str(provenance.get("officer_role") or "").strip()
+
+    if not url and isinstance(appointment, dict):
+        company_number = str((appointment.get("appointed_to") or {}).get("company_number") or "").strip()
+        if company_number:
+            url = f"{web_root}/company/{company_number}"
+
+    if not url:
+        return None
+
+    appointed_on = str(appointment.get("appointed_on") or provenance.get("appointed_on") or "").strip()
+    resigned_on = str(appointment.get("resigned_on") or provenance.get("resigned_on") or "").strip()
+    date_bits = [f"Appointed: {appointed_on}" if appointed_on else "", f"Resigned: {resigned_on}" if resigned_on else ""]
+    date_note = "; ".join(bit for bit in date_bits if bit)
+    if date_note:
+        notes = f"{notes}. {date_note}".strip(". ").strip()
+
+    role_label = _row_str(edge, "role_label") or _row_str(edge, "role_type") or "officer role"
+    return {
+        "title": title or f"Companies House {role_label}",
+        "document_url": url,
+        "page_hint": "",
+        "page_number": None,
+        "notes": notes,
+    }
+
+
+def _edge_evidence(edge) -> dict[str, object] | None:
+    return _pdf_role_evidence(edge) or _companies_house_role_evidence(edge)
+
+
+def _canonical_role_phrase(text: str) -> str:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return ""
+    if "trustee" in lowered:
+        return "is a trustee of"
+    if "director" in lowered:
+        return "is a director of"
+    if "secretary" in lowered:
+        return "is a secretary of"
+    if "accountant" in lowered or "examiner" in lowered or "auditor" in lowered:
+        return "is listed in governance/finance docs for"
+    return ""
+
+
 def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
-    if "named as a trustee" in phrase.lower():
-        return "is a trustee of"
+    canonical = _canonical_role_phrase(phrase)
+    if canonical:
+        return canonical
+    rt = _row_str(edge, "role_type")
+    canonical = _canonical_role_phrase(rt)
+    if canonical:
+        return canonical
+    role_label = _row_str(edge, "role_label")
+    canonical = _canonical_role_phrase(role_label)
+    if canonical:
+        return canonical
     if phrase:
         return phrase
-    rt = _row_str(edge, "role_type").lower()
-    if "trustee" in rt:
-        return "is a trustee of"
-    if "director" in rt:
-        return "is a director of"
-    if "secretary" in rt:
-        return "is a secretary of"
-    if "accountant" in rt or "examiner" in rt or "auditor" in rt:
-        return "is listed in governance/finance docs for"
     return "is linked to"
 
 
@@ -590,7 +670,7 @@ def consolidate_run(run_id: int) -> dict:
         role_label = str(edge["role_label"] or "")
         phrase = _role_phrase(edge)
         detail = _pdf_role_detail(edge)
-        evidence = _pdf_role_evidence(edge)
+        evidence = _edge_evidence(edge)
         key = (gid, org_id, phrase)
         if key not in seen_po:
             seen_po.add(key)
@@ -606,6 +686,12 @@ def consolidate_run(run_id: int) -> dict:
                 "weight": float(edge["edge_weight"] or 0.35),
                 "evidence": evidence,
             })
+        elif evidence:
+            for existing in person_org_edges:
+                if existing["source"] == gid and existing["target"] == org_id and existing["phrase"] == phrase:
+                    if not existing.get("evidence"):
+                        existing["evidence"] = evidence
+                    break
         group_entry = next((c for c in consolidated if c["group_id"] == gid), None)
         person_label = group_entry["label"] if group_entry else ""
         org_label = org_map[int(edge["organisation_id"])]["label"] if int(edge["organisation_id"]) in org_map else ""
@@ -803,6 +889,7 @@ def consolidate_run(run_id: int) -> dict:
             "confidence": pe["confidence"],
             "weight": pe["weight"],
             "tooltip": f"{p_label} {pe['phrase']} {o_label}",
+            "evidence": pe.get("evidence"),
         })
 
     graph_edges.extend(org_org_edges)
@@ -876,13 +963,18 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     seed_names = [r["seed_name"] for r in runs]
 
     def _dedupe_edges(items: list[dict], key_fields: tuple[str, ...]) -> list[dict]:
-        seen: set[tuple] = set()
+        seen: dict[tuple, dict] = {}
         out: list[dict] = []
         for item in items:
             key = tuple(item.get(field) for field in key_fields)
-            if key in seen:
+            existing = seen.get(key)
+            if existing is not None:
+                if item.get("evidence") and not existing.get("evidence"):
+                    existing["evidence"] = item.get("evidence")
+                if item.get("evidence_items") and not existing.get("evidence_items"):
+                    existing["evidence_items"] = item.get("evidence_items")
                 continue
-            seen.add(key)
+            seen[key] = item
             out.append(item)
         return out
 
@@ -2882,17 +2974,59 @@ def main() -> None:
         print(f"        orgs={entry['org_count']}  roles={entry['role_count']}  score={entry['score']}")
         print()
 
+    project_root = Path(__file__).resolve().parents[1]
+    mapping_db_path = default_mapping_db_path(project_root)
+    low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data["run_id"])}}
+    if mapping_db_path.exists():
+        try:
+            low_confidence_data = build_low_confidence_overlay(
+                main_data=data,
+                database_path=mapping_db_path,
+                run_key=str(data["run_id"]),
+            )
+            print(
+                "Loaded low-confidence overlay: "
+                f"{len(low_confidence_data.get('nodes') or [])} nodes, "
+                f"{len(low_confidence_data.get('edges') or [])} edges"
+            )
+        except Exception as error:
+            print(f"Warning: failed to build low-confidence overlay: {error}")
+
     id_slug = "+".join(str(r) for r in args.run_ids)
     out_path = args.out or f"output/run_{id_slug}_graph.html"
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    html_content = render_html(data)
-    Path(out_path).write_text(html_content, encoding="utf-8")
+    out_file = Path(out_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    render_payload = dict(data)
+    render_payload["low_confidence"] = low_confidence_data
+    html_content = render_html(render_payload)
+    out_file.write_text(html_content, encoding="utf-8")
     print(f"Graph written to {out_path}")
+
+    graph_json = json.dumps(data, indent=2, ensure_ascii=False)
+    graph_json_path = out_file.parent / "graph-data.json"
+    graph_json_path.write_text(graph_json, encoding="utf-8")
+    print(f"Graph JSON written to {graph_json_path}")
+
+    low_conf_json = json.dumps(low_confidence_data, indent=2, ensure_ascii=False)
+    low_conf_json_path = out_file.parent / "graph-data-low-confidence.json"
+    low_conf_json_path.write_text(low_conf_json, encoding="utf-8")
+    print(f"Low-confidence JSON written to {low_conf_json_path}")
 
     netlify_path = Path("netlify_graph_viewer/index.html")
     if netlify_path.parent.exists():
         netlify_path.write_text(html_content, encoding="utf-8")
         print(f"Netlify viewer updated at {netlify_path}")
+        (netlify_path.parent / "graph-data.json").write_text(graph_json, encoding="utf-8")
+        print(f"Netlify graph JSON updated at {netlify_path.parent / 'graph-data.json'}")
+        (netlify_path.parent / "graph-data-low-confidence.json").write_text(
+            low_conf_json,
+            encoding="utf-8",
+        )
+        print(
+            "Netlify low-confidence JSON updated at "
+            f"{netlify_path.parent / 'graph-data-low-confidence.json'}"
+        )
 
     try:
         webbrowser.open(Path(out_path).resolve().as_uri())
