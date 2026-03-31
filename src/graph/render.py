@@ -976,18 +976,8 @@ function rebuildActiveGraph() {{
   allNodes = baseNodes.slice();
   allEdges = baseEdges.slice();
   if (!viewerState.showLowConfidence || !lowConfidenceLoaded) return;
-
-  const activeLowEdges = lowConfidenceEdges.filter(
-    edge => mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)
-  );
-  const activeLowNodeIds = new Set();
-  activeLowEdges.forEach(edge => {{
-    if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
-    if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
-  }});
-  const activeLowNodes = lowConfidenceNodes.filter(node => activeLowNodeIds.has(node.id));
-  allNodes.push(...activeLowNodes);
-  allEdges.push(...activeLowEdges);
+  allNodes.push(...lowConfidenceNodes);
+  allEdges.push(...lowConfidenceEdges);
 }}
 
 async function ensureLowConfidenceLoaded() {{
