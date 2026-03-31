@@ -1,106 +1,456 @@
 # Graph Terminology
 
-This file is a quick reference for the terms used in the generated graph view in `scripts/consolidate_and_graph.py`.
+This document describes how the current graph pipeline and viewer work in practice.
+
+The main implementation lives in:
+
+- `scripts/consolidate_and_graph.py`
+- `src/graph/render.py`
+- `scripts/rebuild_graph.py`
+- `src/mapping_low_confidence.py`
+
+`src/graph/build.py` is just a thin re-export of the consolidation functions from `scripts/consolidate_and_graph.py`.
+
+## Canonical Build Flow
+
+The normal development/build path is:
+
+1. `python scripts/rebuild_graph.py`
+2. `scripts/rebuild_graph.py` loads recent runs from the main SQLite database
+3. it calls `src.graph.build.consolidate_multi_run()`
+4. `consolidate_multi_run()` delegates to `scripts/consolidate_and_graph.py`
+5. the resulting data is rendered by `src/graph/render.py`
+6. outputs are written to:
+   `output/latest_graph.html`
+   `output/graph-data.json`
+   `output/graph-data-low-confidence.json`
+   `netlify_graph_viewer/index.html`
+   `netlify_graph_viewer/graph-data.json`
+   `netlify_graph_viewer/graph-data-low-confidence.json`
+
+`render.py` produces a fully self-contained HTML viewer with embedded graph data and embedded viewer JavaScript.
+
+## Two Graph Layers
+
+There are now two graph layers:
+
+- `main graph`
+  The normal graph built from pipeline/database entities.
+- `low-confidence overlay`
+  Optional mapping/imported links from `src/mapping_low_confidence.py`.
+
+The overlay is only built if the mapping SQLite database exists. In the viewer, `render.py` embeds both layers separately and then concatenates them in the browser.
+
+The low-confidence overlay is intentionally optional and visually distinct.
 
 ## Lanes
 
-- `lane 1`: `Identity`
-  Seed-linked identity / alias nodes. These are the upstream people we care about when tracing from a searched org or address.
-- `lane 2`: `Organisations`
-  Companies, charities, and other org-like entities.
-- `lane 3`: `Addresses`
-  Shared or registered addresses linked to organisations. During multi-run rebuilds, equivalent address variants can collapse into one merged node so multiple org edges draw to the same place.
-- `lane 4`: `People`
-  Non-seed people pulled in from org records.
+The graph is laid out vertically by lane.
 
-`lane 0` seed nodes exist in the data model but are normally hidden in the graph UI.
+- `lane 0`
+  Seed nodes. These exist in the data model but are usually hidden in the UI.
+- `lane 1`
+  `seed_alias` identity nodes. These are the seed-linked upstream identities that matter most when tracing a network.
+- `lane 2`
+  Organisation nodes. This includes companies, charities, and other organisations.
+- `lane 3`
+  Address nodes.
+- `lane 4`
+  Expanded people, meaning non-seed people pulled from organisation records.
 
-## Direction
+Low-confidence overlay nodes can also occupy lanes 2, 3, or 4 depending on their inferred type.
 
-- `upstream`
-  Moving from an organisation or address toward `Identity` nodes.
-  Example: `identity -> organisation` is an upstream relationship when viewed from the organisation.
-- `downstream`
-  Moving from an `Identity` or `Organisation` toward addresses and lane-4 people.
-  Example: `organisation -> address` and `organisation -> person`.
-
-In search mode, we now treat upstream and downstream differently depending on the view:
-
-- normal search: show both direct and indirect upstream links, plus downstream context
-- indirect-orgs view: show only upstream identity context for qualifying orgs
-
-## Node Types
+## Node Kinds
 
 - `seed`
-  Original searched name. Usually hidden in the UI.
+  The original searched/run seed.
 - `seed_alias`
-  The lane-1 identity node associated with a seed.
+  A lane-1 identity node tied to a seed.
 - `organisation`
-  A company, charity, or similar entity in lane 2.
+  A lane-2 organisation node.
 - `address`
-  An address node in lane 3. In the combined graph this may represent multiple equivalent raw address labels.
+  A lane-3 address node.
 - `person`
-  A lane-4 individual from organisation records.
+  A lane-4 person node.
 
-## Edge Types
+Important organisation sub-types are carried as metadata, not separate kinds:
 
+- `registry_type = company`
+- `registry_type = charity`
+- other organisation-like values remain generic organisations
+
+Important node flags:
+
+- `sanctioned`
+  Added by OFAC screening during graph build.
+- `is_low_confidence`
+  Marks nodes coming from the mapping overlay.
+
+## Edge Kinds
+
+- `alias`
+  Seed to identity edge.
 - `role`
-  Direct connection between an individual and an organisation.
-  This can connect:
-  - `Identity -> Organisation`
-  - `Person -> Organisation`
-- `address_link`
-  Direct connection between an organisation and an address.
+  Person or identity to organisation edge.
 - `org_link`
-  Direct connection between two organisations.
-  Used for merged or related organisations and important for indirect traversal.
+  Organisation to organisation edge.
+- `address_link`
+  Organisation to address edge.
 - `hidden_connection`
-  A derived dashed edge shown only in search/focus-style views.
-  It represents a real multi-hop path whose intermediate nodes are hidden or not shown in that view.
+  A derived viewer-only bridge edge representing a real multi-hop path.
+- `mapping_link`
+  A low-confidence overlay edge imported from spreadsheets/mapping files.
+- `shared_org`
+  Present in some intermediate graph data but filtered out of the rendered viewer.
+- `cross_seed`
+  Also filtered out of the rendered viewer.
 
-## Direct vs Indirect
+The viewer filters out `shared_org` and `cross_seed` before rendering.
 
-- `direct connection`
-  A real edge that exists in `allEdges`.
-  Example: `Identity --role--> Organisation`.
-- `indirect connection`
-  A connection discovered by traversing multiple real edges.
-  Example: `Identity -> OrgA -> shared address -> OrgB`.
+## Upstream And Downstream
 
-Indirect connections are mainly surfaced through `findBridgeConnections()`.
+These terms are about how the graph is interpreted, not about stored edge direction.
 
-## Search View
+- `upstream`
+  Moving from organisations or addresses toward lane-1 identities.
+- `downstream`
+  Moving from identities or organisations toward addresses and lane-4 people.
 
-`searchOrFocusMode` is the special rendering mode used for:
+Typical examples:
 
-- text search
-- the indirect-orgs checkbox view
+- upstream: `identity -> organisation`
+- downstream: `organisation -> address`
+- downstream: `organisation -> person`
 
-In this mode, the graph can show:
+## Identity, Person, And Alias Consolidation
 
-- a narrowed set of matched nodes
-- direct visible edges
-- derived dashed `hidden_connection` edges for indirect relationships
+There are several different merge/consolidation concepts in the codebase.
 
-## Indirect Orgs View
+- `alias grouping`
+  Happens during graph build. Similar names can be merged into a single logical person/identity grouping.
+- `DOB conflict guard`
+  Prevents over-merging when identity keys imply conflicting dates of birth.
+- `multi-run merge`
+  `consolidate_multi_run()` merges compatible entities across recent runs into a single combined graph.
+- `manual merge override`
+  A viewer-side permanent merge chosen by the user and stored locally plus synced to a server endpoint.
 
-The `reveal indirectly connected orgs` checkbox is now treated as a dedicated filtered view:
+Current permanent merge kinds in the viewer are:
 
-- it finds organisations where `2+` active individuals are connected indirectly
-- indirect means reachable through `org_link` and/or shared-address paths
-- it filters the graph down to those orgs
-- it shows upstream identity context only
-- it keeps downstream addresses and lane-4 people hidden
+- `address`
+- `person`
+- `identity`
 
-This view is intended for discovery. If you want to inspect one org in full, use normal search from the full graph view.
+Viewer merge state is handled in `src/graph/render.py` and synced via `/.netlify/functions/merge-overrides`.
 
-## Generic Indirect Org Example
+## Role Semantics
 
-A typical indirectly connected organisation looks like this:
+Role edges are normalized semantically during graph build so equivalent wording collapses.
 
-- Identity A has a direct role at Org A
-- Identity B has a direct role at Org B
-- Org A and Org B connect to Org C through `org_link` and/or shared-address paths
-- Identity A and Identity B do not have direct role edges to Org C itself
+Examples:
 
-That is the canonical pattern for an `indirectly connected organisation`.
+- `director`
+- `listed as director`
+- `appointed as director`
+
+all normalize to the same canonical phrase:
+
+- `is a director of`
+
+The same idea applies to:
+
+- trustees
+- secretaries
+- accountant/auditor/examiner style governance roles
+
+This matters because dedupe is done on semantic role phrases, not just raw source text.
+
+## Evidence
+
+Evidence is attached to edges, not nodes.
+
+The viewer now expects edge evidence in either of these shapes:
+
+- `edge.evidence`
+  Single evidence item.
+- `edge.evidence_items`
+  Multiple evidence items.
+
+Evidence is surfaced from several sources:
+
+- PDF enrichment evidence
+- Companies House role provenance
+- low-confidence mapping link evidence
+
+### PDF Evidence
+
+PDF-derived role edges can carry:
+
+- document title
+- document URL
+- local PDF path
+- filing description
+- page hint
+- page number
+- notes
+- evidence ID
+
+This is extracted in `scripts/consolidate_and_graph.py` from role provenance created by the PDF enrichment pipeline.
+
+### Companies House Evidence
+
+Companies House role edges can now carry viewer-openable evidence too.
+
+This is derived from role provenance for:
+
+- `companies_house_officer_appointments`
+- `companies_house_company_officers`
+
+Typical targets are Companies House officer appointment pages or company pages.
+
+### Evidence Preservation During Merge
+
+One subtle part of the code is that evidence can be lost if edges are deduped carelessly.
+
+The current build logic preserves evidence while:
+
+- deduping same-role edges within a run
+- serializing run-level `graph_edges`
+- deduping merged edges across runs
+
+This is important because a visible edge may be the result of several equivalent raw source rows.
+
+### Evidence URLs In The Viewer
+
+`src/graph/render.py` converts evidence payloads into browser URLs.
+
+Special handling exists for Companies House document API URLs:
+
+- raw CH document API links are not browser-friendly
+- the viewer routes them through `/.netlify/functions/evidence-file`
+- that function can authenticate and redirect to a browser-openable file URL
+
+This is how browser `401` problems are avoided for Companies House documents.
+
+## Right-Click Behavior
+
+There are now two different right-click flows.
+
+- `node context menu`
+  Used for node actions such as registry page links, merge actions, and selecting nodes for connection analysis.
+- `edge context menu`
+  Used for evidence on the specific link that was clicked.
+
+This separation is intentional:
+
+- node menus are about the entity
+- edge menus are about the relationship
+
+## Connection Analysis
+
+Connection analysis is no longer a sidebar tab.
+
+The current flow is:
+
+1. right-click nodes to select two analysis nodes
+2. trigger `Explain selected connection`
+3. the viewer calls `/.netlify/functions/analyze-connection`
+4. the result opens in a popup window
+
+The popup can include:
+
+- summary text
+- claims
+- evidence links
+- path items
+- a copy button
+
+Low-confidence overlay nodes are excluded from this analysis flow.
+
+## Sidebar, Legend, And Compact Legend
+
+The viewer has a right-hand tools sidebar plus a compact legend shown when the sidebar is hidden.
+
+Current sidebar tabs are:
+
+- `Filter`
+- `Map`
+- `Ranked`
+
+Important related UI pieces:
+
+- `legend`
+  Full legend/filter section inside the sidebar.
+- `compact-legend`
+  Small floating legend shown when the sidebar is hidden.
+- `sidebar-handle`
+  Arrow button that shows or hides the sidebar.
+
+The compact legend and full legend are similar, but not identical:
+
+- the sidebar legend includes toggles
+- the compact legend is display-only
+
+## Filters
+
+The viewer filters by node type using legend checkboxes.
+
+Current filterable concepts include:
+
+- identities
+- charities
+- companies
+- people
+- addresses
+- low-confidence overlay
+- indirect-only mode
+
+Filtering is implemented in `applyTypeFilters()` and related projection functions in `src/graph/render.py`.
+
+## Search And Projection
+
+The viewer does not always render the entire graph.
+
+Instead it computes a visible projection based on:
+
+- current search query
+- current type filters
+- indirect-only mode
+- whether low-confidence overlay is enabled
+- focused nodes
+
+Important projection helpers in `render.py` include:
+
+- search projection
+- indirect-org projection
+- connected-subgraph projection
+
+These projections determine:
+
+- which nodes are visible
+- which direct edges are visible
+- when derived hidden bridge edges should be shown
+
+## Hidden Connections
+
+`hidden_connection` edges are synthetic viewer edges.
+
+They mean:
+
+- there is a real multi-hop path in the underlying graph
+- some intermediate nodes are hidden in the current view
+- the viewer still wants to show that a relationship exists
+
+These edges are visually dashed and mainly appear in narrowed search/focus modes.
+
+## Indirect-Only View
+
+Indirect-only is a special discovery mode.
+
+It is designed to surface organisations that are connected through indirect structure rather than simple direct role links.
+
+Typical path ingredients are:
+
+- organisation-to-organisation links
+- shared addresses
+- upstream identity/person context
+
+The intent is discovery first, then drill down later with normal search.
+
+## Ranked Panel
+
+The `Ranked` tab shows the highest-ranked visible identity/person nodes.
+
+The score shown there is derived from the graph build process and reflects weighted linked roles/organisations after consolidation.
+
+The panel is view-dependent:
+
+- only visible nodes are ranked
+- ranking updates when filters/search change
+
+## Map
+
+The `Map` tab renders visible address nodes on a Leaflet map.
+
+Current behavior:
+
+- only visible address nodes are considered
+- geocoding is attempted from the currently visible address set
+- geocoding uses multiple query variants
+- primary/fallback geocoding services are used
+- only the first chunk of visible addresses is mapped when necessary
+
+Address nodes can be merged across runs, so one map point may represent several equivalent address records.
+
+## Low-Confidence Overlay
+
+The low-confidence overlay is built from mapping spreadsheets imported into a separate SQLite database.
+
+Main concepts:
+
+- mapping entities
+- mapping links
+- mapping evidence
+- mapping matches
+
+Overlay edges are matched back onto main graph nodes by normalized label or alias.
+
+If a mapping endpoint cannot be matched uniquely, an overlay-only node is created.
+
+Overlay items are marked with:
+
+- `is_low_confidence: True`
+
+In the viewer they are styled differently and gated behind the low-confidence toggle.
+
+The overlay can also carry evidence extracted from workbook row descriptions, including URLs.
+
+## PDF Enrichment
+
+`src/services/pdf_enrichment.py` is the main PDF enrichment service.
+
+Important behavior relevant to the graph:
+
+- discovers source documents
+- downloads and converts PDFs
+- extracts entities and roles
+- writes people/organisation-role evidence into the main database
+
+The current graph-related PDF sources include:
+
+- Companies House filings
+- Charity Commission `Accounts and TAR`
+
+The Charity Commission path now scrapes the public accounts-and-annual-returns page and builds source documents from those links.
+
+## Companies House Terminology
+
+There are two common Companies House role sources in the graph:
+
+- `companies_house_company_officers`
+  Officer data from company officer listings.
+- `companies_house_officer_appointments`
+  Officer appointment data keyed from the officer side.
+
+These often represent the same underlying role and are semantically merged in the graph.
+
+## Practical Reading Guide
+
+When debugging a graph issue, the fastest order is usually:
+
+1. `scripts/rebuild_graph.py`
+   Check what build path is being used.
+2. `scripts/consolidate_and_graph.py`
+   Check whether the graph data is being constructed correctly.
+3. `output/graph-data.json`
+   Check whether the final graph payload actually contains the node/edge/evidence you expect.
+4. `src/graph/render.py`
+   Check whether the viewer is filtering, restyling, or dropping it.
+
+This is especially important for evidence bugs because evidence can disappear at any of these layers:
+
+- not present in DB provenance
+- not extracted into run-level edge data
+- lost during dedupe
+- not serialized into final graph edges
+- hidden by viewer logic

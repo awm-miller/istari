@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import http.client
 import io
 import json
@@ -12,7 +13,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from urllib import error, request
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from src.charity_commission.search import search_name_to_organisation
 from src.companies_house.client import CompaniesHouseClient
@@ -33,6 +34,7 @@ _ALLOWED_ROLE_CATEGORIES = {
 }
 _ALLOWED_ENTITY_TYPES = {"person", "organisation", "other"}
 _MAX_CHARS_PER_CHUNK = 12000
+_CHARITY_COMMISSION_REGISTER_BASE_URL = "https://register-of-charities.charitycommission.gov.uk"
 
 
 def _clean_text(value: str) -> str:
@@ -468,7 +470,7 @@ class PdfEnrichmentService:
             try:
                 hydrated = self._prepare_document(document)
                 log.info("PDF enrichment: [%s] doc %d prepared, %d chars markdown", org_name, doc_index, len(hydrated.markdown_text))
-                if document.source_provider != "companies_house_filing" and not _text_mentions_org(hydrated.markdown_text, org_name):
+                if document.source_provider not in {"companies_house_filing", "charity_commission_accounts_tar"} and not _text_mentions_org(hydrated.markdown_text, org_name):
                     log.info("PDF enrichment: [%s] doc %d skipped -- org name not found in markdown", org_name, doc_index)
                     continue
                 entities = self.extract_entities_from_document(
@@ -540,6 +542,8 @@ class PdfEnrichmentService:
     ) -> list[PdfSourceDocument]:
         if registry_type == "company" and registry_number and self._ch_auth:
             return self._find_ch_filing_documents(organisation_name, registry_number)
+        if registry_type == "charity" and registry_number:
+            return self._find_cc_accounts_documents(organisation_name, registry_number)
         return []
 
     def _find_ch_filing_documents(
@@ -582,6 +586,70 @@ class PdfEnrichmentService:
                 )
             )
         return documents
+
+    def _find_cc_accounts_documents(
+        self, organisation_name: str, charity_number: str,
+    ) -> list[PdfSourceDocument]:
+        accounts_url = (
+            f"{_CHARITY_COMMISSION_REGISTER_BASE_URL}/en/charity-search/-/charity-details/"
+            f"{charity_number}/accounts-and-annual-returns"
+        )
+        try:
+            html_text = self._fetch_text(accounts_url)
+        except RuntimeError as exc:
+            log.warning("CC accounts page fetch failed for %s: %s", charity_number, exc)
+            return []
+
+        documents: list[PdfSourceDocument] = []
+        seen_urls: set[str] = set()
+        for row_html in re.findall(r"<tr[^>]*>.*?</tr>", html_text, flags=re.IGNORECASE | re.DOTALL):
+            if "accounts-resource" not in row_html or "Accounts and TAR" not in row_html:
+                continue
+            href_match = re.search(r'href="([^"]+)"', row_html, flags=re.IGNORECASE)
+            if not href_match:
+                continue
+            href = html.unescape(href_match.group(1))
+            doc_url = urljoin(_CHARITY_COMMISSION_REGISTER_BASE_URL, href)
+            if doc_url in seen_urls:
+                continue
+            seen_urls.add(doc_url)
+
+            row_text = _clean_text(re.sub(r"<[^>]+>", " ", html.unescape(row_html)))
+            year_match = re.search(r"\b(19|20)\d{2}\b", row_text)
+            reporting_year = year_match.group(0) if year_match else ""
+            filing_desc = f"Accounts and TAR ({reporting_year})" if reporting_year else "Accounts and TAR"
+            documents.append(
+                PdfSourceDocument(
+                    organisation_name=organisation_name,
+                    document_url=doc_url,
+                    title=f"{organisation_name} - {filing_desc}",
+                    source_provider="charity_commission_accounts_tar",
+                    filing_description=filing_desc,
+                )
+            )
+        return documents
+
+    def _fetch_text(self, url: str) -> str:
+        cache_path = _json_cache_path(
+            self.cache_dir / "pages",
+            hashlib.sha256(url.encode("utf-8")).hexdigest(),
+            ".html",
+        )
+        if cache_path.exists():
+            return cache_path.read_text(encoding="utf-8", errors="replace")
+
+        req = request.Request(url, headers={"User-Agent": self.settings.user_agent}, method="GET")
+        try:
+            with request.urlopen(req, timeout=30) as response:
+                text = response.read().decode("utf-8", errors="replace")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Page fetch failed: {exc.code} {body}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Page fetch failed: {exc}") from exc
+
+        cache_path.write_text(text, encoding="utf-8")
+        return text
 
     def _prepare_document(self, document: PdfSourceDocument) -> PdfSourceDocument:
         pdf_path = self._download_pdf(document)
