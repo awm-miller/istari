@@ -226,12 +226,6 @@ body {{
   width: 100vw;
   height: calc(100vh - 58px);
   overflow: hidden;
-  position: relative;
-}}
-#graph canvas {{
-  display: block;
-  width: 100%;
-  height: 100%;
 }}
 .tooltip {{
   position: fixed;
@@ -654,10 +648,6 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
           <span>Indirect only</span>
           <input id="indirect-only" type="checkbox" />
         </label>
-        <label class="sidebar-meta-toggle" title="Show low confidence overlay">
-          <span>Low confidence overlay</span>
-          <input id="show-low-confidence" type="checkbox" />
-        </label>
       </div>
     </div>
     <div class="sidebar-pane" data-pane="map">
@@ -682,12 +672,10 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <div class="context-menu" id="context-menu"></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/pixi.min.js"></script>
 <script>
 const rawMainNodes = {nodes_json};
 const rawMainEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
 const LOW_CONFIDENCE_DATA_URL = "graph-data-low-confidence.json";
-const LOW_CONFIDENCE_GROUP_URL = "/.netlify/functions/low-confidence-group";
 let baseNodes = rawMainNodes.slice();
 let baseEdges = rawMainEdges.slice();
 let mainNodeIds = new Set(baseNodes.map(node => node.id));
@@ -697,16 +685,13 @@ let lowConfidenceLoaded = false;
 let lowConfidenceLoadingPromise = null;
 let lowConfidenceNodes = [];
 let lowConfidenceEdges = [];
-let expandedLowConfidenceNodes = [];
-let expandedLowConfidenceEdges = [];
+let lowConfidenceNodeById = new Map();
+let lowConfidenceEdgesByNodeId = new Map();
+const expandedLowConfidenceOrgIds = new Set();
 const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
 const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
 const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
 const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
-const LOW_CONFIDENCE_EDGE_URL = "/.netlify/functions/low-confidence-edge";
-const lowConfidenceExpandedGroupIds = new Set();
-const lowConfidenceGroupCache = new Map();
-const lowConfidenceGroupPromises = new Map();
 
 function isAddressMergeNode(node) {{
   return node?.kind === "address";
@@ -917,11 +902,9 @@ let showAddressesInput = null;
 let showLowConfidenceInput = null;
 let indirectOnlyInput = document.getElementById("indirect-only");
 const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
-const lowConfidenceEdgeDetailCache = new Map();
-const lowConfidenceEdgeDetailPromises = new Map();
 
-let W = container.clientWidth;
-let H = container.clientHeight;
+const W = container.clientWidth;
+const H = container.clientHeight;
 const LANE_Y = {{ 1: 140, 2: 360, 3: 620, 4: 840 }};
 const visibleEdges = [];
 let nodeById = new Map();
@@ -932,11 +915,6 @@ let orgAddressIds = new Map();
 let addressOrgIds = new Map();
 let indirectIdentityIdsByOrg = new Map();
 let visibleEdgeSet = new Set();
-
-function refreshViewportSize() {{
-  W = Math.max(container.clientWidth || 0, 320);
-  H = Math.max(container.clientHeight || 0, 240);
-}}
 
 function rebuildGraphIndexes() {{
   nodeById = new Map(allNodes.map(node => [node.id, node]));
@@ -1001,16 +979,44 @@ function rebuildActiveGraph() {{
   allNodes = baseNodes.slice();
   allEdges = baseEdges.slice();
   if (!viewerState.showLowConfidence || !lowConfidenceLoaded) return;
-  lowConfidenceNodes.forEach(node => {{
-    if (node?.is_low_confidence_group && lowConfidenceExpandedGroupIds.has(node.id)) return;
-    allNodes.push(node);
+
+  const activeLowEdges = lowConfidenceEdges.filter(
+    edge => mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)
+  );
+  const activeLowNodeIds = new Set();
+  activeLowEdges.forEach(edge => {{
+    if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
+    if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
   }});
+
+  const expandedEdgeIds = new Set();
+  expandedLowConfidenceOrgIds.forEach(orgId => {{
+    if (!activeLowNodeIds.has(orgId)) return;
+    (lowConfidenceEdgesByNodeId.get(orgId) || []).forEach(edge => {{
+      const otherId = edge.source === orgId ? edge.target : edge.source;
+      if (mainNodeIds.has(otherId)) return;
+      const otherNode = lowConfidenceNodeById.get(otherId);
+      if (!otherNode || otherNode.kind !== "person") return;
+      activeLowNodeIds.add(otherId);
+      expandedEdgeIds.add(edge.id);
+    }});
+  }});
+
+  const activeLowNodes = lowConfidenceNodes.filter(node => activeLowNodeIds.has(node.id));
+  const expandedLowEdges = lowConfidenceEdges.filter(edge => expandedEdgeIds.has(edge.id));
+  allNodes.push(...activeLowNodes);
+  allEdges.push(...activeLowEdges, ...expandedLowEdges);
+}}
+
+function rebuildLowConfidenceIndexes() {{
+  lowConfidenceNodeById = new Map(lowConfidenceNodes.map(node => [node.id, node]));
+  lowConfidenceEdgesByNodeId = new Map();
   lowConfidenceEdges.forEach(edge => {{
-    if (edge?.low_confidence_group_id && lowConfidenceExpandedGroupIds.has(edge.low_confidence_group_id)) return;
-    allEdges.push(edge);
+    if (!lowConfidenceEdgesByNodeId.has(edge.source)) lowConfidenceEdgesByNodeId.set(edge.source, []);
+    if (!lowConfidenceEdgesByNodeId.has(edge.target)) lowConfidenceEdgesByNodeId.set(edge.target, []);
+    lowConfidenceEdgesByNodeId.get(edge.source).push(edge);
+    lowConfidenceEdgesByNodeId.get(edge.target).push(edge);
   }});
-  allNodes.push(...expandedLowConfidenceNodes);
-  allEdges.push(...expandedLowConfidenceEdges);
 }}
 
 async function ensureLowConfidenceLoaded() {{
@@ -1024,6 +1030,7 @@ async function ensureLowConfidenceLoaded() {{
     .then(payload => {{
       lowConfidenceNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
       lowConfidenceEdges = Array.isArray(payload?.edges) ? payload.edges : [];
+      rebuildLowConfidenceIndexes();
       lowConfidenceLoaded = true;
       return true;
     }})
@@ -1031,6 +1038,7 @@ async function ensureLowConfidenceLoaded() {{
       console.error(error);
       lowConfidenceNodes = [];
       lowConfidenceEdges = [];
+      rebuildLowConfidenceIndexes();
       lowConfidenceLoaded = false;
       return false;
     }})
@@ -1040,69 +1048,14 @@ async function ensureLowConfidenceLoaded() {{
   return lowConfidenceLoadingPromise;
 }}
 
-function mergeExpandedLowConfidencePayload(payload) {{
-  const nextNodes = new Map(expandedLowConfidenceNodes.map(node => [node.id, node]));
-  const nextEdges = new Map(expandedLowConfidenceEdges.map(edge => [edge.id, edge]));
-  (Array.isArray(payload?.nodes) ? payload.nodes : []).forEach(node => {{
-    if (!nextNodes.has(node.id)) nextNodes.set(node.id, node);
-  }});
-  (Array.isArray(payload?.edges) ? payload.edges : []).forEach(edge => {{
-    if (!nextEdges.has(edge.id)) nextEdges.set(edge.id, edge);
-  }});
-  expandedLowConfidenceNodes = [...nextNodes.values()];
-  expandedLowConfidenceEdges = [...nextEdges.values()];
-}}
-
-async function ensureLowConfidenceGroupExpanded(node) {{
-  const groupId = String(node?.id || "");
-  if (!groupId) return false;
-  if (lowConfidenceExpandedGroupIds.has(groupId)) return true;
-  const cached = lowConfidenceGroupCache.get(groupId);
-  if (cached) {{
-    mergeExpandedLowConfidencePayload(cached);
-    lowConfidenceExpandedGroupIds.add(groupId);
-    return true;
-  }}
-  if (lowConfidenceGroupPromises.has(groupId)) {{
-    await lowConfidenceGroupPromises.get(groupId);
-    return lowConfidenceExpandedGroupIds.has(groupId);
-  }}
-  const request = fetch(`${{LOW_CONFIDENCE_GROUP_URL}}?id=${{encodeURIComponent(groupId)}}`)
-    .then(response => {{
-      if (!response.ok) throw new Error(`Low-confidence group fetch failed: ${{response.status}}`);
-      return response.json();
-    }})
-    .then(payload => {{
-      lowConfidenceGroupCache.set(groupId, payload);
-      mergeExpandedLowConfidencePayload(payload);
-      lowConfidenceExpandedGroupIds.add(groupId);
-      return true;
-    }})
-    .catch(error => {{
-      console.error(error);
-      return false;
-    }})
-    .finally(() => {{
-      lowConfidenceGroupPromises.delete(groupId);
-    }});
-  lowConfidenceGroupPromises.set(groupId, request);
-  return request;
-}}
-
-function collapseLowConfidenceGroup(nodeId) {{
-  if (!lowConfidenceExpandedGroupIds.has(nodeId)) return;
-  lowConfidenceExpandedGroupIds.delete(nodeId);
-  const remainingGroupIds = new Set(lowConfidenceExpandedGroupIds);
-  const nextNodes = new Map();
-  const nextEdges = new Map();
-  remainingGroupIds.forEach(groupId => {{
-    const payload = lowConfidenceGroupCache.get(groupId);
-    (Array.isArray(payload?.nodes) ? payload.nodes : []).forEach(node => nextNodes.set(node.id, node));
-    (Array.isArray(payload?.edges) ? payload.edges : []).forEach(edge => nextEdges.set(edge.id, edge));
-  }});
-  expandedLowConfidenceNodes = [...nextNodes.values()];
-  expandedLowConfidenceEdges = [...nextEdges.values()];
-}}
+const svg = d3.select(container).append("svg")
+  .attr("width", "100%")
+  .attr("height", "100%")
+  .style("display", "block");
+const gRoot = svg.append("g");
+const zoom = d3.zoom().scaleExtent([0.05, 6]).on("zoom", (event) => gRoot.attr("transform", event.transform));
+svg.call(zoom);
+svg.on("dblclick.zoom", null);
 
 let addressMap = null;
 let addressMarkersLayer = null;
@@ -1167,6 +1120,10 @@ function renderLegend() {{
       <span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span>
       <input class="legend-toggle" id="show-people" type="checkbox" checked aria-label="People" />
     </label>`,
+    `<label class="row" title="Low confidence overlay">
+      <span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span>
+      <input class="legend-toggle" id="show-low-confidence" type="checkbox" aria-label="Low confidence overlay" />
+    </label>`,
     `<div class="row" title="OFAC sanctioned">
       <span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span>
     </div>`,
@@ -1188,65 +1145,11 @@ function renderCompactLegend() {{
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span></div>`,
+    `<div class="row"><span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span></div>`,
     `<div class="row"><span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span></div>`,
   ].join("");
 }}
 renderCompactLegend();
-
-function edgeTooltipLines(edge) {{
-  if (Array.isArray(edge?.tooltip_lines) && edge.tooltip_lines.length) return edge.tooltip_lines;
-  if (edge?.tooltip) return [edge.tooltip];
-  return [edge?.phrase || edge?.role_type || "link"];
-}}
-
-function applyLowConfidenceEdgeDetail(edge, detail) {{
-  if (!edge || !detail || typeof detail !== "object") return;
-  edge.tooltip = String(detail.tooltip || edge.tooltip || "");
-  edge.tooltip_lines = Array.isArray(detail.tooltip_lines)
-    ? detail.tooltip_lines.map(line => String(line || "")).filter(Boolean)
-    : edge.tooltip_lines;
-  edge.evidence = detail.evidence && typeof detail.evidence === "object" ? detail.evidence : null;
-  edge.evidence_items = Array.isArray(detail.evidence_items) ? detail.evidence_items : [];
-  edge._detailLoaded = true;
-  lowConfidenceEdgeDetailCache.set(edge.id, {{
-    tooltip: edge.tooltip,
-    tooltip_lines: edge.tooltip_lines,
-    evidence: edge.evidence,
-    evidence_items: edge.evidence_items,
-  }});
-}}
-
-async function ensureLowConfidenceEdgeDetail(edge) {{
-  if (!edge?.is_low_confidence || edge._detailLoaded || !edge.detail_available) return edge;
-  const cached = lowConfidenceEdgeDetailCache.get(edge.id);
-  if (cached) {{
-    applyLowConfidenceEdgeDetail(edge, cached);
-    return edge;
-  }}
-  if (lowConfidenceEdgeDetailPromises.has(edge.id)) {{
-    await lowConfidenceEdgeDetailPromises.get(edge.id);
-    return edge;
-  }}
-  const request = fetch(`${{LOW_CONFIDENCE_EDGE_URL}}?id=${{encodeURIComponent(edge.id)}}`)
-    .then(response => {{
-      if (!response.ok) throw new Error(`Low-confidence edge detail fetch failed: ${{response.status}}`);
-      return response.json();
-    }})
-    .then(detail => {{
-      applyLowConfidenceEdgeDetail(edge, detail);
-      return detail;
-    }})
-    .catch(error => {{
-      console.error(error);
-      return null;
-    }})
-    .finally(() => {{
-      lowConfidenceEdgeDetailPromises.delete(edge.id);
-    }});
-  lowConfidenceEdgeDetailPromises.set(edge.id, request);
-  await request;
-  return edge;
-}}
 
 function nodeTypeKey(node) {{
   if (node.kind === "seed" || node.lane === 1) return "identity";
@@ -1785,539 +1688,6 @@ function edgeStroke(edge) {{
   return "#2a3040";
 }}
 
-let activeFocusRootIds = new Set();
-
-function resolveCssColor(value) {{
-  const raw = String(value || "").trim();
-  const match = raw.match(/^var\((--[^)]+)\)$/);
-  if (!match) return raw || "#ffffff";
-  const resolved = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
-  return resolved || "#ffffff";
-}}
-
-function colorHex(value) {{
-  return PIXI.utils.string2hex(resolveCssColor(value));
-}}
-
-function nodeStrokeWidthForState(node) {{
-  if (node.sanctioned) return activeFocusRootIds.has(node.id) ? 3.2 : 2.5;
-  if (node.is_low_confidence) return activeFocusRootIds.has(node.id) ? 3.0 : 1.4;
-  return activeFocusRootIds.has(node.id) ? 2.8 : 1.2;
-}}
-
-function nodeStrokeOpacityForState(node) {{
-  if (activeFocusRootIds.has(node.id)) return 1.0;
-  if (node.sanctioned) return 1.0;
-  if (node.is_low_confidence) return 0.95;
-  return 0.7;
-}}
-
-function nodeFillOpacityForState(node) {{
-  if (activeFocusRootIds.has(node.id)) return 0.28;
-  if (node.is_low_confidence) return 0.14;
-  if (node.sanctioned) return 0.35;
-  return 0.18;
-}}
-
-function eventLike(nativeEvent) {{
-  return {{
-    clientX: nativeEvent.clientX,
-    clientY: nativeEvent.clientY,
-    preventDefault() {{ nativeEvent.preventDefault(); }},
-    stopPropagation() {{ nativeEvent.stopPropagation(); }},
-  }};
-}}
-
-function pointSegmentDistanceSquared(px, py, x1, y1, x2, y2) {{
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  if (!dx && !dy) {{
-    const ox = px - x1;
-    const oy = py - y1;
-    return ox * ox + oy * oy;
-  }}
-  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
-  const qx = x1 + t * dx;
-  const qy = y1 + t * dy;
-  const ox = px - qx;
-  const oy = py - qy;
-  return ox * ox + oy * oy;
-}}
-
-function drawDashedSegment(graphics, x1, y1, x2, y2, dashLength = 5, gapLength = 4) {{
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.sqrt(dx * dx + dy * dy);
-  if (!length) return;
-  const ux = dx / length;
-  const uy = dy / length;
-  let cursor = 0;
-  while (cursor < length) {{
-    const start = cursor;
-    const end = Math.min(length, cursor + dashLength);
-    graphics.moveTo(x1 + ux * start, y1 + uy * start);
-    graphics.lineTo(x1 + ux * end, y1 + uy * end);
-    cursor += dashLength + gapLength;
-  }}
-}}
-
-function createGraphRenderer(targetEl) {{
-  refreshViewportSize();
-  const app = new PIXI.Application({{
-    width: W,
-    height: H,
-    backgroundAlpha: 0,
-    antialias: true,
-    autoDensity: true,
-    resolution: Math.max(window.devicePixelRatio || 1, 1),
-  }});
-  const view = app.view || app.renderer.view;
-  targetEl.replaceChildren(view);
-  view.style.width = "100%";
-  view.style.height = "100%";
-  view.style.touchAction = "none";
-
-  const viewport = new PIXI.Container();
-  const edgeGraphics = new PIXI.Graphics();
-  const nodeGraphics = new PIXI.Graphics();
-  const labelContainer = new PIXI.Container();
-  app.stage.addChild(viewport);
-  viewport.addChild(edgeGraphics);
-  viewport.addChild(nodeGraphics);
-  viewport.addChild(labelContainer);
-
-  const bodyTextStyle = new PIXI.TextStyle({{
-    fontFamily: "Segoe UI, system-ui, -apple-system, sans-serif",
-    fontSize: 10.5,
-    fill: colorHex("var(--text)"),
-  }});
-  const identityTextStyle = new PIXI.TextStyle({{
-    fontFamily: "Segoe UI, system-ui, -apple-system, sans-serif",
-    fontSize: 12,
-    fontWeight: "600",
-    fill: colorHex("var(--text-bright)"),
-  }});
-  const labelsById = new Map();
-  const nodeGrid = new Map();
-  const edgeGrid = new Map();
-  const visibleNodeList = [];
-  const visibleEdgeList = [];
-  const rendererState = {{
-    transform: {{ x: 0, y: 0, k: 1 }},
-    dragMode: "",
-    draggedNode: null,
-    dragOffsetX: 0,
-    dragOffsetY: 0,
-    panStartX: 0,
-    panStartY: 0,
-    transformStartX: 0,
-    transformStartY: 0,
-    hoveredNodeId: "",
-    hoveredEdgeId: "",
-    pendingFocusNodeId: "",
-  }};
-  const cellSize = 140;
-
-  function applyTransform() {{
-    viewport.position.set(rendererState.transform.x, rendererState.transform.y);
-    viewport.scale.set(rendererState.transform.k);
-  }}
-
-  function resize() {{
-    refreshViewportSize();
-    app.renderer.resize(W, H);
-    applyTransform();
-    renderScene();
-  }}
-
-  function screenToWorld(clientX, clientY) {{
-    const rect = view.getBoundingClientRect();
-    const localX = clientX - rect.left;
-    const localY = clientY - rect.top;
-    return {{
-      x: (localX - rendererState.transform.x) / rendererState.transform.k,
-      y: (localY - rendererState.transform.y) / rendererState.transform.k,
-    }};
-  }}
-
-  function clearGrid(grid) {{
-    grid.clear();
-  }}
-
-  function gridKey(x, y) {{
-    return `${{Math.floor(x / cellSize)}}:${{Math.floor(y / cellSize)}}`;
-  }}
-
-  function addGridItem(grid, x0, y0, x1, y1, item) {{
-    const minX = Math.floor(x0 / cellSize);
-    const maxX = Math.floor(x1 / cellSize);
-    const minY = Math.floor(y0 / cellSize);
-    const maxY = Math.floor(y1 / cellSize);
-    for (let gx = minX; gx <= maxX; gx += 1) {{
-      for (let gy = minY; gy <= maxY; gy += 1) {{
-        const key = `${{gx}}:${{gy}}`;
-        if (!grid.has(key)) grid.set(key, []);
-        grid.get(key).push(item);
-      }}
-    }}
-  }}
-
-  function gridCandidates(grid, x, y) {{
-    const baseX = Math.floor(x / cellSize);
-    const baseY = Math.floor(y / cellSize);
-    const items = [];
-    for (let gx = baseX - 1; gx <= baseX + 1; gx += 1) {{
-      for (let gy = baseY - 1; gy <= baseY + 1; gy += 1) {{
-        const bucket = grid.get(`${{gx}}:${{gy}}`);
-        if (bucket?.length) items.push(...bucket);
-      }}
-    }}
-    return items;
-  }}
-
-  function focusButtonBounds(node) {{
-    return {{
-      cx: node.x + pillWidth(node) / 2 - 14,
-      cy: node.y,
-      r: 8,
-    }};
-  }}
-
-  function rebuildHitIndexes() {{
-    clearGrid(nodeGrid);
-    clearGrid(edgeGrid);
-    visibleNodeList.forEach(node => {{
-      const halfWidth = pillWidth(node) / 2;
-      const halfHeight = pillHeight(node) / 2;
-      addGridItem(nodeGrid, node.x - halfWidth, node.y - halfHeight, node.x + halfWidth, node.y + halfHeight, node);
-    }});
-    visibleEdgeList.forEach(edge => {{
-      const source = nodeById.get(edge.source);
-      const target = nodeById.get(edge.target);
-      if (!source || !target) return;
-      const pad = 12;
-      addGridItem(
-        edgeGrid,
-        Math.min(source.x, target.x) - pad,
-        Math.min(source.y, target.y) - pad,
-        Math.max(source.x, target.x) + pad,
-        Math.max(source.y, target.y) + pad,
-        edge
-      );
-    }});
-  }}
-
-  function hitTestNode(worldX, worldY) {{
-    const candidates = gridCandidates(nodeGrid, worldX, worldY);
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {{
-      const node = candidates[index];
-      const halfWidth = pillWidth(node) / 2;
-      const halfHeight = pillHeight(node) / 2;
-      if (
-        worldX < node.x - halfWidth || worldX > node.x + halfWidth
-        || worldY < node.y - halfHeight || worldY > node.y + halfHeight
-      ) {{
-        continue;
-      }}
-      const focusBounds = focusButtonBounds(node);
-      const dx = worldX - focusBounds.cx;
-      const dy = worldY - focusBounds.cy;
-      if (dx * dx + dy * dy <= focusBounds.r * focusBounds.r) {{
-        return {{ node, region: "focus" }};
-      }}
-      return {{ node, region: "body" }};
-    }}
-    return null;
-  }}
-
-  function hitTestEdge(worldX, worldY) {{
-    const candidates = gridCandidates(edgeGrid, worldX, worldY);
-    const threshold = 9 / Math.max(rendererState.transform.k, 0.1);
-    const thresholdSq = threshold * threshold;
-    let bestEdge = null;
-    let bestDistance = thresholdSq;
-    candidates.forEach(edge => {{
-      const source = nodeById.get(edge.source);
-      const target = nodeById.get(edge.target);
-      if (!source || !target) return;
-      const distanceSq = pointSegmentDistanceSquared(worldX, worldY, source.x, source.y, target.x, target.y);
-      if (distanceSq > bestDistance) return;
-      bestDistance = distanceSq;
-      bestEdge = edge;
-    }});
-    return bestEdge;
-  }}
-
-  function syncLabels() {{
-    const visibleIds = new Set(visibleNodeList.map(node => node.id));
-    labelsById.forEach((label, nodeId) => {{
-      label.visible = visibleIds.has(nodeId);
-    }});
-    visibleNodeList.forEach(node => {{
-      let label = labelsById.get(node.id);
-      if (!label) {{
-        label = new PIXI.Text(String(node.label || ""), node.kind === "seed_alias" ? identityTextStyle : bodyTextStyle);
-        label.anchor.set(0, 0.5);
-        label.resolution = Math.max(window.devicePixelRatio || 1, 1);
-        labelsById.set(node.id, label);
-        labelContainer.addChild(label);
-      }}
-      label.text = String(node.label || "");
-      label.style = node.kind === "seed_alias" ? identityTextStyle : bodyTextStyle;
-      label.x = node.x - pillWidth(node) / 2 + badgeTextInset(node);
-      label.y = node.y;
-      label.visible = true;
-    }});
-  }}
-
-  function drawEdge(edge) {{
-    const source = nodeById.get(edge.source);
-    const target = nodeById.get(edge.target);
-    if (!source || !target) return;
-    edgeGraphics.lineStyle({{
-      width: edge.kind === "hidden_connection" ? 1.8 : edge.kind === "alias" ? 2.5 : 1.4 + (edge.weight || 0) * 1.5,
-      color: colorHex(edgeStroke(edge)),
-      alpha: edge.is_low_confidence ? 0.75 : edge.kind === "hidden_connection" ? 0.7 : edge.kind === "alias" ? 0.8 : edge.kind === "address_link" ? 0.75 : 0.45,
-      cap: PIXI.LINE_CAP.ROUND,
-      join: PIXI.LINE_JOIN.ROUND,
-    }});
-    if (edge.is_low_confidence || edge.kind === "hidden_connection") {{
-      drawDashedSegment(edgeGraphics, source.x, source.y, target.x, target.y);
-      return;
-    }}
-    edgeGraphics.moveTo(source.x, source.y);
-    edgeGraphics.lineTo(target.x, target.y);
-  }}
-
-  function drawNode(node) {{
-    const width = pillWidth(node);
-    const height = pillHeight(node);
-    const left = node.x - width / 2;
-    const top = node.y - height / 2;
-    const stroke = colorHex(nodeColor(node));
-    nodeGraphics.lineStyle({{
-      width: nodeStrokeWidthForState(node),
-      color: stroke,
-      alpha: nodeStrokeOpacityForState(node),
-      cap: PIXI.LINE_CAP.ROUND,
-      join: PIXI.LINE_JOIN.ROUND,
-    }});
-    nodeGraphics.beginFill(stroke, nodeFillOpacityForState(node));
-    nodeGraphics.drawRoundedRect(left, top, width, height, height / 2);
-    nodeGraphics.endFill();
-
-    const badge = badgeSpec(node);
-    if (badge) {{
-      const badgeH = badgeHeight(node);
-      nodeGraphics.lineStyle({{ width: 0.8, color: 0xffffff, alpha: 0.18 }});
-      nodeGraphics.beginFill(colorHex(badge.fill), 1);
-      nodeGraphics.drawRoundedRect(left + 8, top + (height - badgeH) / 2, badgeWidth(node), badgeH, badgeH / 2);
-      nodeGraphics.endFill();
-    }}
-
-    if (node.kind !== "seed") {{
-      const focus = focusButtonBounds(node);
-      nodeGraphics.lineStyle({{ width: 1, color: 0xffffff, alpha: 0.28 }});
-      nodeGraphics.beginFill(0xffffff, 0.08);
-      nodeGraphics.drawCircle(focus.cx, focus.cy, focus.r);
-      nodeGraphics.endFill();
-      nodeGraphics.lineStyle({{ width: 1.3, color: 0xffffff, alpha: 0.9, cap: PIXI.LINE_CAP.ROUND }});
-      nodeGraphics.drawCircle(focus.cx - 1.5, focus.cy - 1.5, 2.8);
-      nodeGraphics.moveTo(focus.cx + 1.2, focus.cy + 1.2);
-      nodeGraphics.lineTo(focus.cx + 4.2, focus.cy + 4.2);
-    }}
-  }}
-
-  function renderScene() {{
-    edgeGraphics.clear();
-    nodeGraphics.clear();
-    visibleNodeList.length = 0;
-    visibleEdgeList.length = 0;
-    allNodes.forEach(node => {{
-      if (isNodeDisplayed(node)) visibleNodeList.push(node);
-    }});
-    visibleEdges.forEach(edge => visibleEdgeList.push(edge));
-    visibleEdgeList.forEach(drawEdge);
-    visibleNodeList.forEach(drawNode);
-    syncLabels();
-    rebuildHitIndexes();
-  }}
-
-  function zoomAt(clientX, clientY, nextScale) {{
-    const clampedScale = Math.max(0.05, Math.min(6, nextScale));
-    const before = screenToWorld(clientX, clientY);
-    rendererState.transform.k = clampedScale;
-    rendererState.transform.x = clientX - view.getBoundingClientRect().left - before.x * clampedScale;
-    rendererState.transform.y = clientY - view.getBoundingClientRect().top - before.y * clampedScale;
-    applyTransform();
-  }}
-
-  function fitToVisible() {{
-    if (!visibleNodeList.length) return;
-    const xs = visibleNodeList.map(node => node.x);
-    const ys = visibleNodeList.map(node => node.y);
-    const bounds = {{
-      x0: Math.min(...xs) - 60,
-      x1: Math.max(...xs) + 60,
-      y0: Math.min(...ys) - 40,
-      y1: Math.max(...ys) + 40,
-    }};
-    const bw = Math.max(1, bounds.x1 - bounds.x0);
-    const bh = Math.max(1, bounds.y1 - bounds.y0);
-    const scale = Math.min(W / bw, H / bh, 1.5) * 0.85;
-    rendererState.transform = {{
-      x: (W - bw * scale) / 2 - bounds.x0 * scale,
-      y: (H - bh * scale) / 2 - bounds.y0 * scale,
-      k: scale,
-    }};
-    applyTransform();
-  }}
-
-  function setCursor(value) {{
-    view.style.cursor = value;
-  }}
-
-  function updateHover(nativeEvent) {{
-    const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-    const nodeHit = hitTestNode(point.x, point.y);
-    if (nodeHit?.region === "focus") {{
-      setCursor("pointer");
-      showTooltip(eventLike(nativeEvent), [`Search for ${{nodeHit.node.label}}`]);
-      rendererState.hoveredNodeId = nodeHit.node.id;
-      rendererState.hoveredEdgeId = "";
-      return;
-    }}
-    if (nodeHit) {{
-      setCursor(nodeHit.node.kind === "seed" ? "default" : "pointer");
-      showTooltip(eventLike(nativeEvent), nodeHit.node.tooltip_lines || [nodeHit.node.label]);
-      rendererState.hoveredNodeId = nodeHit.node.id;
-      rendererState.hoveredEdgeId = "";
-      return;
-    }}
-    const edgeHit = hitTestEdge(point.x, point.y);
-    if (edgeHit) {{
-      setCursor("pointer");
-      handleEdgeMouseOver(eventLike(nativeEvent), edgeHit);
-      rendererState.hoveredNodeId = "";
-      rendererState.hoveredEdgeId = edgeHit.id;
-      return;
-    }}
-    rendererState.hoveredNodeId = "";
-    rendererState.hoveredEdgeId = "";
-    setCursor("grab");
-    hideTooltip();
-  }}
-
-  view.addEventListener("pointerdown", nativeEvent => {{
-    if (nativeEvent.button === 2) return;
-    closeContextMenu();
-    const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-    const nodeHit = hitTestNode(point.x, point.y);
-    if (nodeHit?.region === "focus") {{
-      rendererState.dragMode = "focus";
-      rendererState.pendingFocusNodeId = nodeHit.node.id;
-      return;
-    }}
-    if (nodeHit?.region === "body") {{
-      rendererState.dragMode = "node";
-      rendererState.draggedNode = nodeHit.node;
-      nodeHit.node._dragging = true;
-      rendererState.dragOffsetX = point.x - nodeHit.node.x;
-      rendererState.dragOffsetY = point.y - nodeHit.node.y;
-      setCursor("grabbing");
-      return;
-    }}
-    rendererState.dragMode = "pan";
-    rendererState.panStartX = nativeEvent.clientX;
-    rendererState.panStartY = nativeEvent.clientY;
-    rendererState.transformStartX = rendererState.transform.x;
-    rendererState.transformStartY = rendererState.transform.y;
-    setCursor("grabbing");
-  }});
-
-  view.addEventListener("pointermove", nativeEvent => {{
-    if (rendererState.dragMode === "node" && rendererState.draggedNode) {{
-      const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-      rendererState.draggedNode.x = point.x - rendererState.dragOffsetX;
-      rendererState.draggedNode.y = point.y - rendererState.dragOffsetY;
-      renderScene();
-      return;
-    }}
-    if (rendererState.dragMode === "pan") {{
-      rendererState.transform.x = rendererState.transformStartX + (nativeEvent.clientX - rendererState.panStartX);
-      rendererState.transform.y = rendererState.transformStartY + (nativeEvent.clientY - rendererState.panStartY);
-      applyTransform();
-      return;
-    }}
-    if (tooltipEl.style.display === "block") positionTooltip(eventLike(nativeEvent));
-    updateHover(nativeEvent);
-  }});
-
-  function finishPointer(nativeEvent) {{
-    const priorMode = rendererState.dragMode;
-    const priorNode = rendererState.draggedNode;
-    rendererState.dragMode = "";
-    rendererState.draggedNode = null;
-    if (priorNode) priorNode._dragging = false;
-    if (priorMode === "focus" && rendererState.pendingFocusNodeId) {{
-      const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-      const nodeHit = hitTestNode(point.x, point.y);
-      if (nodeHit?.region === "focus" && nodeHit.node.id === rendererState.pendingFocusNodeId) {{
-        searchInput.value = nodeHit.node.label || "";
-        viewerState.searchQuery = (nodeHit.node.label || "").trim();
-        viewerState.focusedNodeIds.clear();
-        applyViewerState();
-      }}
-    }}
-    rendererState.pendingFocusNodeId = "";
-    updateHover(nativeEvent);
-  }}
-
-  view.addEventListener("pointerup", finishPointer);
-  view.addEventListener("pointerleave", nativeEvent => {{
-    if (rendererState.dragMode) finishPointer(nativeEvent);
-    hideTooltip();
-    setCursor("grab");
-  }});
-  view.addEventListener("wheel", nativeEvent => {{
-    nativeEvent.preventDefault();
-    const scaleFactor = Math.exp(-nativeEvent.deltaY * 0.0015);
-    zoomAt(nativeEvent.clientX, nativeEvent.clientY, rendererState.transform.k * scaleFactor);
-  }}, {{ passive: false }});
-  view.addEventListener("dblclick", nativeEvent => {{
-    const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-    if (hitTestNode(point.x, point.y) || hitTestEdge(point.x, point.y)) return;
-    if (!viewerState.focusedNodeIds.size) return;
-    viewerState.focusedNodeIds.clear();
-    applyViewerState();
-  }});
-  view.addEventListener("contextmenu", nativeEvent => {{
-    nativeEvent.preventDefault();
-    const point = screenToWorld(nativeEvent.clientX, nativeEvent.clientY);
-    const nodeHit = hitTestNode(point.x, point.y);
-    if (nodeHit?.node) {{
-      openContextMenu(eventLike(nativeEvent), nodeHit.node);
-      return;
-    }}
-    const edgeHit = hitTestEdge(point.x, point.y);
-    if (edgeHit) {{
-      openEdgeContextMenu(eventLike(nativeEvent), edgeHit);
-      return;
-    }}
-    closeContextMenu();
-  }});
-
-  applyTransform();
-  setCursor("grab");
-  return {{
-    renderScene,
-    fitToVisible,
-    resize,
-  }};
-}}
-
-const graphRenderer = createGraphRenderer(container);
-
 function showTooltip(event, lines) {{
   tooltipEl.innerHTML = lines.join("<br>");
   tooltipEl.style.display = "block";
@@ -2417,13 +1787,6 @@ function evidenceActionsForEdge(edge) {{
     .filter(Boolean);
 }}
 
-function handleEdgeMouseOver(event, edge) {{
-  showTooltip(event, edgeTooltipLines(edge));
-  if (edge?.is_low_confidence && !edge._detailLoaded && edge.detail_available) {{
-    ensureLowConfidenceEdgeDetail(edge);
-  }}
-}}
-
 function mergeActionsForNode(node) {{
   const actions = [];
   const pendingNode = nodeById.get(viewerState.pendingMergeNodeId);
@@ -2465,19 +1828,29 @@ function mergeActionsForNode(node) {{
   return actions;
 }}
 
-function lowConfidenceGroupActionsForNode(node) {{
-  if (!node?.is_low_confidence_group) return [];
-  if (lowConfidenceExpandedGroupIds.has(node.id)) {{
+function lowConfidenceOrganisationActionsForNode(node) {{
+  if (!viewerState.showLowConfidence) return [];
+  if (!node?.is_low_confidence || node.kind !== "organisation") return [];
+  const hiddenPeople = new Set();
+  (lowConfidenceEdgesByNodeId.get(node.id) || []).forEach(edge => {{
+    const otherId = edge.source === node.id ? edge.target : edge.source;
+    if (mainNodeIds.has(otherId)) return;
+    const otherNode = lowConfidenceNodeById.get(otherId);
+    if (!otherNode || otherNode.kind !== "person") return;
+    hiddenPeople.add(otherId);
+  }});
+  if (!hiddenPeople.size) return [];
+  if (expandedLowConfidenceOrgIds.has(node.id)) {{
     return [{{
-      type: "low_confidence_group_collapse",
+      type: "low_confidence_org_collapse",
       nodeId: node.id,
-      label: "Collapse low-confidence members",
+      label: "Collapse linked low-confidence people",
     }}];
   }}
   return [{{
-    type: "low_confidence_group_expand",
+    type: "low_confidence_org_expand",
     nodeId: node.id,
-    label: `Expand ${{Number(node.aggregate_member_count || 0)}} low-confidence members`,
+    label: `Expand ${{hiddenPeople.size}} linked low-confidence people`,
   }}];
 }}
 
@@ -2676,14 +2049,10 @@ async function openAnalysisView() {{
   renderAnalysisResult(payload);
 }}
 
-async function openEdgeContextMenu(event, edge) {{
+function openEdgeContextMenu(event, edge) {{
   event.preventDefault();
   event.stopPropagation();
   hideTooltip();
-
-  if (edge?.is_low_confidence && !edge._detailLoaded && edge.detail_available) {{
-    await ensureLowConfidenceEdgeDetail(edge);
-  }}
 
   const sourceNode = nodeById.get(edge.source);
   const targetNode = nodeById.get(edge.target);
@@ -2890,7 +2259,7 @@ function openContextMenu(event, node) {{
   const actions = [];
   const registryAction = registryActionForNode(node);
   if (registryAction) actions.push(registryAction);
-  lowConfidenceGroupActionsForNode(node).forEach(action => actions.push(action));
+  lowConfidenceOrganisationActionsForNode(node).forEach(action => actions.push(action));
   mergeActionsForNode(node).forEach(action => actions.push(action));
   analysisActionsForNode(node).forEach(action => actions.push(action));
 
@@ -2991,7 +2360,12 @@ function positionNodes() {{
 }}
 
 function updatePositions() {{
-  graphRenderer.renderScene();
+  edgeGroup.selectAll("line")
+    .attr("x1", edge => nodeById.get(edge.source)?.x ?? 0)
+    .attr("y1", edge => nodeById.get(edge.source)?.y ?? 0)
+    .attr("x2", edge => nodeById.get(edge.target)?.x ?? 0)
+    .attr("y2", edge => nodeById.get(edge.target)?.y ?? 0);
+  pills.attr("transform", node => `translate(${{node.x - pillWidth(node) / 2}},${{node.y - pillHeight(node) / 2}})`);
 }}
 
 function isNodeDisplayed(node) {{
@@ -2999,18 +2373,185 @@ function isNodeDisplayed(node) {{
 }}
 
 function renderEdges() {{
-  graphRenderer.renderScene();
+  const groups = edgeGroup.selectAll("g.edge-group")
+    .data(visibleEdges, edge => `${{edge.kind}}:${{edge.source}}:${{edge.target}}:${{edge.tooltip || ""}}:${{(edge.hiddenNodeIds || []).join("|")}}`)
+    .join(
+      enter => {{
+        const group = enter.append("g").attr("class", "edge-group");
+        group.append("line").attr("class", "role-edge-hit")
+          .attr("stroke", "transparent")
+          .attr("stroke-width", 12)
+          .style("pointer-events", "stroke");
+        group.append("line").attr("class", "role-edge")
+          .style("pointer-events", "none");
+        return group;
+      }},
+      update => update,
+      exit => exit.remove()
+    );
+
+  groups.select("line.role-edge")
+    .attr("stroke", edgeStroke)
+    .attr("stroke-width", edge => edge.kind === "hidden_connection" ? 1.8 : edge.kind === "alias" ? 2.5 : 1.4 + (edge.weight || 0) * 1.5)
+    .attr("stroke-opacity", edge => edge.is_low_confidence ? 0.75 : edge.kind === "hidden_connection" ? 0.7 : edge.kind === "alias" ? 0.8 : edge.kind === "address_link" ? 0.75 : 0.45)
+    .attr("stroke-dasharray", edge => edge.is_low_confidence ? "5 4" : edge.kind === "hidden_connection" ? "5 4" : null)
+    .style("pointer-events", "none");
+
+  groups.select("line.role-edge-hit")
+    .on("mouseover", (event, edge) => showTooltip(event, edge.tooltip_lines || [edge.tooltip || "link"]))
+    .on("mousemove", positionTooltip)
+    .on("mouseout", hideTooltip)
+    .on("contextmenu", openEdgeContextMenu);
 }}
 
 function syncVisibility() {{
-  graphRenderer.renderScene();
+  pills
+    .attr("display", node => isNodeDisplayed(node) ? null : "none")
+    .attr("opacity", node => isNodeDisplayed(node) ? 1 : 0);
+  renderEdges();
+  updatePositions();
 }}
 
 function zoomToVisible() {{
-  graphRenderer.fitToVisible();
+  const visibleNodes = allNodes.filter(isNodeDisplayed);
+  if (!visibleNodes.length) return;
+  const xs = visibleNodes.map(node => node.x);
+  const ys = visibleNodes.map(node => node.y);
+  const bounds = {{
+    x0: Math.min(...xs) - 60,
+    x1: Math.max(...xs) + 60,
+    y0: Math.min(...ys) - 40,
+    y1: Math.max(...ys) + 40,
+  }};
+  const bw = Math.max(1, bounds.x1 - bounds.x0);
+  const bh = Math.max(1, bounds.y1 - bounds.y0);
+  const scale = Math.min(W / bw, H / bh, 1.5) * 0.85;
+  const tx = (W - bw * scale) / 2 - bounds.x0 * scale;
+  const ty = (H - bh * scale) / 2 - bounds.y0 * scale;
+  svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }}
 
+const edgeGroup = gRoot.append("g");
+const nodeGroup = gRoot.append("g");
+let pills = null;
+
 function renderNodeJoin() {{
+  pills = nodeGroup.selectAll("g.pill")
+    .data(allNodes, node => node.id)
+    .join(
+      enter => {{
+        const pill = enter.append("g")
+          .attr("class", "pill");
+
+        pill.append("rect");
+        pill.append("text").style("pointer-events", "none");
+
+        const badgeGroups = pill.append("g")
+          .attr("class", "badge-group");
+        badgeGroups.append("rect");
+        badgeGroups.append("path").style("pointer-events", "none");
+
+        const focusButtons = pill.append("g")
+          .attr("class", "focus-button-group");
+        focusButtons.append("circle").attr("class", "focus-btn");
+        focusButtons.append("path").attr("class", "focus-btn");
+
+        focusButtons
+          .on("mouseover", (event, node) => showTooltip(event, [`Search for ${{node.label}}`]))
+          .on("mousemove", positionTooltip)
+          .on("mouseout", hideTooltip)
+          .on("click", (event, node) => {{
+            event.stopPropagation();
+            searchInput.value = node.label || "";
+            viewerState.searchQuery = (node.label || "").trim();
+            viewerState.focusedNodeIds.clear();
+            applyViewerState();
+          }});
+
+        pill
+          .on("mouseover", (event, node) => showTooltip(event, node.tooltip_lines || [node.label]))
+          .on("mousemove", positionTooltip)
+          .on("mouseout", hideTooltip)
+          .on("contextmenu", openContextMenu);
+
+        return pill;
+      }},
+      update => update,
+      exit => exit.remove()
+    )
+    .style("cursor", node => node.kind === "seed" ? "default" : "pointer");
+
+  pills.select("rect")
+    .attr("rx", node => pillHeight(node) / 2)
+    .attr("ry", node => pillHeight(node) / 2)
+    .attr("width", pillWidth)
+    .attr("height", pillHeight)
+    .attr("fill", nodeColor)
+    .attr("fill-opacity", node => node.is_low_confidence ? 0.14 : node.sanctioned ? 0.35 : 0.18)
+    .attr("stroke", nodeColor)
+    .attr("stroke-width", node => node.sanctioned ? 2.5 : node.is_low_confidence ? 1.4 : 1.2)
+    .attr("stroke-opacity", node => node.sanctioned ? 1.0 : node.is_low_confidence ? 0.95 : 0.7)
+    .attr("stroke-dasharray", node => node.is_low_confidence ? "5 3" : null);
+
+  pills.select("text")
+    .text(node => node.label)
+    .attr("font-size", fontSize)
+    .attr("font-weight", node => node.kind === "seed_alias" ? 600 : 400)
+    .attr("fill", node => node.kind === "seed_alias" ? "var(--text-bright)" : "var(--text)")
+    .attr("text-anchor", "start")
+    .attr("dominant-baseline", "central")
+    .attr("x", badgeTextInset)
+    .attr("y", node => pillHeight(node) / 2);
+
+  const badgeGroups = pills.select("g.badge-group")
+    .style("display", node => badgeSpec(node) ? null : "none");
+
+  badgeGroups.select("rect")
+    .attr("rx", node => badgeHeight(node) / 2)
+    .attr("ry", node => badgeHeight(node) / 2)
+    .attr("x", 8)
+    .attr("y", node => (pillHeight(node) - badgeHeight(node)) / 2)
+    .attr("width", badgeWidth)
+    .attr("height", badgeHeight)
+    .attr("fill", node => badgeSpec(node)?.fill || "transparent")
+    .attr("stroke", "rgba(255,255,255,0.18)")
+    .attr("stroke-width", 0.8);
+
+  badgeGroups.select("path")
+    .attr("d", node => badgeSpec(node)?.path || "")
+    .attr("transform", node => {{
+      const size = 12;
+      const x = 11;
+      const y = (pillHeight(node) - size) / 2;
+      return `translate(${{x}},${{y}}) scale(0.5)`;
+    }})
+    .attr("fill", "none")
+    .attr("stroke", node => badgeSpec(node)?.color || "transparent")
+    .attr("stroke-width", 1.8)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round");
+
+  const focusButtons = pills.select("g.focus-button-group")
+    .style("display", node => node.kind === "seed" ? "none" : null);
+
+  focusButtons.select("circle")
+    .attr("cx", node => pillWidth(node) - 14)
+    .attr("cy", node => pillHeight(node) / 2)
+    .attr("r", 8)
+    .attr("fill", "rgba(255,255,255,0.08)")
+    .attr("stroke", "rgba(255,255,255,0.28)")
+    .attr("stroke-width", 1);
+
+  focusButtons.select("path")
+    .attr("d", iconPath("search"))
+    .attr("transform", node => `translate(${{pillWidth(node) - 20}},${{pillHeight(node) / 2 - 6}}) scale(0.5)`)
+    .attr("fill", "none")
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 1.8)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round");
+
+  pills.call(drag);
 }}
 
 contextMenuEl.addEventListener("click", (event) => {{
@@ -3048,20 +2589,14 @@ contextMenuEl.addEventListener("click", (event) => {{
     }});
     return;
   }}
-  if (action.type === "low_confidence_group_expand") {{
+  if (action.type === "low_confidence_org_expand") {{
+    expandedLowConfidenceOrgIds.add(String(action.nodeId || ""));
     closeContextMenu();
-    const groupNode = nodeById.get(String(action.nodeId || ""));
-    ensureLowConfidenceGroupExpanded(groupNode).then(ok => {{
-      if (!ok) {{
-        window.alert("Loading low-confidence members failed.");
-        return;
-      }}
-      applyViewerState();
-    }});
+    applyViewerState();
     return;
   }}
-  if (action.type === "low_confidence_group_collapse") {{
-    collapseLowConfidenceGroup(String(action.nodeId || ""));
+  if (action.type === "low_confidence_org_collapse") {{
+    expandedLowConfidenceOrgIds.delete(String(action.nodeId || ""));
     closeContextMenu();
     applyViewerState();
     return;
@@ -3090,11 +2625,7 @@ contextMenuEl.addEventListener("click", (event) => {{
 }});
 
 document.addEventListener("click", closeContextMenu);
-window.addEventListener("resize", () => {{
-  closeContextMenu();
-  graphRenderer.resize();
-  applyViewerState();
-}});
+window.addEventListener("resize", closeContextMenu);
 window.addEventListener("blur", closeContextMenu);
 refreshMapButton.addEventListener("click", () => {{
   openMapView().catch(() => {{
@@ -3114,8 +2645,35 @@ sidebarTabEls.forEach(el => {{
   }});
 }});
 
+const drag = d3.drag()
+  .filter(event => !(event.target.classList && event.target.classList.contains("focus-btn")))
+  .on("start", (event, node) => {{
+    node._dragging = true;
+  }})
+  .on("drag", (event, node) => {{
+    node.x = event.x;
+    node.y = event.y;
+    updatePositions();
+  }})
+  .on("end", (event, node) => {{
+    node._dragging = false;
+  }});
+
+svg.on("dblclick.focus", () => {{
+  if (!viewerState.focusedNodeIds.size) return;
+  viewerState.focusedNodeIds.clear();
+  applyViewerState();
+}});
+
 function updateFocusStyling(rootIds) {{
-  activeFocusRootIds = new Set(rootIds);
+  pills.select("rect")
+    .attr("stroke-width", node => {{
+      if (node.sanctioned) return rootIds.has(node.id) ? 3.2 : 2.5;
+      if (node.is_low_confidence) return rootIds.has(node.id) ? 3.0 : 1.4;
+      return rootIds.has(node.id) ? 2.8 : 1.2;
+    }})
+    .attr("stroke-opacity", node => rootIds.has(node.id) ? 1.0 : node.sanctioned ? 1.0 : node.is_low_confidence ? 0.95 : 0.7)
+    .attr("fill-opacity", node => rootIds.has(node.id) ? 0.28 : node.is_low_confidence ? 0.14 : node.sanctioned ? 0.35 : 0.18);
 }}
 
 function renderScorePanel() {{
@@ -3162,9 +2720,9 @@ function applyViewerState() {{
   projection.edgeIds.forEach(edge => visibleEdges.push(edge));
   visibleEdgeSet = new Set(visibleEdges);
 
-  updateFocusStyling(projection.rootIds);
   positionNodes();
   syncVisibility();
+  updateFocusStyling(projection.rootIds);
   renderScorePanel();
   zoomToVisible();
 
