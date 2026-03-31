@@ -97,50 +97,51 @@ body {{
   outline: none;
 }}
 .search-box input:focus {{ border-color: var(--blue); }}
-.search-box .clear-btn {{
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 2px 6px;
+.legend {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
 }}
-.filters {{
+.legend .row {{
   display: flex;
   align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
 }}
-.toggle {{
-  display: flex;
+.legend .legend-key {{
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-dim);
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
+  gap: 8px;
 }}
-.toggle input {{
+.legend .legend-toggle {{
   accent-color: var(--blue);
   cursor: pointer;
 }}
-.toggle input:checked + span {{ color: var(--blue); }}
-.legend {{
-  position: absolute;
-  top: 58px;
+.compact-legend {{
+  position: fixed;
+  top: 74px;
   right: 12px;
   z-index: 15;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  background: var(--surface);
+  width: 220px;
+  padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-  font-size: 11px;
+  border-radius: 14px;
+  background: rgba(20, 24, 32, 0.92);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.38);
+  backdrop-filter: blur(16px);
+  display: none;
 }}
-.legend .row {{ display: flex; align-items: center; gap: 6px; }}
+.compact-legend.visible {{
+  display: flex;
+}}
+.compact-legend .row {{
+  justify-content: flex-start;
+}}
 .legend .dot {{
   width: 10px;
   height: 10px;
@@ -166,18 +167,12 @@ body {{
   stroke-linejoin: round;
 }}
 .score-panel {{
-  position: absolute;
-  top: 212px;
-  right: 12px;
-  width: 320px;
-  max-height: calc(100vh - 230px);
-  overflow: auto;
-  z-index: 15;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }}
 .score-panel h2 {{
   font-size: 13px;
@@ -396,9 +391,228 @@ body {{
   text-decoration: none;
   margin-right: 8px;
 }}
+.tools-body {{
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}}
+.tools-actions {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}}
+.tools-actions .toolbar-btn {{
+  min-width: 150px;
+}}
+.viewer-sidebar {{
+  position: fixed;
+  top: 74px;
+  right: 12px;
+  bottom: 12px;
+  width: min(360px, calc(100vw - 24px));
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  background: rgba(20, 24, 32, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
+  backdrop-filter: blur(18px);
+  transform: translateX(calc(100% + 24px));
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 280ms ease;
+  overflow: hidden;
+}}
+.viewer-sidebar.open {{
+  transform: translateX(0);
+  box-shadow: 0 22px 60px rgba(0,0,0,0.55);
+}}
+.sidebar-handle {{
+  position: fixed;
+  top: 50%;
+  right: 12px;
+  width: 46px;
+  height: 72px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(20, 24, 32, 0.92);
+  color: var(--text-bright);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 30px rgba(0,0,0,0.35);
+  transition: right 280ms cubic-bezier(0.22, 1, 0.36, 1), color 180ms ease, background 180ms ease, transform 180ms ease;
+  z-index: 19;
+  transform: translateY(-50%);
+}}
+.sidebar-handle:hover {{
+  color: var(--blue);
+  transform: translateY(-50%) scale(1.02);
+}}
+.sidebar-handle.open {{
+  right: calc(min(360px, calc(100vw - 24px)) + 24px);
+}}
+.sidebar-handle svg {{
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+}}
+.sidebar-handle path {{
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: center;
+}}
+.sidebar-handle.open path {{
+  transform: rotate(180deg);
+}}
+.sidebar-header {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}}
+.sidebar-header h2 {{
+  font-size: 15px;
+  color: var(--text-bright);
+}}
+.sidebar-tabs {{
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}}
+.sidebar-tab {{
+  flex: 1 1 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 8px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}}
+.sidebar-tab:hover {{
+  color: var(--text-bright);
+  border-color: rgba(88,166,255,0.3);
+}}
+.sidebar-tab.active {{
+  color: var(--text-bright);
+  background: rgba(88,166,255,0.12);
+  border-color: rgba(88,166,255,0.45);
+}}
+.sidebar-body {{
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}}
+.sidebar-section {{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}}
+.sidebar-pane {{
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}}
+.sidebar-pane.active {{
+  display: flex;
+}}
+.sidebar-pane-title {{
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}}
+.sidebar-meta-toggle {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+}}
+.sidebar-meta-toggle input {{
+  accent-color: var(--blue);
+}}
+.sidebar-body::-webkit-scrollbar,
+.analysis-body::-webkit-scrollbar {{
+  width: 10px;
+}}
+.sidebar-body::-webkit-scrollbar-track,
+.analysis-body::-webkit-scrollbar-track {{
+  background: rgba(255,255,255,0.04);
+  border-radius: 999px;
+}}
+.sidebar-body::-webkit-scrollbar-thumb,
+.analysis-body::-webkit-scrollbar-thumb {{
+  background: linear-gradient(180deg, rgba(88,166,255,0.55), rgba(179,130,240,0.55));
+  border-radius: 999px;
+  border: 2px solid rgba(20,24,32,0.92);
+}}
+.analysis-toolbar {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}}
+.analysis-toolbar .toolbar-btn {{
+  flex-shrink: 0;
+}}
+.analysis-toolbar .analysis-status {{
+  flex: 1;
+}}
+.map-toolbar {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}}
+.map-refresh-btn {{
+  min-width: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}}
+.map-refresh-btn svg {{
+  width: 16px;
+  height: 16px;
+}}
+.map-refresh-btn path {{
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}}
+.analysis-status {{
+  font-size: 12px;
+  color: var(--text-dim);
+}}
 #address-map {{
   flex: 1;
-  min-height: 320px;
+  min-height: 360px;
+  border-radius: 12px;
+  overflow: hidden;
 }}
 .focus-btn {{
   cursor: pointer;
@@ -410,65 +624,53 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <div class="topbar">
   <h1>{title}</h1>
   <div class="stats" id="stats">{node_count} nodes, {edge_count} edges</div>
-  <div class="filters">
-    <label class="toggle">
-      <input id="show-identities" type="checkbox" checked />
-      <span>identities</span>
-    </label>
-    <label class="toggle">
-      <input id="show-companies" type="checkbox" checked />
-      <span>companies</span>
-    </label>
-    <label class="toggle">
-      <input id="show-charities" type="checkbox" checked />
-      <span>charities</span>
-    </label>
-    <label class="toggle">
-      <input id="show-people" type="checkbox" checked />
-      <span>people</span>
-    </label>
-    <label class="toggle">
-      <input id="show-addresses" type="checkbox" checked />
-      <span>addresses</span>
-    </label>
-    <label class="toggle">
-      <input id="indirect-only" type="checkbox" />
-      <span>indirect only</span>
-    </label>
-  </div>
   <div class="search-box">
-    <button class="toolbar-btn" id="open-map" type="button">Map visible addresses</button>
-    <button class="toolbar-btn" id="open-analysis" type="button">Explain selected connection (0/2)</button>
     <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
-    <button class="clear-btn" id="clear-search">&times;</button>
   </div>
 </div>
+<div class="legend compact-legend" id="compact-legend"></div>
+<button class="sidebar-handle open" id="toggle-sidebar" type="button" aria-label="Hide tools sidebar" title="Hide tools sidebar">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>
+</button>
+<aside class="viewer-sidebar open" id="viewer-sidebar">
+  <div class="sidebar-header">
+    <h2>Tools</h2>
+  </div>
+  <div class="sidebar-tabs">
+    <button class="sidebar-tab active" data-tab="legend" type="button">Filter</button>
+    <button class="sidebar-tab" data-tab="map" type="button">Map</button>
+    <button class="sidebar-tab" data-tab="ranked" type="button">Ranked</button>
+  </div>
+  <div class="sidebar-body">
+    <div class="sidebar-pane active" data-pane="legend">
+      <div class="sidebar-section">
+        <div class="legend" id="legend"></div>
+        <label class="sidebar-meta-toggle" title="Show only indirect paths">
+          <span>Indirect only</span>
+          <input id="indirect-only" type="checkbox" />
+        </label>
+      </div>
+    </div>
+    <div class="sidebar-pane" data-pane="map">
+      <div class="sidebar-section">
+        <div class="map-toolbar">
+          <div class="sidebar-pane-title">Visible addresses</div>
+          <button class="toolbar-btn map-refresh-btn" id="refresh-map" type="button" aria-label="Refresh map" title="Refresh map">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.34-5.66M20 4v7h-7"></path></svg>
+          </button>
+        </div>
+        <div class="analysis-status" id="map-status">Open the map tab to geocode the visible addresses.</div>
+        <div id="address-map"></div>
+      </div>
+    </div>
+    <div class="sidebar-pane" data-pane="ranked">
+      <div class="score-panel" id="score-panel"></div>
+    </div>
+  </div>
+</aside>
 <div id="graph"></div>
-<div class="legend" id="legend"></div>
-<div class="score-panel" id="score-panel"></div>
 <div class="tooltip" id="tooltip"></div>
 <div class="context-menu" id="context-menu"></div>
-<div class="modal-backdrop" id="map-modal">
-  <div class="modal-card">
-    <div class="modal-header">
-      <h2>Visible addresses map</h2>
-      <button class="modal-close" id="close-map" type="button">Close</button>
-    </div>
-    <div class="modal-status" id="map-status">Open the map to geocode the visible addresses.</div>
-    <div id="address-map"></div>
-  </div>
-</div>
-<div class="modal-backdrop" id="analysis-modal">
-  <div class="modal-card">
-    <div class="modal-header">
-      <h2>Connection analysis</h2>
-      <button class="toolbar-btn" id="copy-analysis" type="button" disabled>Copy</button>
-      <button class="modal-close" id="close-analysis" type="button">Close</button>
-    </div>
-    <div class="modal-status" id="analysis-status">Select two nodes and ask for an explanation.</div>
-    <div class="analysis-body" id="analysis-body"></div>
-  </div>
-</div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
@@ -477,17 +679,35 @@ const allEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== 
 const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
 const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
 const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
+const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
 
-function mergeKindForNode(node) {{
-  if (node?.kind === "address") return "address";
-  if (node?.kind === "person" && node?.lane === 4) return "person";
+function isAddressMergeNode(node) {{
+  return node?.kind === "address";
+}}
+
+function isPersonMergeNode(node) {{
+  return node?.kind === "person" && node?.lane === 4;
+}}
+
+function isIdentityMergeNode(node) {{
+  return node?.kind === "seed_alias" && node?.lane === 1;
+}}
+
+function canStartMergeFromNode(node) {{
+  return isAddressMergeNode(node) || isPersonMergeNode(node);
+}}
+
+function mergeKindForPair(sourceNode, targetNode) {{
+  if (isAddressMergeNode(sourceNode) && isAddressMergeNode(targetNode)) return "address";
+  if (isPersonMergeNode(sourceNode) && isPersonMergeNode(targetNode)) return "person";
+  if (isPersonMergeNode(sourceNode) && isIdentityMergeNode(targetNode)) return "identity";
   return "";
 }}
 
 function normalizeMergeOverrides(overrides) {{
-  const normalized = {{ address: [], person: [] }};
+  const normalized = {{ address: [], person: [], identity: [] }};
   if (!overrides || typeof overrides !== "object") return normalized;
-  ["address", "person"].forEach(kind => {{
+  ["address", "person", "identity"].forEach(kind => {{
     normalized[kind] = Array.isArray(overrides[kind])
       ? overrides[kind]
           .filter(row => row && row.sourceId && row.targetId)
@@ -542,7 +762,7 @@ function applyManualMergeOverrides(nodes, edges, overrides) {{
   const nodeMap = new Map(nodes.map(node => [node.id, node]));
   const redirects = new Map();
 
-  ["address", "person"].forEach(kind => {{
+  ["address", "person", "identity"].forEach(kind => {{
     normalized[kind].forEach(override => {{
       const sourceId = resolveMergeTarget(override.sourceId, redirects);
       const targetId = resolveMergeTarget(override.targetId, redirects);
@@ -550,7 +770,7 @@ function applyManualMergeOverrides(nodes, edges, overrides) {{
       const sourceNode = nodeMap.get(sourceId);
       const targetNode = nodeMap.get(targetId);
       if (!sourceNode || !targetNode) return;
-      if (mergeKindForNode(sourceNode) !== kind || mergeKindForNode(targetNode) !== kind) return;
+      if (mergeKindForPair(sourceNode, targetNode) !== kind) return;
 
       redirects.set(sourceId, targetId);
       const aliases = new Set([
@@ -561,23 +781,28 @@ function applyManualMergeOverrides(nodes, edges, overrides) {{
       ].filter(Boolean));
       targetNode.aliases = [...aliases].sort();
 
+      if (kind === "address") {{
+        if (!targetNode.postcode && sourceNode.postcode) targetNode.postcode = sourceNode.postcode;
+        if (!targetNode.country && sourceNode.country) targetNode.country = sourceNode.country;
+        if (!targetNode.normalized_key && sourceNode.normalized_key) targetNode.normalized_key = sourceNode.normalized_key;
+      }} else {{
+        targetNode.identity_keys = [
+          ...new Set([...(targetNode.identity_keys || []), ...(sourceNode.identity_keys || [])]),
+        ].sort();
+      }}
+
       if (kind === "person") {{
         if (String(sourceNode.label || "").length > String(targetNode.label || "").length) {{
           targetNode.label = sourceNode.label;
         }}
-        targetNode.identity_keys = [
-          ...new Set([...(targetNode.identity_keys || []), ...(sourceNode.identity_keys || [])]),
-        ].sort();
-      }} else {{
-        if (!targetNode.postcode && sourceNode.postcode) targetNode.postcode = sourceNode.postcode;
-        if (!targetNode.country && sourceNode.country) targetNode.country = sourceNode.country;
-        if (!targetNode.normalized_key && sourceNode.normalized_key) targetNode.normalized_key = sourceNode.normalized_key;
       }}
 
       const tooltip = Array.isArray(targetNode.tooltip_lines) ? targetNode.tooltip_lines.slice() : [];
-      const mergeNotice = kind === "person"
-        ? `Manually merged with: ${{sourceNode.label}}`
-        : `Manually merged address: ${{sourceNode.label}}`;
+      const mergeNotice = kind === "address"
+        ? `Manually merged address: ${{sourceNode.label}}`
+        : kind === "identity"
+          ? `Manually merged into this identity: ${{sourceNode.label}}`
+          : `Manually merged with: ${{sourceNode.label}}`;
       if (!tooltip.includes(mergeNotice)) tooltip.push(mergeNotice);
       targetNode.tooltip_lines = tooltip;
     }});
@@ -610,7 +835,7 @@ function applyManualMergeOverrides(nodes, edges, overrides) {{
   nodes.splice(0, nodes.length, ...survivingNodes);
   const survivingNodeMap = new Map(nodes.map(node => [node.id, node]));
   nodes.forEach(node => {{
-    if (mergeKindForNode(node) !== "person") return;
+    if (!isPersonMergeNode(node) && !isIdentityMergeNode(node)) return;
     const linkedEdges = edges.filter(edge => edge.kind === "role" && (edge.source === node.id || edge.target === node.id));
     const orgIds = new Set();
     const roleKeys = new Set();
@@ -643,29 +868,24 @@ const viewerState = {{
 const container = document.getElementById("graph");
 const tooltipEl = document.getElementById("tooltip");
 const legendEl = document.getElementById("legend");
+const compactLegendEl = document.getElementById("compact-legend");
 const scorePanelEl = document.getElementById("score-panel");
 const statsEl = document.getElementById("stats");
 const contextMenuEl = document.getElementById("context-menu");
-const openMapButton = document.getElementById("open-map");
-const openAnalysisButton = document.getElementById("open-analysis");
-const mapModalEl = document.getElementById("map-modal");
-const closeMapButton = document.getElementById("close-map");
+const viewerSidebarEl = document.getElementById("viewer-sidebar");
+const sidebarTabEls = Array.from(document.querySelectorAll(".sidebar-tab"));
+const sidebarPaneEls = Array.from(document.querySelectorAll(".sidebar-pane"));
+const toggleSidebarButton = document.getElementById("toggle-sidebar");
+const refreshMapButton = document.getElementById("refresh-map");
 const mapStatusEl = document.getElementById("map-status");
-const analysisModalEl = document.getElementById("analysis-modal");
-const copyAnalysisButton = document.getElementById("copy-analysis");
-const closeAnalysisButton = document.getElementById("close-analysis");
-const analysisStatusEl = document.getElementById("analysis-status");
-const analysisBodyEl = document.getElementById("analysis-body");
 const searchInput = document.getElementById("search");
-const clearBtn = document.getElementById("clear-search");
-const showIdentitiesInput = document.getElementById("show-identities");
-const showCompaniesInput = document.getElementById("show-companies");
-const showCharitiesInput = document.getElementById("show-charities");
-const showPeopleInput = document.getElementById("show-people");
-const showAddressesInput = document.getElementById("show-addresses");
-const indirectOnlyInput = document.getElementById("indirect-only");
+let showIdentitiesInput = null;
+let showCompaniesInput = null;
+let showCharitiesInput = null;
+let showPeopleInput = null;
+let showAddressesInput = null;
+let indirectOnlyInput = document.getElementById("indirect-only");
 const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
-let lastAnalysisPayload = null;
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -778,16 +998,53 @@ function escapeHtml(value) {{
 
 function renderLegend() {{
   legendEl.innerHTML = [
-    `<div class="row">${{iconSvgMarkup(iconSpec("identity"))}} Identity</div>`,
-    `<div class="row">${{iconSvgMarkup(iconSpec("charity"))}} Charity</div>`,
-    `<div class="row">${{iconSvgMarkup(iconSpec("company"))}} Company</div>`,
-    `<div class="row">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</div>`,
-    `<div class="row">${{iconSvgMarkup(iconSpec("address"))}} Address</div>`,
-    `<div class="row">${{iconSvgMarkup(iconSpec("person"))}} Person</div>`,
-    `<div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</div>`,
+    `<label class="row" title="Identities">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("identity"))}} Identity</span>
+      <input class="legend-toggle" id="show-identities" type="checkbox" checked aria-label="Identities" />
+    </label>`,
+    `<label class="row" title="Charities">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("charity"))}} Charity</span>
+      <input class="legend-toggle" id="show-charities" type="checkbox" checked aria-label="Charities" />
+    </label>`,
+    `<label class="row" title="Companies">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("company"))}} Company</span>
+      <input class="legend-toggle" id="show-companies" type="checkbox" checked aria-label="Companies" />
+    </label>`,
+    `<div class="row" title="Other organisations">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span>
+    </div>`,
+    `<label class="row" title="Addresses">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span>
+      <input class="legend-toggle" id="show-addresses" type="checkbox" checked aria-label="Addresses" />
+    </label>`,
+    `<label class="row" title="People">
+      <span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span>
+      <input class="legend-toggle" id="show-people" type="checkbox" checked aria-label="People" />
+    </label>`,
+    `<div class="row" title="OFAC sanctioned">
+      <span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span>
+    </div>`,
   ].join("");
 }}
 renderLegend();
+showIdentitiesInput = document.getElementById("show-identities");
+showCompaniesInput = document.getElementById("show-companies");
+showCharitiesInput = document.getElementById("show-charities");
+showPeopleInput = document.getElementById("show-people");
+showAddressesInput = document.getElementById("show-addresses");
+
+function renderCompactLegend() {{
+  compactLegendEl.innerHTML = [
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("identity"))}} Identity</span></div>`,
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("charity"))}} Charity</span></div>`,
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("company"))}} Company</span></div>`,
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span></div>`,
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span></div>`,
+    `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span></div>`,
+    `<div class="row"><span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span></div>`,
+  ].join("");
+}}
+renderCompactLegend();
 
 function nodeTypeKey(node) {{
   if (node.kind === "seed" || node.lane === 1) return "identity";
@@ -1325,49 +1582,59 @@ function registryActionForNode(node) {{
   return null;
 }}
 
+function isCompaniesHouseDocumentUrl(value) {{
+  try {{
+    const url = new URL(String(value || "").trim(), window.location.origin);
+    return /(^|\.)document-api\.company-information\.service\.gov\.uk$/i.test(url.hostname)
+      && /^\/document\/.+/.test(url.pathname);
+  }} catch (_error) {{
+    return false;
+  }}
+}}
+
 function evidenceActionUrl(evidence) {{
   const documentUrl = String(evidence?.document_url || "").trim();
   if (!documentUrl) return "";
   const pageNumber = Number(evidence?.page_number || 0);
+  if (isCompaniesHouseDocumentUrl(documentUrl)) {{
+    const params = new URLSearchParams({{ url: documentUrl }});
+    if (pageNumber) params.set("page", String(pageNumber));
+    return `${{EVIDENCE_FILE_URL}}?${{params.toString()}}`;
+  }}
   if (!pageNumber || documentUrl.includes("#") || !/\\.pdf($|[?#])/i.test(documentUrl)) return documentUrl;
   return `${{documentUrl}}#page=${{pageNumber}}`;
 }}
 
-function evidenceActionsForNode(node) {{
-  const seen = new Set();
-  const actions = [];
-  (edgesByNodeId.get(node.id) || []).forEach(edge => {{
-    const evidence = edge?.evidence;
-    const url = evidenceActionUrl(evidence);
-    if (!url) return;
-    const title = String(evidence?.title || edge.tooltip || "Evidence").trim();
-    const pageHint = String(evidence?.page_hint || "").trim();
-    const key = `${{url}}||${{title}}||${{pageHint}}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    actions.push({{
-      type: "open_url",
-      label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
-      url,
-    }});
-  }});
-  return actions.slice(0, 6);
+function evidenceActionsForEdge(edge) {{
+  const evidence = edge?.evidence;
+  const url = evidenceActionUrl(evidence);
+  if (!url) return [];
+  const title = String(evidence?.title || edge.tooltip || "Evidence").trim();
+  const pageHint = String(evidence?.page_hint || "").trim();
+  return [{{
+    type: "open_url",
+    label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
+    url,
+  }}];
 }}
 
 function mergeActionsForNode(node) {{
-  const kind = mergeKindForNode(node);
-  if (!kind) return [];
   const actions = [];
   const pendingNode = nodeById.get(viewerState.pendingMergeNodeId);
 
-  if (pendingNode && pendingNode.id !== node.id && mergeKindForNode(pendingNode) === kind) {{
-    actions.push({{
-      type: "merge_commit",
-      kind,
-      sourceId: pendingNode.id,
-      targetId: node.id,
-      label: `Merge ${{pendingNode.label}} into this ${{kind}} permanently`,
-    }});
+  if (pendingNode && pendingNode.id !== node.id) {{
+    const kind = mergeKindForPair(pendingNode, node);
+    if (kind) {{
+      actions.push({{
+        type: "merge_commit",
+        kind,
+        sourceId: pendingNode.id,
+        targetId: node.id,
+        label: kind === "identity"
+          ? `Merge ${{pendingNode.label}} into this identity permanently`
+          : `Merge ${{pendingNode.label}} into this ${{kind}} permanently`,
+      }});
+    }}
     actions.push({{
       type: "merge_clear",
       label: "Clear merge selection",
@@ -1383,10 +1650,11 @@ function mergeActionsForNode(node) {{
     return actions;
   }}
 
+  if (!canStartMergeFromNode(node)) return actions;
   actions.push({{
     type: "merge_prepare",
     nodeId: node.id,
-    label: `Use this ${{kind}} as the merge source`,
+    label: "Merge",
   }});
   return actions;
 }}
@@ -1417,8 +1685,8 @@ async function syncLocalOverridesFromServer() {{
     const payload = await response.json();
     const remote = normalizeMergeOverrides(payload?.overrides || payload);
     const local = loadLocalMergeOverrides();
-    const remoteCount = remote.address.length + remote.person.length;
-    const localCount = local.address.length + local.person.length;
+    const remoteCount = remote.address.length + remote.person.length + remote.identity.length;
+    const localCount = local.address.length + local.person.length + local.identity.length;
     if (remoteCount > localCount) {{
       saveLocalMergeOverrides(remote);
       window.location.reload();
@@ -1427,12 +1695,40 @@ async function syncLocalOverridesFromServer() {{
   }}
 }}
 
-function updateAnalysisButton() {{
-  openAnalysisButton.textContent = `Explain selected connection (${{viewerState.analysisNodeIds.length}}/2)`;
+function toggleSidebar(forceOpen) {{
+  const nextOpen = typeof forceOpen === "boolean"
+    ? forceOpen
+    : !viewerSidebarEl.classList.contains("open");
+  viewerSidebarEl.classList.toggle("open", nextOpen);
+  toggleSidebarButton.classList.toggle("open", nextOpen);
+  compactLegendEl.classList.toggle("visible", !nextOpen);
+  toggleSidebarButton.setAttribute("aria-label", nextOpen ? "Hide tools sidebar" : "Show tools sidebar");
+  toggleSidebarButton.setAttribute("title", nextOpen ? "Hide tools sidebar" : "Show tools sidebar");
 }}
+toggleSidebar(viewerSidebarEl.classList.contains("open"));
+
+function setSidebarTab(tabName) {{
+  sidebarTabEls.forEach(el => el.classList.toggle("active", el.dataset.tab === tabName));
+  sidebarPaneEls.forEach(el => el.classList.toggle("active", el.dataset.pane === tabName));
+  if (tabName === "map") {{
+    window.setTimeout(() => {{
+      if (addressMap) addressMap.invalidateSize();
+    }}, 0);
+  }}
+}}
+setSidebarTab("legend");
 
 function analysisActionsForNode(node) {{
   const selected = viewerState.analysisNodeIds.includes(node.id);
+  if (selected && viewerState.analysisNodeIds.length === 2) {{
+    return [{{
+      type: "analysis_run",
+      label: "Explain selected connection",
+    }}, {{
+      type: "analysis_clear",
+      label: "Clear selected analysis nodes",
+    }}];
+  }}
   if (selected) {{
     return [{{
       type: "analysis_remove",
@@ -1448,13 +1744,12 @@ function analysisActionsForNode(node) {{
     }}];
   }}
   return [{{
+    type: "analysis_run",
+    label: "Explain selected connection",
+  }}, {{
     type: "analysis_clear",
     label: "Clear selected analysis nodes",
   }}];
-}}
-
-function closeAnalysisModal() {{
-  analysisModalEl.classList.remove("open");
 }}
 
 function formatAnalysisCopyText(payload) {{
@@ -1478,14 +1773,12 @@ function formatAnalysisCopyText(payload) {{
 }}
 
 function renderAnalysisResult(payload) {{
-  lastAnalysisPayload = payload;
-  copyAnalysisButton.disabled = false;
   const sourceNode = nodeById.get(payload.sourceNodeId);
   const targetNode = nodeById.get(payload.targetNodeId);
   const pathItems = Array.isArray(payload.path?.edges) ? payload.path.edges : [];
   const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map(item => [String(item.id || ""), item]));
   const claims = Array.isArray(payload.claims) ? payload.claims : [];
-  analysisBodyEl.innerHTML = [
+  const content = [
     `<div class="analysis-selection">${{escapeHtml(sourceNode?.label || payload.sourceNodeId)}} to ${{escapeHtml(targetNode?.label || payload.targetNodeId)}}</div>`,
     `<div class="analysis-text">${{escapeHtml(payload.summary || "No explanation returned.").replaceAll("\\n", "<br>")}}</div>`,
     claims.length
@@ -1514,19 +1807,38 @@ function renderAnalysisResult(payload) {{
         `).join("")}}</div>`
       : "",
   ].join("");
+  const popup = window.open("", "_blank", "noopener,noreferrer,width=680,height=760");
+  if (!popup) return;
+  popup.document.write(`<!DOCTYPE html><html><head><title>Connection analysis</title><meta charset="utf-8"><style>
+    body {{ margin: 0; padding: 18px; background: #161a22; color: #d7dde7; font: 13px/1.6 "Segoe UI", system-ui, sans-serif; }}
+    a {{ color: #58a6ff; text-decoration: none; }}
+    .analysis-selection {{ font-size: 12px; color: #94a3b8; margin-bottom: 12px; }}
+    .analysis-text {{ margin-bottom: 14px; }}
+    .analysis-claims, .analysis-path {{ display: flex; flex-direction: column; gap: 10px; }}
+    .analysis-claim, .analysis-path-item {{ border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 10px; background: rgba(255,255,255,0.03); }}
+    .analysis-claim-text {{ margin-bottom: 6px; }}
+    .toolbar {{ display: flex; justify-content: flex-end; margin-bottom: 14px; }}
+    button {{ border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d7dde7; border-radius: 8px; padding: 8px 10px; cursor: pointer; }}
+  </style></head><body>
+    <div class="toolbar"><button id="copy-analysis-popup" type="button">Copy</button></div>
+    ${{content}}
+    <script>
+      const copyText = ${json.dumps("__COPY_TEXT__")};
+      document.getElementById("copy-analysis-popup").addEventListener("click", async () => {{
+        try {{
+          await navigator.clipboard.writeText(copyText);
+        }} catch (_error) {{
+        }}
+      }});
+    <\/script>
+  </body></html>`.replace(${json.dumps("__COPY_TEXT__")}, JSON.stringify(formatAnalysisCopyText(payload))));
+  popup.document.close();
 }}
 
-async function openAnalysisModal() {{
+async function openAnalysisView() {{
   if (viewerState.analysisNodeIds.length !== 2) {{
-    window.alert("Select exactly two nodes for connection analysis.");
     return;
   }}
-
-  analysisModalEl.classList.add("open");
-  analysisStatusEl.textContent = "Analyzing the selected connection...";
-  analysisBodyEl.innerHTML = "";
-  lastAnalysisPayload = null;
-  copyAnalysisButton.disabled = true;
   const [sourceNodeId, targetNodeId] = viewerState.analysisNodeIds;
   const response = await fetch(ANALYZE_CONNECTION_URL, {{
     method: "POST",
@@ -1535,12 +1847,37 @@ async function openAnalysisModal() {{
   }});
   const payload = await response.json().catch(() => ({{}}));
   if (!response.ok) {{
-    analysisStatusEl.textContent = payload.error || "Connection analysis failed.";
     if (payload.summary) renderAnalysisResult({{ ...payload, sourceNodeId, targetNodeId }});
     return;
   }}
-  analysisStatusEl.textContent = "Connection analysis ready.";
   renderAnalysisResult(payload);
+}}
+
+function openEdgeContextMenu(event, edge) {{
+  event.preventDefault();
+  event.stopPropagation();
+  hideTooltip();
+
+  const sourceNode = nodeById.get(edge.source);
+  const targetNode = nodeById.get(edge.target);
+  const actions = evidenceActionsForEdge(edge);
+  contextMenuEl._actions = actions;
+  contextMenuEl.innerHTML = [
+    `<div class="context-menu-title">${{escapeHtml(sourceNode?.label || edge.source)}} to ${{escapeHtml(targetNode?.label || edge.target)}}</div>`,
+    `<div class="context-menu-subtitle">${{escapeHtml(edge.phrase || edge.role_type || "link")}}</div>`,
+    actions.length
+      ? actions
+          .map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${{index}}">${{escapeHtml(action.label)}}</button>`)
+          .join("")
+      : `<div class="context-menu-empty">No evidence is available for this link yet.</div>`,
+  ].join("");
+  contextMenuEl.style.display = "block";
+
+  const rect = contextMenuEl.getBoundingClientRect();
+  const maxLeft = window.innerWidth - rect.width - 10;
+  const maxTop = window.innerHeight - rect.height - 10;
+  contextMenuEl.style.left = Math.max(10, Math.min(event.clientX, maxLeft)) + "px";
+  contextMenuEl.style.top = Math.max(10, Math.min(event.clientY, maxTop)) + "px";
 }}
 
 function closeContextMenu() {{
@@ -1580,39 +1917,93 @@ function ensureAddressMap() {{
   addressMarkersLayer = L.layerGroup().addTo(addressMap);
 }}
 
+function normalizeGeocodeValue(value) {{
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}}
+
+function buildGeocodeQueries(node) {{
+  const label = String(node?.label || "").trim();
+  const postcode = String(node?.postcode || "").trim();
+  const country = String(node?.country || "").trim();
+  const labelNorm = normalizeGeocodeValue(label);
+  const queries = [];
+  const pushQuery = value => {{
+    const cleaned = String(value || "").trim();
+    if (!cleaned) return;
+    const normalized = normalizeGeocodeValue(cleaned);
+    if (!normalized) return;
+    if (queries.some(existing => normalizeGeocodeValue(existing) === normalized)) return;
+    queries.push(cleaned);
+  }};
+  const extras = [];
+  if (postcode && !labelNorm.includes(normalizeGeocodeValue(postcode))) extras.push(postcode);
+  if (country && !labelNorm.includes(normalizeGeocodeValue(country))) extras.push(country);
+  pushQuery(label);
+  pushQuery([label, ...extras].filter(Boolean).join(", "));
+  if (postcode) pushQuery([postcode, country].filter(Boolean).join(", "));
+  if (/\\bpo\\.?\\s*box\\b/i.test(label) && postcode) {{
+    pushQuery(postcode);
+  }}
+  return queries;
+}}
+
 async function geocodeAddressNode(node) {{
   const cacheKey = String(node.normalized_key || node.label || "").trim();
   if (!cacheKey) return null;
   const cache = loadGeocodeCache();
   if (cache[cacheKey]) return cache[cacheKey];
 
-  const query = [node.label, node.postcode, node.country]
-    .filter(value => String(value || "").trim())
-    .join(", ");
-  const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${{encodeURIComponent(query)}}`);
-  if (!response.ok) return null;
-  const rows = await response.json();
-  if (!Array.isArray(rows) || !rows.length) return null;
-  const first = rows[0];
-  const resolved = {{
-    lat: Number(first.lat),
-    lon: Number(first.lon),
-    label: String(first.display_name || node.label || ""),
-  }};
-  if (!Number.isFinite(resolved.lat) || !Number.isFinite(resolved.lon)) return null;
-  cache[cacheKey] = resolved;
-  saveGeocodeCache(cache);
-  return resolved;
+  const queries = buildGeocodeQueries(node);
+  for (const query of queries) {{
+    const attempts = [
+      async () => {{
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${{encodeURIComponent(query)}}`);
+        if (!response.ok) return null;
+        const rows = await response.json();
+        if (!Array.isArray(rows) || !rows.length) return null;
+        return {{
+          lat: Number(rows[0].lat),
+          lon: Number(rows[0].lon),
+          label: String(rows[0].display_name || node.label || ""),
+        }};
+      }},
+      async () => {{
+        const response = await fetch(`https://photon.komoot.io/api/?limit=1&q=${{encodeURIComponent(query)}}`);
+        if (!response.ok) return null;
+        const payload = await response.json();
+        const feature = Array.isArray(payload?.features) ? payload.features[0] : null;
+        const coords = Array.isArray(feature?.geometry?.coordinates) ? feature.geometry.coordinates : null;
+        if (!coords || coords.length < 2) return null;
+        return {{
+          lat: Number(coords[1]),
+          lon: Number(coords[0]),
+          label: String(feature?.properties?.name || feature?.properties?.street || node.label || ""),
+        }};
+      }},
+    ];
+    for (const attempt of attempts) {{
+      try {{
+        const resolved = await attempt();
+        if (!resolved) continue;
+        if (!Number.isFinite(resolved.lat) || !Number.isFinite(resolved.lon)) continue;
+        cache[cacheKey] = resolved;
+        saveGeocodeCache(cache);
+        return resolved;
+      }} catch (_error) {{
+      }}
+    }}
+  }}
+  return null;
 }}
 
-function closeMapModal() {{
-  mapModalEl.classList.remove("open");
-}}
-
-async function openMapModal() {{
+async function openMapView() {{
   closeContextMenu();
   hideTooltip();
-  mapModalEl.classList.add("open");
+  setSidebarTab("map");
+  toggleSidebar(true);
 
   const addressNodes = visibleAddressNodes();
   if (!addressNodes.length) {{
@@ -1621,6 +2012,9 @@ async function openMapModal() {{
   }}
 
   ensureAddressMap();
+  window.setTimeout(() => {{
+    if (addressMap) addressMap.invalidateSize();
+  }}, 0);
   currentMapRequestId += 1;
   const requestId = currentMapRequestId;
   const limitedNodes = addressNodes.slice(0, 50);
@@ -1669,7 +2063,6 @@ function openContextMenu(event, node) {{
   const actions = [];
   const registryAction = registryActionForNode(node);
   if (registryAction) actions.push(registryAction);
-  evidenceActionsForNode(node).forEach(action => actions.push(action));
   mergeActionsForNode(node).forEach(action => actions.push(action));
   analysisActionsForNode(node).forEach(action => actions.push(action));
 
@@ -1810,7 +2203,8 @@ function renderEdges() {{
   groups.select("line.role-edge-hit")
     .on("mouseover", (event, edge) => showTooltip(event, edge.tooltip_lines || [edge.tooltip || "link"]))
     .on("mousemove", positionTooltip)
-    .on("mouseout", hideTooltip);
+    .on("mouseout", hideTooltip)
+    .on("contextmenu", openEdgeContextMenu);
 }}
 
 function syncVisibility() {{
@@ -1952,7 +2346,6 @@ contextMenuEl.addEventListener("click", (event) => {{
   if (action.type === "merge_prepare") {{
     viewerState.pendingMergeNodeId = String(action.nodeId || "");
     closeContextMenu();
-    window.alert("Merge source selected. Right-click the target node to finish the permanent merge.");
     return;
   }}
   if (action.type === "merge_clear") {{
@@ -1976,19 +2369,23 @@ contextMenuEl.addEventListener("click", (event) => {{
   }}
   if (action.type === "analysis_add") {{
     viewerState.analysisNodeIds = [...viewerState.analysisNodeIds, String(action.nodeId || "")].slice(0, 2);
-    updateAnalysisButton();
     closeContextMenu();
     return;
   }}
   if (action.type === "analysis_remove") {{
     viewerState.analysisNodeIds = viewerState.analysisNodeIds.filter(id => id !== String(action.nodeId || ""));
-    updateAnalysisButton();
     closeContextMenu();
+    return;
+  }}
+  if (action.type === "analysis_run") {{
+    closeContextMenu();
+    openAnalysisView().catch(() => {{
+      window.alert("Connection analysis failed.");
+    }});
     return;
   }}
   if (action.type === "analysis_clear") {{
     viewerState.analysisNodeIds = [];
-    updateAnalysisButton();
     closeContextMenu();
   }}
 }});
@@ -1996,32 +2393,22 @@ contextMenuEl.addEventListener("click", (event) => {{
 document.addEventListener("click", closeContextMenu);
 window.addEventListener("resize", closeContextMenu);
 window.addEventListener("blur", closeContextMenu);
-openMapButton.addEventListener("click", () => {{
-  openMapModal().catch(() => {{
+refreshMapButton.addEventListener("click", () => {{
+  openMapView().catch(() => {{
     mapStatusEl.textContent = "Address geocoding failed.";
   }});
 }});
-closeMapButton.addEventListener("click", closeMapModal);
-mapModalEl.addEventListener("click", (event) => {{
-  if (event.target === mapModalEl) closeMapModal();
-}});
-openAnalysisButton.addEventListener("click", () => {{
-  openAnalysisModal().catch(() => {{
-    analysisStatusEl.textContent = "Connection analysis failed.";
+toggleSidebarButton.addEventListener("click", () => toggleSidebar());
+sidebarTabEls.forEach(el => {{
+  el.addEventListener("click", () => {{
+    const tabName = String(el.dataset.tab || "legend");
+    setSidebarTab(tabName);
+    if (tabName === "map") {{
+      openMapView().catch(() => {{
+        mapStatusEl.textContent = "Address geocoding failed.";
+      }});
+    }}
   }});
-}});
-copyAnalysisButton.addEventListener("click", async () => {{
-  if (!lastAnalysisPayload) return;
-  try {{
-    await navigator.clipboard.writeText(formatAnalysisCopyText(lastAnalysisPayload));
-    analysisStatusEl.textContent = "Connection analysis copied.";
-  }} catch (_error) {{
-    analysisStatusEl.textContent = "Copy failed.";
-  }}
-}});
-closeAnalysisButton.addEventListener("click", closeAnalysisModal);
-analysisModalEl.addEventListener("click", (event) => {{
-  if (event.target === analysisModalEl) closeAnalysisModal();
 }});
 
 const drag = d3.drag()
@@ -2081,7 +2468,6 @@ function renderScorePanel() {{
 
   scorePanelEl.innerHTML = `
     <h2>Top ranked on screen</h2>
-    <p>Score is the current graph ranking signal. It grows as a person or identity picks up more and stronger weighted links across connected organisations and roles.</p>
     ${{body}}
   `;
 }}
@@ -2113,12 +2499,10 @@ searchInput.addEventListener("input", () => {{
   applyViewerState();
 }});
 
-clearBtn.addEventListener("click", () => {{
-  searchInput.value = "";
-  viewerState.searchQuery = "";
-  viewerState.focusedNodeIds.clear();
+searchInput.addEventListener("search", () => {{
+  viewerState.searchQuery = searchInput.value.trim();
+  if (!viewerState.searchQuery) viewerState.focusedNodeIds.clear();
   applyViewerState();
-  searchInput.focus();
 }});
 
 showIdentitiesInput.addEventListener("change", applyViewerState);
@@ -2129,7 +2513,6 @@ showAddressesInput.addEventListener("change", applyViewerState);
 indirectOnlyInput.addEventListener("change", applyViewerState);
 
 applyViewerState();
-updateAnalysisButton();
 syncLocalOverridesFromServer();
 </script>
 </body>
