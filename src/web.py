@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, abort, send_from_directory
 
 GRAPH_DIR = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_GRAPH = GRAPH_DIR / "latest_graph.html"
@@ -24,6 +24,17 @@ def create_app() -> Flask:
                 "</body></html>"
             )
         return DEFAULT_GRAPH.read_text(encoding="utf-8")
+
+    @app.get("/<path:filename>")
+    def graph_asset(filename: str):
+        asset_path = (GRAPH_DIR / filename).resolve()
+        try:
+            asset_path.relative_to(GRAPH_DIR.resolve())
+        except ValueError:
+            abort(404)
+        if not asset_path.is_file():
+            abort(404)
+        return send_from_directory(GRAPH_DIR, filename)
 
     return app
 

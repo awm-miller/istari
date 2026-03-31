@@ -123,9 +123,7 @@
     const kind = normalizeNodeKind(node);
     if (node.sanctioned) return COLORS.red;
     if (kind === "seed_alias") return COLORS.amber;
-    if (kind === "charity") return COLORS.green;
-    if (kind === "company") return 0x0ea5e9;
-    if (kind === "organisation") return COLORS.slate;
+    if (kind === "charity" || kind === "company" || kind === "organisation") return COLORS.green;
     if (kind === "address") return COLORS.purple;
     return COLORS.blue;
   }
@@ -497,6 +495,17 @@
     return filteredIds;
   }
 
+  function expandRelatedAddresses(visibleIds) {
+    if (viewerState.hiddenTypes.has("address")) return new Set(visibleIds);
+    const expandedIds = new Set(visibleIds);
+    [...visibleIds].forEach((id) => {
+      const node = nodeById.get(id);
+      if (!node || node.kind !== "organisation") return;
+      (orgAddressIds.get(id) || new Set()).forEach((addressId) => expandedIds.add(addressId));
+    });
+    return expandedIds;
+  }
+
   function buildSearchProjection(matchedIds) {
     const visibleIds = new Set();
     matchedIds.forEach((id) => visibleIds.add(id));
@@ -560,7 +569,7 @@
           if (nodeById.get(otherId)?.kind === "address") visibleIds.add(otherId);
         });
       });
-    const filteredVisibleIds = applyTypeFilters(visibleIds, matchedIds, { keepDisconnectedIdentities: true });
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), matchedIds, { keepDisconnectedIdentities: true });
     const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
     return { rootIds: matchedIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
   }
@@ -579,7 +588,7 @@
       });
       (indirectIdentityIdsByOrg.get(orgId) || new Set()).forEach((identityId) => visibleIds.add(identityId));
     });
-    const filteredVisibleIds = applyTypeFilters(visibleIds, qualifyingOrgIds, { keepDisconnectedIdentities: true });
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), qualifyingOrgIds, { keepDisconnectedIdentities: true });
     const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
     return { rootIds: qualifyingOrgIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
   }
@@ -590,27 +599,27 @@
     if (matchedIds.size) return buildSearchProjection(matchedIds);
     if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
     if (!rootIds.size) {
-      const visibleIds = applyTypeFilters(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id)), new Set());
+      const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id))), new Set());
       const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
       return { rootIds, visibleIds, edgeIds };
     }
     const subgraph = collectConnectedSubgraph(rootIds);
-    const visibleIds = applyTypeFilters(new Set(subgraph.reachableIds), rootIds);
+    const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(subgraph.reachableIds)), rootIds);
     const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
     return { rootIds, visibleIds, edgeIds };
   }
 
   function textWidth(text, bold = false) {
-    measureCtx.font = `${bold ? 600 : 400} 13px "Segoe UI", system-ui, sans-serif`;
+    measureCtx.font = `${bold ? 700 : 700} ${bold ? 14 : 13}px "Segoe UI", system-ui, sans-serif`;
     return measureCtx.measureText(String(text || "")).width;
   }
 
   function fontSize(node) {
-    return node.kind === "seed_alias" ? 12 : 10.5;
+    return node.kind === "seed_alias" ? 14 : 13;
   }
 
   function pillHeight(node) {
-    return fontSize(node) + 12;
+    return fontSize(node) + 16;
   }
 
   function badgeWidth(node) {
@@ -619,12 +628,12 @@
   }
 
   function focusButtonWidth(node) {
-    return node.kind === "seed" ? 0 : 24;
+    return node.kind === "seed" ? 0 : 26;
   }
 
   function pillWidth(node) {
     const labelWidth = textWidth(node.label || "", node.kind === "seed_alias");
-    return badgeWidth(node) + labelWidth + 32 + focusButtonWidth(node);
+    return badgeWidth(node) + labelWidth + 28 + focusButtonWidth(node);
   }
 
   function avgNeighborX(node, visibleEdgeSet) {
@@ -874,12 +883,64 @@
     return `${documentUrl}#page=${pageNumber}`;
   }
 
+  function evidenceDisplayTitle(evidence, fallback = "Evidence") {
+    const rawTitle = String(evidence?.title || "").trim();
+    if (rawTitle && !rawTitle.includes("$")) return rawTitle;
+    const pathValue = String(evidence?.path || "").trim();
+    if (pathValue) {
+      const parts = pathValue.split(/[\\/]/).filter(Boolean);
+      const lastPart = parts.length ? parts[parts.length - 1] : "";
+      if (lastPart && !lastPart.includes("$")) return lastPart;
+    }
+    const urlValue = String(evidenceActionUrl(evidence) || evidence?.document_url || "").trim();
+    if (urlValue) {
+      try {
+        const url = new URL(urlValue, window.location.origin);
+        const fileName = decodeURIComponent((url.pathname.split("/").filter(Boolean).pop() || "").trim());
+        if (fileName && fileName !== "evidence-file" && !fileName.includes("$")) return fileName;
+        const host = url.hostname.replace(/^www\./i, "").trim();
+        if (host) return host;
+      } catch (_error) {
+        if (!urlValue.includes("$")) return urlValue;
+      }
+    }
+    return fallback;
+  }
+
+  function edgeSubtitle(edge) {
+    if (edge?.kind === "hidden_connection") return "Indirect connection";
+    return String(edge?.phrase || edge?.role_label || edge?.role_type || edge?.kind || "link")
+      .replaceAll("_", " ")
+      .trim();
+  }
+
+  function registryActionForNode(node) {
+    const registryType = String(node?.registry_type || "").toLowerCase();
+    const registryNumber = String(node?.registry_number || node?.registry_id || node?.external_id || "").trim();
+    if (!registryType || !registryNumber) return null;
+    if (registryType === "company") {
+      return {
+        type: "open_url",
+        label: "Open Companies House page",
+        url: `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(registryNumber)}`,
+      };
+    }
+    if (registryType === "charity") {
+      return {
+        type: "open_url",
+        label: "Open Charity Commission page",
+        url: `https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/${encodeURIComponent(registryNumber)}`,
+      };
+    }
+    return null;
+  }
+
   function openContextMenu(node, event) {
     event.preventDefault();
     event.stopPropagation();
     hideTooltip();
     const actions = [
-      { label: "Focus this node", type: "focus_single", nodeId: node.id },
+      registryActionForNode(node),
       viewerState.focusedNodeIds.has(node.id) ? { label: "Clear focus", type: "focus_clear" } : null,
       viewerState.analysisNodeIds.includes(node.id)
         ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
@@ -904,10 +965,9 @@
     const seen = new Set();
     const pushEvidence = (evidence) => {
       if (!evidence || typeof evidence !== "object") return;
-      const url = String(evidence.document_url || "").trim();
-      const title = String(evidence.title || "").trim();
+      const url = String(evidenceActionUrl(evidence) || evidence.document_url || "").trim();
       const page = String(evidence.page_hint || evidence.page_number || "").trim();
-      const key = `${url}||${title}||${page}`;
+      const key = `${url}||${page}`;
       if (!url || seen.has(key)) return;
       seen.add(key);
       evidenceItems.push(evidence);
@@ -922,11 +982,10 @@
       .map((evidence) => {
         const url = evidenceActionUrl(evidence);
         if (!url) return null;
-        const title = String(evidence.title || edge.tooltip || "Evidence").trim();
-        const pageHint = String(evidence.page_hint || "").trim();
+        const pageHint = String(evidence.page_hint || evidence.page_number || "").trim();
         return {
           type: "open_url",
-          label: pageHint ? `Open evidence: ${title} (${pageHint})` : `Open evidence: ${title}`,
+          label: pageHint ? `Open evidence (${pageHint})` : "Open evidence",
           url,
         };
       })
@@ -943,7 +1002,7 @@
     contextMenuEl._actions = actions;
     contextMenuEl.innerHTML = [
       `<div class="context-menu-title">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>`,
-      `<div class="context-menu-subtitle">${escapeHtml(edge.phrase || edge.role_type || edge.kind || "link")}</div>`,
+      `<div class="context-menu-subtitle">${escapeHtml(edgeSubtitle(edge) || "link")}</div>`,
       actions.length
         ? actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join("")
         : '<div class="context-menu-empty">No evidence is available for this link yet.</div>',
@@ -978,7 +1037,7 @@
               .map((item) => {
                 const url = evidenceActionUrl(item);
                 if (!url) return "";
-                return `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(item.title || item.path || "Evidence")}</a>`;
+                return `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>`;
               })
               .filter(Boolean)
               .join(" · ");
@@ -1065,10 +1124,17 @@
     }
   }
 
+  function mapAddressNodes() {
+    const nodeIds = new Set(visibleNodes.filter((node) => node.kind === "address").map((node) => node.id));
+    visibleNodes.forEach((node) => {
+      if (node.kind !== "organisation") return;
+      (orgAddressIds.get(node.id) || new Set()).forEach((addressId) => nodeIds.add(addressId));
+    });
+    return [...nodeIds].map((nodeId) => nodeById.get(nodeId)).filter((node) => node?.kind === "address");
+  }
+
   function syncVisibleAddressMarkers() {
-    const visibleAddressIds = new Set(
-      visibleNodes.filter((node) => node.kind === "address").map((node) => node.id),
-    );
+    const visibleAddressIds = new Set(mapAddressNodes().map((node) => node.id));
     addressMarkersLayer.clearLayers();
     visibleAddressIds.forEach((nodeId) => {
       const marker = addressMarkerByNodeId.get(nodeId);
@@ -1076,19 +1142,20 @@
     });
     const markers = [...visibleAddressIds].map((nodeId) => addressMarkerByNodeId.get(nodeId)).filter(Boolean);
     if (!markers.length) {
-      mapStatusEl.textContent = "No visible address nodes are on screen right now.";
+      mapStatusEl.textContent = "No connected addresses are on screen right now.";
       addressMap.setView([20, 0], 2);
       return;
     }
+    addressMap.invalidateSize();
     const bounds = L.latLngBounds(markers.map((marker) => marker.getLatLng()));
     addressMap.fitBounds(bounds.pad(0.2));
-    mapStatusEl.textContent = `Mapped ${markers.length} visible addresses. Preloaded ${addressMarkerByNodeId.size} total markers.`;
+    mapStatusEl.textContent = `Mapped ${markers.length} connected addresses. Preloaded ${addressMarkerByNodeId.size} total markers.`;
   }
 
   async function openMapView() {
     ensureAddressMap();
     setSidebarTab("map");
-    const addressNodes = visibleNodes.filter((node) => node.kind === "address");
+    const addressNodes = mapAddressNodes();
     if (!addressNodes.length) {
       syncVisibleAddressMarkers();
       return;
@@ -1171,11 +1238,6 @@
       if (!action) return;
       if (action.type === "open_url" && action.url) {
         window.open(action.url, "_blank", "noopener,noreferrer");
-      } else if (action.type === "focus_single") {
-        viewerState.focusedNodeIds = new Set([action.nodeId]);
-        viewerState.searchQuery = "";
-        searchInput.value = "";
-        applyViewerState();
       } else if (action.type === "focus_clear") {
         viewerState.focusedNodeIds.clear();
         applyViewerState();

@@ -65,8 +65,8 @@
 
   function badgeSpec(node) {
     const registryType = String(node?.registry_type || "").toLowerCase();
-    if (node?.kind === "organisation" && registryType === "charity") return { fill: 0x3fb950, stroke: 0xffffff };
-    if (node?.kind === "organisation" && registryType === "company") return { fill: 0x0ea5e9, stroke: 0xffffff };
+    if (node?.kind === "organisation" && registryType === "charity") return { fill: 0x3fb950, stroke: 0xffffff, icon: "heart" };
+    if (node?.kind === "organisation" && registryType === "company") return { fill: 0x3fb950, stroke: 0xffffff, icon: "building" };
     return null;
   }
 
@@ -128,6 +128,20 @@
     graphics.moveTo(cx + 1.2, cy + 1.2);
     graphics.lineTo(cx + 4.8, cy + 4.8);
     graphics.stroke({ color, width: 1.4, alpha: 1 });
+  }
+
+  function badgeMarkup(node) {
+    const spec = badgeSpec(node);
+    if (!spec) return "";
+    const iconPath = spec.icon === "heart"
+      ? '<path d="M12 20s-6-3.9-6-8.2A3.8 3.8 0 0 1 12 9a3.8 3.8 0 0 1 6 2.8C18 16.1 12 20 12 20Z"></path>'
+      : '<path d="M5 19V7.8L9 5v14M11 19V9h8v10M8 10.6h.01M8 13.6h.01M8 16.6h.01M15 12h.01M15 15h.01"></path>';
+    return `<span class="graph-node-badge"><svg viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg></span>`;
+  }
+
+  function focusMarkup(node) {
+    if (node?.kind === "seed") return "";
+    return '<span class="graph-node-focus" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 18a7 7 0 1 1 4.95-2.05M16 16l4 4"></path></svg></span>';
   }
 
   function createGraphRenderer(container, options) {
@@ -223,8 +237,9 @@
         if (node._focused) classes.push("highlight");
         if (node.sanctioned) classes.push("sanctioned");
         if (node._hovered) classes.push("hovered");
-        const badge = badgeSpec(node);
-        return `<div class="${classes.join(" ")}" data-node-id="${String(node.id)}">${badge ? '<span class="graph-node-badge"></span>' : ""}<span class="graph-node-text">${escapeHtml(node.label || "")}</span></div>`;
+        if (badgeSpec(node)) classes.push("has-badge");
+        if (node.kind !== "seed") classes.push("has-focus");
+        return `<div class="${classes.join(" ")}" data-node-id="${String(node.id)}">${badgeMarkup(node)}<span class="graph-node-text">${escapeHtml(node.label || "")}</span>${focusMarkup(node)}</div>`;
       }).join("");
 
       labelLayer.querySelectorAll(".graph-node-label").forEach((element) => {
@@ -234,10 +249,10 @@
         const bounds = pillBounds(node);
         element.style.width = `${bounds.width}px`;
         element.style.height = `${bounds.height}px`;
-        element.style.transform = `translate(${transform.applyX(bounds.x)}px, ${transform.applyY(bounds.y)}px)`;
+        element.style.transform = `translate(${transform.applyX(bounds.x)}px, ${transform.applyY(bounds.y)}px) scale(${transform.k})`;
         element.style.fontSize = `${Number(node._fontSize || 11)}px`;
-        const badge = element.querySelector(".graph-node-badge");
         const spec = badgeSpec(node);
+        const badge = element.querySelector(".graph-node-badge");
         if (badge && spec) {
           badge.style.background = `#${spec.fill.toString(16).padStart(6, "0")}`;
         }
@@ -279,13 +294,6 @@
           nodeLayer.stroke({ color: 0xffffff, width: 0.8, alpha: 0.18 });
         }
 
-        if ((node._hovered || node._focused) && node.kind !== "seed") {
-          const focus = focusButtonBounds(node);
-          overlayLayer.circle(focus.cx, focus.cy, focus.r);
-          overlayLayer.fill({ color: 0xffffff, alpha: 0.08 });
-          overlayLayer.stroke({ color: 0xffffff, width: 1, alpha: 0.28 });
-          drawSearchGlyph(overlayLayer, focus.cx - 1, focus.cy - 1, 0xffffff);
-        }
       });
 
       updateLabels();
