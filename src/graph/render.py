@@ -100,23 +100,23 @@ body {{
 .legend {{
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  font-size: 11px;
+  gap: 14px;
+  font-size: 13px;
 }}
 .legend .row {{
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.03);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }}
 .legend .legend-key {{
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
 }}
 .legend .legend-toggle {{
   accent-color: var(--blue);
@@ -142,14 +142,14 @@ body {{
   justify-content: flex-start;
 }}
 .legend .dot {{
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
 }}
 .legend .icon-chip {{
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -157,7 +157,7 @@ body {{
   flex-shrink: 0;
   border: 1px solid rgba(255,255,255,0.18);
 }}
-.legend .icon-chip svg {{ width: 12px; height: 12px; overflow: visible; }}
+.legend .icon-chip svg {{ width: 13px; height: 13px; overflow: visible; }}
 .legend .icon-chip path {{
   fill: none;
   stroke: currentColor;
@@ -655,7 +655,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
         <div class="map-toolbar">
           <div class="sidebar-pane-title">Visible addresses</div>
           <button class="toolbar-btn map-refresh-btn" id="refresh-map" type="button" aria-label="Refresh map" title="Refresh map">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.34-5.66M20 4v7h-7"></path></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 5.36A9 9 0 0 0 20.49 15"></path></svg>
           </button>
         </div>
         <div class="analysis-status" id="map-status">Open the map tab to geocode the visible addresses.</div>
@@ -673,8 +673,18 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
-const allNodes = {nodes_json};
-const allEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
+const rawMainNodes = {nodes_json};
+const rawMainEdges = {edges_json}.filter(e => e.kind !== "shared_org" && e.kind !== "cross_seed");
+const LOW_CONFIDENCE_DATA_URL = "graph-data-low-confidence.json";
+let baseNodes = rawMainNodes.slice();
+let baseEdges = rawMainEdges.slice();
+let mainNodeIds = new Set(baseNodes.map(node => node.id));
+let allNodes = baseNodes.slice();
+let allEdges = baseEdges.slice();
+let lowConfidenceLoaded = false;
+let lowConfidenceLoadingPromise = null;
+let lowConfidenceNodes = [];
+let lowConfidenceEdges = [];
 const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
 const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
 const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
@@ -693,6 +703,7 @@ function isIdentityMergeNode(node) {{
 }}
 
 function canStartMergeFromNode(node) {{
+  if (node?.is_low_confidence) return false;
   return isAddressMergeNode(node) || isPersonMergeNode(node);
 }}
 
@@ -853,13 +864,15 @@ function applyManualMergeOverrides(nodes, edges, overrides) {{
 }}
 
 const localMergeOverrides = loadLocalMergeOverrides();
-applyManualMergeOverrides(allNodes, allEdges, localMergeOverrides);
+applyManualMergeOverrides(baseNodes, baseEdges, localMergeOverrides);
+mainNodeIds = new Set(baseNodes.map(node => node.id));
 
 const viewerState = {{
   focusedNodeIds: new Set(),
   searchQuery: "",
   hiddenNodeTypes: new Set(),
   indirectOnly: false,
+  showLowConfidence: false,
   pendingMergeNodeId: "",
   analysisNodeIds: [],
 }};
@@ -883,70 +896,126 @@ let showCompaniesInput = null;
 let showCharitiesInput = null;
 let showPeopleInput = null;
 let showAddressesInput = null;
+let showLowConfidenceInput = null;
 let indirectOnlyInput = document.getElementById("indirect-only");
 const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
 
 const W = container.clientWidth;
 const H = container.clientHeight;
 const LANE_Y = {{ 1: 140, 2: 360, 3: 620, 4: 840 }};
-const nodeById = new Map(allNodes.map(n => [n.id, n]));
 const visibleEdges = [];
+let nodeById = new Map();
+let edgesByNodeId = new Map();
+let directEdgePairs = new Set();
+let orgLinkIds = new Map();
+let orgAddressIds = new Map();
+let addressOrgIds = new Map();
+let indirectIdentityIdsByOrg = new Map();
+let visibleEdgeSet = new Set();
 
-const edgesByNodeId = new Map();
-allEdges.forEach(edge => {{
-  if (!edgesByNodeId.has(edge.source)) edgesByNodeId.set(edge.source, []);
-  if (!edgesByNodeId.has(edge.target)) edgesByNodeId.set(edge.target, []);
-  edgesByNodeId.get(edge.source).push(edge);
-  edgesByNodeId.get(edge.target).push(edge);
-}});
-const directEdgePairs = new Set(
-  allEdges.map(edge => {{
-    const [a, b] = [edge.source, edge.target].sort();
-    return `${{a}}||${{b}}`;
-  }})
-);
-const orgLinkIds = new Map();
-allEdges.filter(edge => edge.kind === "org_link").forEach(edge => {{
-  if (!orgLinkIds.has(edge.source)) orgLinkIds.set(edge.source, new Set());
-  if (!orgLinkIds.has(edge.target)) orgLinkIds.set(edge.target, new Set());
-  orgLinkIds.get(edge.source).add(edge.target);
-  orgLinkIds.get(edge.target).add(edge.source);
-}});
-const orgAddressIds = new Map();
-const addressOrgIds = new Map();
-allEdges.filter(edge => edge.kind === "address_link").forEach(edge => {{
-  const sourceNode = nodeById.get(edge.source);
-  const targetNode = nodeById.get(edge.target);
-  const orgId = sourceNode?.kind === "organisation" ? edge.source : targetNode?.kind === "organisation" ? edge.target : null;
-  const addressId = sourceNode?.kind === "address" ? edge.source : targetNode?.kind === "address" ? edge.target : null;
-  if (!orgId || !addressId) return;
-  if (!orgAddressIds.has(orgId)) orgAddressIds.set(orgId, new Set());
-  orgAddressIds.get(orgId).add(addressId);
-  if (!addressOrgIds.has(addressId)) addressOrgIds.set(addressId, new Set());
-  addressOrgIds.get(addressId).add(orgId);
-}});
-const indirectIdentityIdsByOrg = new Map();
-allNodes.filter(node => node.lane === 1).forEach(identity => {{
-  const directOrgs = new Set();
-  (edgesByNodeId.get(identity.id) || []).forEach(edge => {{
-    if (edge.kind !== "role") return;
-    const otherId = edge.source === identity.id ? edge.target : edge.source;
-    if (nodeById.get(otherId)?.kind === "organisation") directOrgs.add(otherId);
+function rebuildGraphIndexes() {{
+  nodeById = new Map(allNodes.map(node => [node.id, node]));
+  edgesByNodeId = new Map();
+  allEdges.forEach(edge => {{
+    if (!edgesByNodeId.has(edge.source)) edgesByNodeId.set(edge.source, []);
+    if (!edgesByNodeId.has(edge.target)) edgesByNodeId.set(edge.target, []);
+    edgesByNodeId.get(edge.source).push(edge);
+    edgesByNodeId.get(edge.target).push(edge);
   }});
-  if (!directOrgs.size) return;
-  const reachableOrgs = new Set();
-  directOrgs.forEach(orgId => {{
-    (orgLinkIds.get(orgId) || new Set()).forEach(id => reachableOrgs.add(id));
-    (orgAddressIds.get(orgId) || new Set()).forEach(addressId => {{
-      (addressOrgIds.get(addressId) || new Set()).forEach(id => reachableOrgs.add(id));
+  directEdgePairs = new Set(
+    allEdges.map(edge => {{
+      const [a, b] = [edge.source, edge.target].sort();
+      return `${{a}}||${{b}}`;
+    }})
+  );
+  orgLinkIds = new Map();
+  allEdges.filter(edge => edge.kind === "org_link").forEach(edge => {{
+    if (!orgLinkIds.has(edge.source)) orgLinkIds.set(edge.source, new Set());
+    if (!orgLinkIds.has(edge.target)) orgLinkIds.set(edge.target, new Set());
+    orgLinkIds.get(edge.source).add(edge.target);
+    orgLinkIds.get(edge.target).add(edge.source);
+  }});
+  orgAddressIds = new Map();
+  addressOrgIds = new Map();
+  allEdges.filter(edge => edge.kind === "address_link").forEach(edge => {{
+    const sourceNode = nodeById.get(edge.source);
+    const targetNode = nodeById.get(edge.target);
+    const orgId = sourceNode?.kind === "organisation" ? edge.source : targetNode?.kind === "organisation" ? edge.target : null;
+    const addressId = sourceNode?.kind === "address" ? edge.source : targetNode?.kind === "address" ? edge.target : null;
+    if (!orgId || !addressId) return;
+    if (!orgAddressIds.has(orgId)) orgAddressIds.set(orgId, new Set());
+    orgAddressIds.get(orgId).add(addressId);
+    if (!addressOrgIds.has(addressId)) addressOrgIds.set(addressId, new Set());
+    addressOrgIds.get(addressId).add(orgId);
+  }});
+  indirectIdentityIdsByOrg = new Map();
+  allNodes.filter(node => node.lane === 1).forEach(identity => {{
+    const directOrgs = new Set();
+    (edgesByNodeId.get(identity.id) || []).forEach(edge => {{
+      if (edge.kind !== "role") return;
+      const otherId = edge.source === identity.id ? edge.target : edge.source;
+      if (nodeById.get(otherId)?.kind === "organisation") directOrgs.add(otherId);
+    }});
+    if (!directOrgs.size) return;
+    const reachableOrgs = new Set();
+    directOrgs.forEach(orgId => {{
+      (orgLinkIds.get(orgId) || new Set()).forEach(id => reachableOrgs.add(id));
+      (orgAddressIds.get(orgId) || new Set()).forEach(addressId => {{
+        (addressOrgIds.get(addressId) || new Set()).forEach(id => reachableOrgs.add(id));
+      }});
+    }});
+    directOrgs.forEach(id => reachableOrgs.delete(id));
+    reachableOrgs.forEach(orgId => {{
+      if (!indirectIdentityIdsByOrg.has(orgId)) indirectIdentityIdsByOrg.set(orgId, new Set());
+      indirectIdentityIdsByOrg.get(orgId).add(identity.id);
     }});
   }});
-  directOrgs.forEach(id => reachableOrgs.delete(id));
-  reachableOrgs.forEach(orgId => {{
-    if (!indirectIdentityIdsByOrg.has(orgId)) indirectIdentityIdsByOrg.set(orgId, new Set());
-    indirectIdentityIdsByOrg.get(orgId).add(identity.id);
+}}
+
+function rebuildActiveGraph() {{
+  allNodes = baseNodes.slice();
+  allEdges = baseEdges.slice();
+  if (!viewerState.showLowConfidence || !lowConfidenceLoaded) return;
+
+  const activeLowEdges = lowConfidenceEdges.filter(
+    edge => mainNodeIds.has(edge.source) || mainNodeIds.has(edge.target)
+  );
+  const activeLowNodeIds = new Set();
+  activeLowEdges.forEach(edge => {{
+    if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
+    if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
   }});
-}});
+  const activeLowNodes = lowConfidenceNodes.filter(node => activeLowNodeIds.has(node.id));
+  allNodes.push(...activeLowNodes);
+  allEdges.push(...activeLowEdges);
+}}
+
+async function ensureLowConfidenceLoaded() {{
+  if (lowConfidenceLoaded) return true;
+  if (lowConfidenceLoadingPromise) return lowConfidenceLoadingPromise;
+  lowConfidenceLoadingPromise = fetch(LOW_CONFIDENCE_DATA_URL)
+    .then(response => {{
+      if (!response.ok) throw new Error(`Overlay fetch failed: ${{response.status}}`);
+      return response.json();
+    }})
+    .then(payload => {{
+      lowConfidenceNodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+      lowConfidenceEdges = Array.isArray(payload?.edges) ? payload.edges : [];
+      lowConfidenceLoaded = true;
+      return true;
+    }})
+    .catch(error => {{
+      console.error(error);
+      lowConfidenceNodes = [];
+      lowConfidenceEdges = [];
+      lowConfidenceLoaded = false;
+      return false;
+    }})
+    .finally(() => {{
+      lowConfidenceLoadingPromise = null;
+    }});
+  return lowConfidenceLoadingPromise;
+}}
 
 const svg = d3.select(container).append("svg")
   .attr("width", "100%")
@@ -1020,6 +1089,10 @@ function renderLegend() {{
       <span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span>
       <input class="legend-toggle" id="show-people" type="checkbox" checked aria-label="People" />
     </label>`,
+    `<label class="row" title="Low confidence overlay">
+      <span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span>
+      <input class="legend-toggle" id="show-low-confidence" type="checkbox" aria-label="Low confidence overlay" />
+    </label>`,
     `<div class="row" title="OFAC sanctioned">
       <span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span>
     </div>`,
@@ -1031,6 +1104,7 @@ showCompaniesInput = document.getElementById("show-companies");
 showCharitiesInput = document.getElementById("show-charities");
 showPeopleInput = document.getElementById("show-people");
 showAddressesInput = document.getElementById("show-addresses");
+showLowConfidenceInput = document.getElementById("show-low-confidence");
 
 function renderCompactLegend() {{
   compactLegendEl.innerHTML = [
@@ -1040,6 +1114,7 @@ function renderCompactLegend() {{
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span></div>`,
+    `<div class="row"><span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span></div>`,
     `<div class="row"><span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span></div>`,
   ].join("");
 }}
@@ -1314,6 +1389,7 @@ function syncHiddenTypeState() {{
   if (!showCharitiesInput.checked) viewerState.hiddenNodeTypes.add("charity");
   if (!showPeopleInput.checked) viewerState.hiddenNodeTypes.add("person");
   if (!showAddressesInput.checked) viewerState.hiddenNodeTypes.add("address");
+  viewerState.showLowConfidence = !!showLowConfidenceInput.checked;
   viewerState.indirectOnly = indirectOnlyInput.checked;
 }}
 
@@ -1324,6 +1400,7 @@ function applyTypeFilters(visibleIds, rootIds, options = {{}}) {{
     [...visibleIds].filter(id => {{
       const node = nodeById.get(id);
       if (!node || node.kind === "seed") return false;
+      if (node.is_low_confidence && !viewerState.showLowConfidence) return false;
       const typeKey = nodeTypeKey(node);
       if (!isFilterableType(typeKey)) return true;
       return !viewerState.hiddenNodeTypes.has(typeKey);
@@ -1431,7 +1508,12 @@ function buildSearchProjection(matchedIds) {{
   const filteredVisibleIds = applyTypeFilters(matchedIds.size ? visibleIds : new Set(), matchedIds, {{
     keepDisconnectedIdentities: true,
   }});
-  const edgeIds = allEdges.filter(edge => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target));
+  const edgeIds = allEdges.filter(
+    edge =>
+      filteredVisibleIds.has(edge.source)
+      && filteredVisibleIds.has(edge.target)
+      && (viewerState.showLowConfidence || !edge.is_low_confidence)
+  );
   return {{
     rootIds: matchedIds,
     visibleIds: filteredVisibleIds,
@@ -1458,7 +1540,12 @@ function buildIndirectOrgProjection() {{
   const filteredVisibleIds = applyTypeFilters(visibleIds, qualifyingOrgIds, {{
     keepDisconnectedIdentities: true,
   }});
-  const edgeIds = allEdges.filter(edge => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target));
+  const edgeIds = allEdges.filter(
+    edge =>
+      filteredVisibleIds.has(edge.source)
+      && filteredVisibleIds.has(edge.target)
+      && (viewerState.showLowConfidence || !edge.is_low_confidence)
+  );
   return {{
     rootIds: qualifyingOrgIds,
     visibleIds: filteredVisibleIds,
@@ -1484,13 +1571,23 @@ function projectVisibleGraph() {{
       new Set(allNodes.filter(node => node.kind !== "seed").map(node => node.id)),
       new Set()
     );
-    const edgeIds = allEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+    const edgeIds = allEdges.filter(
+      edge =>
+        visibleIds.has(edge.source)
+        && visibleIds.has(edge.target)
+        && (viewerState.showLowConfidence || !edge.is_low_confidence)
+    );
     return {{ rootIds, visibleIds, edgeIds }};
   }}
 
   const subgraph = collectConnectedSubgraph(rootIds);
   const visibleIds = applyTypeFilters(new Set(subgraph.reachableIds), rootIds);
-  const edgeIds = allEdges.filter(edge => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+  const edgeIds = allEdges.filter(
+    edge =>
+      visibleIds.has(edge.source)
+      && visibleIds.has(edge.target)
+      && (viewerState.showLowConfidence || !edge.is_low_confidence)
+  );
   return {{ rootIds, visibleIds, edgeIds }};
 }}
 
@@ -1540,6 +1637,7 @@ function pillWidth(node) {{
 
 function nodeColor(node) {{
   if (node.sanctioned) return "#ff2222";
+  if (node.is_low_confidence) return "var(--amber)";
   if (node.kind === "seed_alias") return "var(--amber)";
   if (node.kind === "organisation") return "var(--green)";
   if (node.kind === "address") return "var(--purple)";
@@ -1547,6 +1645,7 @@ function nodeColor(node) {{
 }}
 
 function edgeStroke(edge) {{
+  if (edge.is_low_confidence) return "var(--amber)";
   if (edge.kind === "hidden_connection") return "#94a3b8";
   if (edge.kind === "alias") return "var(--amber)";
   if (edge.kind === "org_link") return "var(--green)";
@@ -1758,6 +1857,7 @@ function setSidebarTab(tabName) {{
 setSidebarTab("legend");
 
 function analysisActionsForNode(node) {{
+  if (node?.is_low_confidence) return [];
   const selected = viewerState.analysisNodeIds.includes(node.id);
   if (selected && viewerState.analysisNodeIds.length === 2) {{
     return [{{
@@ -1862,7 +1962,7 @@ function renderAnalysisResult(payload) {{
     <div class="toolbar"><button id="copy-analysis-popup" type="button">Copy</button></div>
     ${{content}}
     <script>
-      const copyText = ${json.dumps("__COPY_TEXT__")};
+      const copyText = "__COPY_TEXT__";
       document.getElementById("copy-analysis-popup").addEventListener("click", async () => {{
         try {{
           await navigator.clipboard.writeText(copyText);
@@ -1870,7 +1970,7 @@ function renderAnalysisResult(payload) {{
         }}
       }});
     <\/script>
-  </body></html>`.replace(${json.dumps("__COPY_TEXT__")}, JSON.stringify(formatAnalysisCopyText(payload))));
+  </body></html>`.replace("__COPY_TEXT__", JSON.stringify(formatAnalysisCopyText(payload))));
   popup.document.close();
 }}
 
@@ -2168,7 +2268,7 @@ function layoutRow(nodes, yTop, xMin, xMax) {{
 function avgNeighborX(node) {{
   const xs = [];
   (edgesByNodeId.get(node.id) || []).forEach(edge => {{
-    if (!visibleEdges.includes(edge)) return;
+    if (!visibleEdgeSet.has(edge)) return;
     const otherId = edge.source === node.id ? edge.target : edge.source;
     const other = nodeById.get(otherId);
     if (other && other._visible && other.x != null && other.lane !== node.lane) xs.push(other.x);
@@ -2235,8 +2335,8 @@ function renderEdges() {{
   groups.select("line.role-edge")
     .attr("stroke", edgeStroke)
     .attr("stroke-width", edge => edge.kind === "hidden_connection" ? 1.8 : edge.kind === "alias" ? 2.5 : 1.4 + (edge.weight || 0) * 1.5)
-    .attr("stroke-opacity", edge => edge.kind === "hidden_connection" ? 0.7 : edge.kind === "alias" ? 0.8 : edge.kind === "address_link" ? 0.75 : 0.45)
-    .attr("stroke-dasharray", edge => edge.kind === "hidden_connection" ? "5 4" : null)
+    .attr("stroke-opacity", edge => edge.is_low_confidence ? 0.75 : edge.kind === "hidden_connection" ? 0.7 : edge.kind === "alias" ? 0.8 : edge.kind === "address_link" ? 0.75 : 0.45)
+    .attr("stroke-dasharray", edge => edge.is_low_confidence ? "5 4" : edge.kind === "hidden_connection" ? "5 4" : null)
     .style("pointer-events", "none");
 
   groups.select("line.role-edge-hit")
@@ -2275,101 +2375,126 @@ function zoomToVisible() {{
 
 const edgeGroup = gRoot.append("g");
 const nodeGroup = gRoot.append("g");
-const pills = nodeGroup.selectAll("g.pill").data(allNodes).join("g")
-  .attr("class", "pill")
-  .style("cursor", node => node.kind === "seed" ? "default" : "pointer");
+let pills = null;
 
-pills.append("rect")
-  .attr("rx", node => pillHeight(node) / 2)
-  .attr("ry", node => pillHeight(node) / 2)
-  .attr("width", pillWidth)
-  .attr("height", pillHeight)
-  .attr("fill", nodeColor)
-  .attr("fill-opacity", node => node.sanctioned ? 0.35 : 0.18)
-  .attr("stroke", nodeColor)
-  .attr("stroke-width", node => node.sanctioned ? 2.5 : 1.2)
-  .attr("stroke-opacity", node => node.sanctioned ? 1.0 : 0.7);
+function renderNodeJoin() {{
+  pills = nodeGroup.selectAll("g.pill")
+    .data(allNodes, node => node.id)
+    .join(
+      enter => {{
+        const pill = enter.append("g")
+          .attr("class", "pill");
 
-pills.append("text")
-  .text(node => node.label)
-  .attr("font-size", fontSize)
-  .attr("font-weight", node => node.kind === "seed_alias" ? 600 : 400)
-  .attr("fill", node => node.kind === "seed_alias" ? "var(--text-bright)" : "var(--text)")
-  .attr("text-anchor", "start")
-  .attr("dominant-baseline", "central")
-  .attr("x", badgeTextInset)
-  .attr("y", node => pillHeight(node) / 2)
-  .style("pointer-events", "none");
+        pill.append("rect");
+        pill.append("text").style("pointer-events", "none");
 
-const badgeGroups = pills.append("g")
-  .style("display", node => badgeSpec(node) ? null : "none");
+        const badgeGroups = pill.append("g")
+          .attr("class", "badge-group");
+        badgeGroups.append("rect");
+        badgeGroups.append("path").style("pointer-events", "none");
 
-badgeGroups.append("rect")
-  .attr("rx", node => badgeHeight(node) / 2)
-  .attr("ry", node => badgeHeight(node) / 2)
-  .attr("x", 8)
-  .attr("y", node => (pillHeight(node) - badgeHeight(node)) / 2)
-  .attr("width", badgeWidth)
-  .attr("height", badgeHeight)
-  .attr("fill", node => badgeSpec(node)?.fill || "transparent")
-  .attr("stroke", "rgba(255,255,255,0.18)")
-  .attr("stroke-width", 0.8);
+        const focusButtons = pill.append("g")
+          .attr("class", "focus-button-group");
+        focusButtons.append("circle").attr("class", "focus-btn");
+        focusButtons.append("path").attr("class", "focus-btn");
 
-badgeGroups.append("path")
-  .attr("d", node => badgeSpec(node)?.path || "")
-  .attr("transform", node => {{
-    const size = 12;
-    const x = 11;
-    const y = (pillHeight(node) - size) / 2;
-    return `translate(${{x}},${{y}}) scale(0.5)`;
-  }})
-  .attr("fill", "none")
-  .attr("stroke", node => badgeSpec(node)?.color || "transparent")
-  .attr("stroke-width", 1.8)
-  .attr("stroke-linecap", "round")
-  .attr("stroke-linejoin", "round")
-  .style("pointer-events", "none");
+        focusButtons
+          .on("mouseover", (event, node) => showTooltip(event, [`Search for ${{node.label}}`]))
+          .on("mousemove", positionTooltip)
+          .on("mouseout", hideTooltip)
+          .on("click", (event, node) => {{
+            event.stopPropagation();
+            searchInput.value = node.label || "";
+            viewerState.searchQuery = (node.label || "").trim();
+            viewerState.focusedNodeIds.clear();
+            applyViewerState();
+          }});
 
-const focusButtons = pills.append("g")
-  .attr("class", "focus-button-group")
-  .style("display", node => node.kind === "seed" ? "none" : null);
+        pill
+          .on("mouseover", (event, node) => showTooltip(event, node.tooltip_lines || [node.label]))
+          .on("mousemove", positionTooltip)
+          .on("mouseout", hideTooltip)
+          .on("contextmenu", openContextMenu);
 
-focusButtons.append("circle")
-  .attr("class", "focus-btn")
-  .attr("cx", node => pillWidth(node) - 14)
-  .attr("cy", node => pillHeight(node) / 2)
-  .attr("r", 8)
-  .attr("fill", "rgba(255,255,255,0.08)")
-  .attr("stroke", "rgba(255,255,255,0.28)")
-  .attr("stroke-width", 1);
+        return pill;
+      }},
+      update => update,
+      exit => exit.remove()
+    )
+    .style("cursor", node => node.kind === "seed" ? "default" : "pointer");
 
-focusButtons.append("path")
-  .attr("class", "focus-btn")
-  .attr("d", iconPath("search"))
-  .attr("transform", node => `translate(${{pillWidth(node) - 20}},${{pillHeight(node) / 2 - 6}}) scale(0.5)`)
-  .attr("fill", "none")
-  .attr("stroke", "#ffffff")
-  .attr("stroke-width", 1.8)
-  .attr("stroke-linecap", "round")
-  .attr("stroke-linejoin", "round");
+  pills.select("rect")
+    .attr("rx", node => pillHeight(node) / 2)
+    .attr("ry", node => pillHeight(node) / 2)
+    .attr("width", pillWidth)
+    .attr("height", pillHeight)
+    .attr("fill", nodeColor)
+    .attr("fill-opacity", node => node.is_low_confidence ? 0.14 : node.sanctioned ? 0.35 : 0.18)
+    .attr("stroke", nodeColor)
+    .attr("stroke-width", node => node.sanctioned ? 2.5 : node.is_low_confidence ? 1.4 : 1.2)
+    .attr("stroke-opacity", node => node.sanctioned ? 1.0 : node.is_low_confidence ? 0.95 : 0.7)
+    .attr("stroke-dasharray", node => node.is_low_confidence ? "5 3" : null);
 
-focusButtons
-  .on("mouseover", (event, node) => showTooltip(event, [`Search for ${{node.label}}`]))
-  .on("mousemove", positionTooltip)
-  .on("mouseout", hideTooltip)
-  .on("click", (event, node) => {{
-    event.stopPropagation();
-    searchInput.value = node.label || "";
-    viewerState.searchQuery = (node.label || "").trim();
-    viewerState.focusedNodeIds.clear();
-    applyViewerState();
-  }});
+  pills.select("text")
+    .text(node => node.label)
+    .attr("font-size", fontSize)
+    .attr("font-weight", node => node.kind === "seed_alias" ? 600 : 400)
+    .attr("fill", node => node.kind === "seed_alias" ? "var(--text-bright)" : "var(--text)")
+    .attr("text-anchor", "start")
+    .attr("dominant-baseline", "central")
+    .attr("x", badgeTextInset)
+    .attr("y", node => pillHeight(node) / 2);
 
-pills
-  .on("mouseover", (event, node) => showTooltip(event, node.tooltip_lines || [node.label]))
-  .on("mousemove", positionTooltip)
-  .on("mouseout", hideTooltip)
-  .on("contextmenu", openContextMenu);
+  const badgeGroups = pills.select("g.badge-group")
+    .style("display", node => badgeSpec(node) ? null : "none");
+
+  badgeGroups.select("rect")
+    .attr("rx", node => badgeHeight(node) / 2)
+    .attr("ry", node => badgeHeight(node) / 2)
+    .attr("x", 8)
+    .attr("y", node => (pillHeight(node) - badgeHeight(node)) / 2)
+    .attr("width", badgeWidth)
+    .attr("height", badgeHeight)
+    .attr("fill", node => badgeSpec(node)?.fill || "transparent")
+    .attr("stroke", "rgba(255,255,255,0.18)")
+    .attr("stroke-width", 0.8);
+
+  badgeGroups.select("path")
+    .attr("d", node => badgeSpec(node)?.path || "")
+    .attr("transform", node => {{
+      const size = 12;
+      const x = 11;
+      const y = (pillHeight(node) - size) / 2;
+      return `translate(${{x}},${{y}}) scale(0.5)`;
+    }})
+    .attr("fill", "none")
+    .attr("stroke", node => badgeSpec(node)?.color || "transparent")
+    .attr("stroke-width", 1.8)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round");
+
+  const focusButtons = pills.select("g.focus-button-group")
+    .style("display", node => node.kind === "seed" ? "none" : null);
+
+  focusButtons.select("circle")
+    .attr("cx", node => pillWidth(node) - 14)
+    .attr("cy", node => pillHeight(node) / 2)
+    .attr("r", 8)
+    .attr("fill", "rgba(255,255,255,0.08)")
+    .attr("stroke", "rgba(255,255,255,0.28)")
+    .attr("stroke-width", 1);
+
+  focusButtons.select("path")
+    .attr("d", iconPath("search"))
+    .attr("transform", node => `translate(${{pillWidth(node) - 20}},${{pillHeight(node) / 2 - 6}}) scale(0.5)`)
+    .attr("fill", "none")
+    .attr("stroke", "#ffffff")
+    .attr("stroke-width", 1.8)
+    .attr("stroke-linecap", "round")
+    .attr("stroke-linejoin", "round");
+
+  pills.call(drag);
+}}
 
 contextMenuEl.addEventListener("click", (event) => {{
   const button = event.target.closest("[data-action-index]");
@@ -2463,7 +2588,6 @@ const drag = d3.drag()
   .on("end", (event, node) => {{
     node._dragging = false;
   }});
-pills.call(drag);
 
 svg.on("dblclick.focus", () => {{
   if (!viewerState.focusedNodeIds.size) return;
@@ -2475,10 +2599,11 @@ function updateFocusStyling(rootIds) {{
   pills.select("rect")
     .attr("stroke-width", node => {{
       if (node.sanctioned) return rootIds.has(node.id) ? 3.2 : 2.5;
+      if (node.is_low_confidence) return rootIds.has(node.id) ? 3.0 : 1.4;
       return rootIds.has(node.id) ? 2.8 : 1.2;
     }})
-    .attr("stroke-opacity", node => rootIds.has(node.id) ? 1.0 : node.sanctioned ? 1.0 : 0.7)
-    .attr("fill-opacity", node => rootIds.has(node.id) ? 0.28 : node.sanctioned ? 0.35 : 0.18);
+    .attr("stroke-opacity", node => rootIds.has(node.id) ? 1.0 : node.sanctioned ? 1.0 : node.is_low_confidence ? 0.95 : 0.7)
+    .attr("fill-opacity", node => rootIds.has(node.id) ? 0.28 : node.is_low_confidence ? 0.14 : node.sanctioned ? 0.35 : 0.18);
 }}
 
 function renderScorePanel() {{
@@ -2512,6 +2637,10 @@ function renderScorePanel() {{
 }}
 
 function applyViewerState() {{
+  syncHiddenTypeState();
+  rebuildActiveGraph();
+  rebuildGraphIndexes();
+  renderNodeJoin();
   const projection = projectVisibleGraph();
   allNodes.forEach(node => {{
     node._visible = projection.visibleIds.has(node.id);
@@ -2519,6 +2648,7 @@ function applyViewerState() {{
 
   visibleEdges.length = 0;
   projection.edgeIds.forEach(edge => visibleEdges.push(edge));
+  visibleEdgeSet = new Set(visibleEdges);
 
   positionNodes();
   syncVisibility();
@@ -2527,7 +2657,7 @@ function applyViewerState() {{
   zoomToVisible();
 
   const shownNodes = allNodes.filter(node => node._visible).length;
-  statsEl.textContent = projection.rootIds.size
+  statsEl.textContent = projection.rootIds.size || viewerState.showLowConfidence
     ? `showing ${{shownNodes}} nodes, ${{visibleEdges.length}} edges`
     : `{node_count} nodes, {edge_count} edges`;
 }}
@@ -2549,6 +2679,16 @@ showCompaniesInput.addEventListener("change", applyViewerState);
 showCharitiesInput.addEventListener("change", applyViewerState);
 showPeopleInput.addEventListener("change", applyViewerState);
 showAddressesInput.addEventListener("change", applyViewerState);
+showLowConfidenceInput.addEventListener("change", async () => {{
+  if (showLowConfidenceInput.checked) {{
+    const ok = await ensureLowConfidenceLoaded();
+    if (!ok) {{
+      showLowConfidenceInput.checked = false;
+      viewerState.showLowConfidence = false;
+    }}
+  }}
+  applyViewerState();
+}});
 indirectOnlyInput.addEventListener("change", applyViewerState);
 
 applyViewerState();
