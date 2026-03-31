@@ -914,6 +914,19 @@
       .trim();
   }
 
+  function plainText(value) {
+    return String(value || "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function evidenceLabelForEdge(edge) {
+    const firstLine = tooltipLinesForEdge(edge)[0];
+    const summary = plainText(firstLine);
+    return summary ? `Evidence for: ${summary}` : "Evidence";
+  }
+
   function registryActionForNode(node) {
     const registryType = String(node?.registry_type || "").toLowerCase();
     const registryNumber = String(node?.registry_number || node?.registry_id || node?.external_id || "").trim();
@@ -982,10 +995,9 @@
       .map((evidence) => {
         const url = evidenceActionUrl(evidence);
         if (!url) return null;
-        const pageHint = String(evidence.page_hint || evidence.page_number || "").trim();
         return {
           type: "open_url",
-          label: pageHint ? `Open evidence (${pageHint})` : "Open evidence",
+          label: evidenceLabelForEdge(edge),
           url,
         };
       })

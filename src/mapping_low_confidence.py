@@ -747,13 +747,17 @@ def _unique_match(
     return next(iter(unique_by_node_id.values()))
 
 
-def _infer_overlay_node_kind(entity_type: str) -> tuple[str, int]:
+def _infer_overlay_node_kind(entity_type: str) -> tuple[str, int, str]:
     lowered = str(entity_type or "").strip().lower()
     if "address" in lowered:
-        return ("address", 3)
+        return ("address", 3, "")
     if lowered in {"individual", "person"} or "individual" in lowered or "person" in lowered:
-        return ("person", 4)
-    return ("organisation", 2)
+        return ("person", 4, "")
+    if "charity" in lowered:
+        return ("organisation", 2, "charity")
+    if "company" in lowered:
+        return ("organisation", 2, "company")
+    return ("organisation", 2, "")
 
 
 def _ensure_overlay_node(
@@ -769,7 +773,7 @@ def _ensure_overlay_node(
 
     entity_type = str(entity_row["entity_type"] or "").strip() if entity_row else ""
     description = str(entity_row["description"] or "").strip() if entity_row else ""
-    kind, lane = _infer_overlay_node_kind(entity_type)
+    kind, lane, registry_type = _infer_overlay_node_kind(entity_type)
     tooltip_lines = [line for line in [entity_type, description] if line]
     if entity_row is not None:
         tooltip_lines.append(
@@ -780,6 +784,7 @@ def _ensure_overlay_node(
         "label": label,
         "kind": kind,
         "lane": lane,
+        "registry_type": registry_type,
         "aliases": [],
         "tooltip_lines": tooltip_lines,
         "is_low_confidence": True,

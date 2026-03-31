@@ -122,6 +122,57 @@
     }
   }
 
+  function capsuleOutlinePoints(bounds, arcSteps = 10) {
+    const radius = bounds.height / 2;
+    const leftCx = bounds.x + radius;
+    const rightCx = bounds.x + bounds.width - radius;
+    const cy = bounds.y + radius;
+    const points = [
+      { x: bounds.x + radius, y: bounds.y },
+      { x: bounds.x + bounds.width - radius, y: bounds.y },
+    ];
+    for (let step = 1; step <= arcSteps; step += 1) {
+      const angle = (-Math.PI / 2) + ((step / arcSteps) * Math.PI);
+      points.push({ x: rightCx + (radius * Math.cos(angle)), y: cy + (radius * Math.sin(angle)) });
+    }
+    points.push(
+      { x: bounds.x + bounds.width - radius, y: bounds.y + bounds.height },
+      { x: bounds.x + radius, y: bounds.y + bounds.height },
+    );
+    for (let step = 1; step <= arcSteps; step += 1) {
+      const angle = (Math.PI / 2) + ((step / arcSteps) * Math.PI);
+      points.push({ x: leftCx + (radius * Math.cos(angle)), y: cy + (radius * Math.sin(angle)) });
+    }
+    return points;
+  }
+
+  function drawDashedPolyline(graphics, points, dashLength, gapLength) {
+    if (points.length < 2) return;
+    const closedPoints = [...points, points[0]];
+    for (let index = 0; index < closedPoints.length - 1; index += 1) {
+      const start = closedPoints[index];
+      const end = closedPoints[index + 1];
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const length = Math.sqrt((dx * dx) + (dy * dy));
+      if (!length) continue;
+      const ux = dx / length;
+      const uy = dy / length;
+      let position = 0;
+      while (position < length) {
+        const dashEnd = Math.min(position + dashLength, length);
+        graphics.moveTo(start.x + (ux * position), start.y + (uy * position));
+        graphics.lineTo(start.x + (ux * dashEnd), start.y + (uy * dashEnd));
+        position += dashLength + gapLength;
+      }
+    }
+  }
+
+  function drawDashedCapsuleBorder(graphics, bounds, color, width) {
+    drawDashedPolyline(graphics, capsuleOutlinePoints(bounds), 6, 4);
+    graphics.stroke({ color, width, alpha: 1 });
+  }
+
   function drawSearchGlyph(graphics, cx, cy, color) {
     graphics.circle(cx - 1.5, cy - 1.5, 2.8);
     graphics.stroke({ color, width: 1.4, alpha: 1 });
@@ -284,14 +335,10 @@
         const color = node._colorValue;
         nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
         nodeLayer.fill({ color, alpha: nodeFillAlpha(node) });
-        nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned ? 1 : 0.7) });
-
-        const badge = badgeSpec(node);
-        if (badge) {
-          const badgeHeight = Math.max(14, bounds.height - 6);
-          nodeLayer.roundRect(bounds.x + 8, bounds.y + ((bounds.height - badgeHeight) / 2), 18, badgeHeight, badgeHeight / 2);
-          nodeLayer.fill({ color: badge.fill, alpha: 0.95 });
-          nodeLayer.stroke({ color: 0xffffff, width: 0.8, alpha: 0.18 });
+        if (node.is_low_confidence) {
+          drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
+        } else {
+          nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned ? 1 : 0.7) });
         }
 
       });
