@@ -3,4 +3,4 @@
   functions = "netlify/functions"
 
 [functions]
-  included_files = ["output/graph-data-low-confidence-details.json"]
+  included_files = ["output/graph-data-low-confidence-details.json", "output/graph-data-low-confidence-groups.json"]

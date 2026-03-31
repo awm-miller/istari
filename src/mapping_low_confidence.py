@@ -8,6 +8,7 @@ from typing import Any
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _PLAIN_URL_RE = re.compile(r"(?<!\()(?P<url>https?://[^\s)>\]]+)")
+LOW_CONFIDENCE_GROUP_MIN_SIZE = 5
 
 
 def normalize_mapping_label(value: str) -> str:
@@ -524,108 +525,35 @@ def build_low_confidence_overlay(
 ) -> dict[str, Any]:
     store = MappingStore(database_path)
     store.init_db()
-
-    node_index: dict[str, list[dict[str, str]]] = {}
-    for node in main_data.get("nodes") or []:
-        if str(node.get("kind") or "") == "seed":
-            continue
-        label = str(node.get("label") or "").strip()
-        if label:
-            node_index.setdefault(normalize_mapping_label(label), []).append(
-                {
-                    "node_id": str(node["id"]),
-                    "node_label": label,
-                    "match_type": "exact_label",
-                }
-            )
-        for alias in node.get("aliases") or []:
-            alias_text = str(alias or "").strip()
-            if not alias_text:
-                continue
-            node_index.setdefault(normalize_mapping_label(alias_text), []).append(
-                {
-                    "node_id": str(node["id"]),
-                    "node_label": label or alias_text,
-                    "match_type": "exact_alias",
-                }
-            )
-
-    entity_rows = store.list_entities()
-    entity_by_normalized: dict[str, sqlite3.Row] = {}
-    for row in entity_rows:
-        entity_by_normalized.setdefault(str(row["normalized_label"]), row)
-
-    store.clear_matches(run_key)
+    records = _resolved_mapping_records(
+        store=store,
+        main_data=main_data,
+        run_key=run_key,
+        record_matches=True,
+    )
 
     overlay_nodes: dict[str, dict[str, Any]] = {}
     overlay_edges: list[dict[str, Any]] = []
-    matched_link_count = 0
+    matched_link_count = sum(1 for record in records if record["matched"])
+    grouped_records = _group_records_for_overlay(records)
+    aggregated_group_count = 0
 
-    for link_row in store.list_links():
-        from_match = _unique_match(node_index, str(link_row["from_normalized_label"]))
-        to_match = _unique_match(node_index, str(link_row["to_normalized_label"]))
-
-        if from_match:
-            store.insert_match(
-                mapping_link_id=int(link_row["id"]),
-                endpoint="from",
-                run_key=run_key,
-                matched_node_id=from_match["node_id"],
-                matched_node_label=from_match["node_label"],
-                match_type=from_match["match_type"],
-            )
-        if to_match:
-            store.insert_match(
-                mapping_link_id=int(link_row["id"]),
-                endpoint="to",
-                run_key=run_key,
-                matched_node_id=to_match["node_id"],
-                matched_node_label=to_match["node_label"],
-                match_type=to_match["match_type"],
-            )
-
-        source_id = from_match["node_id"] if from_match else _ensure_overlay_node(
-            overlay_nodes,
-            label=str(link_row["from_label"]),
-            normalized_label=str(link_row["from_normalized_label"]),
-            entity_row=entity_by_normalized.get(str(link_row["from_normalized_label"])),
-        )
-        target_id = to_match["node_id"] if to_match else _ensure_overlay_node(
-            overlay_nodes,
-            label=str(link_row["to_label"]),
-            normalized_label=str(link_row["to_normalized_label"]),
-            entity_row=entity_by_normalized.get(str(link_row["to_normalized_label"])),
-        )
-        if source_id == target_id:
+    for group_records in grouped_records:
+        if len(group_records) >= LOW_CONFIDENCE_GROUP_MIN_SIZE and _should_aggregate_group(group_records):
+            group_id, group_node, group_edge = _build_aggregate_group(group_records)
+            overlay_nodes[group_id] = group_node
+            target = group_records[0]["target"]
+            if not target["matched"]:
+                overlay_nodes[target["id"]] = target["node"]
+            overlay_edges.append(group_edge)
+            aggregated_group_count += 1
             continue
-
-        import_line = _mapping_import_line(
-            workbook_name=str(link_row["workbook_name"]),
-            sheet_name=str(link_row["sheet_name"]),
-            row_number=int(link_row["row_number"]),
-        )
-        phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
-        tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), import_line] if line]
-        overlay_edges.append(
-            {
-                "id": _mapping_edge_id(int(link_row["id"])),
-                "source": source_id,
-                "target": target_id,
-                "kind": "mapping_link",
-                "phrase": phrase,
-                "role_type": str(link_row["link_type"] or "").strip() or "mapping_link",
-                "role_label": str(link_row["link_type"] or "").strip() or "mapping_link",
-                "source_provider": "mapping_import",
-                "confidence": "low",
-                "weight": 0.2,
-                "tooltip": import_line,
-                "tooltip_lines": tooltip_lines,
-                "is_low_confidence": True,
-                "detail_available": True,
-            }
-        )
-        if from_match or to_match:
-            matched_link_count += 1
+        for record in group_records:
+            if not record["source"]["matched"]:
+                overlay_nodes[record["source"]["id"]] = record["source"]["node"]
+            if not record["target"]["matched"]:
+                overlay_nodes[record["target"]["id"]] = record["target"]["node"]
+            overlay_edges.append(_raw_overlay_edge(record))
 
     return {
         "nodes": list(overlay_nodes.values()),
@@ -635,8 +563,49 @@ def build_low_confidence_overlay(
             "overlay_node_count": len(overlay_nodes),
             "overlay_edge_count": len(overlay_edges),
             "matched_link_count": matched_link_count,
+            "aggregated_group_count": aggregated_group_count,
         },
     }
+
+
+def build_low_confidence_group_details(
+    *,
+    main_data: dict[str, Any],
+    database_path: Path,
+    run_key: str,
+) -> dict[str, dict[str, Any]]:
+    store = MappingStore(database_path)
+    store.init_db()
+    records = _resolved_mapping_records(
+        store=store,
+        main_data=main_data,
+        run_key=run_key,
+        record_matches=False,
+    )
+
+    grouped_details: dict[str, dict[str, Any]] = {}
+    for group_records in _group_records_for_overlay(records):
+        if len(group_records) < LOW_CONFIDENCE_GROUP_MIN_SIZE or not _should_aggregate_group(group_records):
+            continue
+        group_id, group_node, _group_edge = _build_aggregate_group(group_records)
+        detail_nodes: dict[str, dict[str, Any]] = {}
+        detail_edges: list[dict[str, Any]] = []
+        for record in group_records:
+            if not record["source"]["matched"]:
+                detail_nodes[record["source"]["id"]] = record["source"]["node"]
+            detail_edges.append(_raw_overlay_edge(record))
+        grouped_details[group_id] = {
+            "group_id": group_id,
+            "group_node": group_node,
+            "nodes": list(detail_nodes.values()),
+            "edges": detail_edges,
+            "summary": {
+                "member_count": len(group_records),
+                "target_id": group_records[0]["target"]["id"],
+                "target_label": group_records[0]["target"]["label"],
+            },
+        }
+    return grouped_details
 
 
 def build_low_confidence_edge_details(*, database_path: Path) -> dict[str, dict[str, Any]]:
@@ -665,6 +634,229 @@ def build_low_confidence_edge_details(*, database_path: Path) -> dict[str, dict[
             "evidence_items": evidence_items,
         }
     return detail_by_edge_id
+
+
+def _resolved_mapping_records(
+    *,
+    store: MappingStore,
+    main_data: dict[str, Any],
+    run_key: str,
+    record_matches: bool,
+) -> list[dict[str, Any]]:
+    node_index = _main_node_index(main_data)
+    entity_by_normalized = _entity_rows_by_normalized(store.list_entities())
+    if record_matches:
+        store.clear_matches(run_key)
+
+    records: list[dict[str, Any]] = []
+    for link_row in store.list_links():
+        from_match = _unique_match(node_index, str(link_row["from_normalized_label"]))
+        to_match = _unique_match(node_index, str(link_row["to_normalized_label"]))
+
+        if record_matches and from_match:
+            store.insert_match(
+                mapping_link_id=int(link_row["id"]),
+                endpoint="from",
+                run_key=run_key,
+                matched_node_id=from_match["node_id"],
+                matched_node_label=from_match["node_label"],
+                match_type=from_match["match_type"],
+            )
+        if record_matches and to_match:
+            store.insert_match(
+                mapping_link_id=int(link_row["id"]),
+                endpoint="to",
+                run_key=run_key,
+                matched_node_id=to_match["node_id"],
+                matched_node_label=to_match["node_label"],
+                match_type=to_match["match_type"],
+            )
+
+        source = _resolved_mapping_endpoint(
+            label=str(link_row["from_label"]),
+            normalized_label=str(link_row["from_normalized_label"]),
+            match=from_match,
+            entity_row=entity_by_normalized.get(str(link_row["from_normalized_label"])),
+        )
+        target = _resolved_mapping_endpoint(
+            label=str(link_row["to_label"]),
+            normalized_label=str(link_row["to_normalized_label"]),
+            match=to_match,
+            entity_row=entity_by_normalized.get(str(link_row["to_normalized_label"])),
+        )
+        if source["id"] == target["id"]:
+            continue
+
+        link_type = str(link_row["link_type"] or "").strip()
+        records.append(
+            {
+                "link_id": int(link_row["id"]),
+                "source": source,
+                "target": target,
+                "link_type": link_type,
+                "phrase": _mapping_phrase(link_type),
+                "import_line": _mapping_import_line(
+                    workbook_name=str(link_row["workbook_name"]),
+                    sheet_name=str(link_row["sheet_name"]),
+                    row_number=int(link_row["row_number"]),
+                ),
+                "matched": bool(from_match or to_match),
+            }
+        )
+    return records
+
+
+def _main_node_index(main_data: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    node_index: dict[str, list[dict[str, str]]] = {}
+    for node in main_data.get("nodes") or []:
+        if str(node.get("kind") or "") == "seed":
+            continue
+        label = str(node.get("label") or "").strip()
+        if label:
+            node_index.setdefault(normalize_mapping_label(label), []).append(
+                {
+                    "node_id": str(node["id"]),
+                    "node_label": label,
+                    "match_type": "exact_label",
+                }
+            )
+        for alias in node.get("aliases") or []:
+            alias_text = str(alias or "").strip()
+            if not alias_text:
+                continue
+            node_index.setdefault(normalize_mapping_label(alias_text), []).append(
+                {
+                    "node_id": str(node["id"]),
+                    "node_label": label or alias_text,
+                    "match_type": "exact_alias",
+                }
+            )
+    return node_index
+
+
+def _entity_rows_by_normalized(rows: list[sqlite3.Row]) -> dict[str, sqlite3.Row]:
+    entity_by_normalized: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        entity_by_normalized.setdefault(str(row["normalized_label"]), row)
+    return entity_by_normalized
+
+
+def _resolved_mapping_endpoint(
+    *,
+    label: str,
+    normalized_label: str,
+    match: dict[str, str] | None,
+    entity_row: sqlite3.Row | None,
+) -> dict[str, Any]:
+    if match:
+        return {
+            "id": match["node_id"],
+            "label": match["node_label"],
+            "matched": True,
+            "node": None,
+        }
+    node_id, node = _overlay_node_payload(
+        label=label,
+        normalized_label=normalized_label,
+        entity_row=entity_row,
+    )
+    return {
+        "id": node_id,
+        "label": label,
+        "matched": False,
+        "node": node,
+    }
+
+
+def _group_records_for_overlay(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    singles: list[list[dict[str, Any]]] = []
+    for record in records:
+        if record["source"]["matched"]:
+            singles.append([record])
+            continue
+        key = _mapping_group_id(record["target"]["id"], record["link_type"])
+        grouped.setdefault(key, []).append(record)
+    return list(grouped.values()) + singles
+
+
+def _should_aggregate_group(group_records: list[dict[str, Any]]) -> bool:
+    if not group_records:
+        return False
+    distinct_sources = {record["source"]["id"] for record in group_records}
+    if len(distinct_sources) < LOW_CONFIDENCE_GROUP_MIN_SIZE:
+        return False
+    return True
+
+
+def _build_aggregate_group(group_records: list[dict[str, Any]]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    first = group_records[0]
+    target = first["target"]
+    group_id = _mapping_group_id(target["id"], first["link_type"])
+    member_count = len(group_records)
+    source_nodes = [record["source"]["node"] for record in group_records if record["source"]["node"]]
+    person_count = sum(1 for node in source_nodes if str(node.get("kind") or "") == "person")
+    organisation_count = sum(1 for node in source_nodes if str(node.get("kind") or "") == "organisation")
+    group_kind = "person" if person_count >= organisation_count else "organisation"
+    group_lane = 4 if group_kind == "person" else 2
+    role_label = first["link_type"] or "linked"
+    group_label = _mapping_group_label(role_label, member_count)
+    group_node = {
+        "id": group_id,
+        "label": group_label,
+        "kind": group_kind,
+        "lane": group_lane,
+        "aliases": [],
+        "tooltip_lines": [
+            f"{member_count} low-confidence {group_label.lower()}",
+            f"Linked to {target['label']}",
+            "Right-click to expand the individual members.",
+        ],
+        "is_low_confidence": True,
+        "is_low_confidence_group": True,
+        "aggregate_member_count": member_count,
+        "aggregate_link_type": role_label,
+    }
+    group_edge = {
+        "id": f"{group_id}:edge",
+        "source": group_id,
+        "target": target["id"],
+        "kind": "mapping_group",
+        "phrase": first["phrase"],
+        "role_type": role_label or "mapping_group",
+        "role_label": role_label or "mapping_group",
+        "source_provider": "mapping_import",
+        "confidence": "low",
+        "weight": min(1.6, 0.35 + member_count * 0.01),
+        "tooltip": f"{member_count} grouped low-confidence links",
+        "tooltip_lines": [
+            f"{member_count} grouped low-confidence links",
+            f"Linked to {target['label']}",
+        ],
+        "is_low_confidence": True,
+        "low_confidence_group_id": group_id,
+    }
+    return group_id, group_node, group_edge
+
+
+def _raw_overlay_edge(record: dict[str, Any]) -> dict[str, Any]:
+    role_label = record["link_type"] or "mapping_link"
+    return {
+        "id": _mapping_edge_id(int(record["link_id"])),
+        "source": record["source"]["id"],
+        "target": record["target"]["id"],
+        "kind": "mapping_link",
+        "phrase": record["phrase"],
+        "role_type": role_label,
+        "role_label": role_label,
+        "source_provider": "mapping_import",
+        "confidence": "low",
+        "weight": 0.2,
+        "tooltip": record["import_line"],
+        "tooltip_lines": [line for line in [role_label, record["import_line"]] if line],
+        "is_low_confidence": True,
+        "detail_available": True,
+    }
 
 
 def _cell_text(value: object) -> str:
@@ -740,10 +932,24 @@ def _ensure_overlay_node(
     normalized_label: str,
     entity_row: sqlite3.Row | None,
 ) -> str:
-    node_id = f"mapping-node:{slugify_mapping_label(normalized_label or label)}"
+    node_id, node = _overlay_node_payload(
+        label=label,
+        normalized_label=normalized_label,
+        entity_row=entity_row,
+    )
     if node_id in overlay_nodes:
         return node_id
+    overlay_nodes[node_id] = node
+    return node_id
 
+
+def _overlay_node_payload(
+    *,
+    label: str,
+    normalized_label: str,
+    entity_row: sqlite3.Row | None,
+) -> tuple[str, dict[str, Any]]:
+    node_id = f"mapping-node:{slugify_mapping_label(normalized_label or label)}"
     entity_type = str(entity_row["entity_type"] or "").strip() if entity_row else ""
     description = str(entity_row["description"] or "").strip() if entity_row else ""
     kind, lane = _infer_overlay_node_kind(entity_type)
@@ -752,7 +958,7 @@ def _ensure_overlay_node(
         tooltip_lines.append(
             f"Imported from {entity_row['workbook_name']} / {entity_row['sheet_name']} / row {entity_row['row_number']}"
         )
-    overlay_nodes[node_id] = {
+    return node_id, {
         "id": node_id,
         "label": label,
         "kind": kind,
@@ -762,11 +968,14 @@ def _ensure_overlay_node(
         "is_low_confidence": True,
         "mapping_entity_type": entity_type,
     }
-    return node_id
 
 
 def _mapping_edge_id(link_id: int) -> str:
     return f"mapping-link:{link_id}"
+
+
+def _mapping_group_id(target_id: str, link_type: str) -> str:
+    return f"mapping-group:{slugify_mapping_label(target_id)}:{slugify_mapping_label(link_type or 'mapping_group')}"
 
 
 def _mapping_import_line(*, workbook_name: str, sheet_name: str, row_number: int) -> str:
@@ -807,3 +1016,18 @@ def _mapping_phrase(link_type: str) -> str:
     if "campaign" in lowered:
         return "is linked through"
     return "is linked to"
+
+
+def _mapping_group_label(link_type: str, member_count: int) -> str:
+    lowered = normalize_mapping_label(link_type)
+    if "signatory" in lowered:
+        noun = "signatories"
+    elif "affiliate" in lowered:
+        noun = "affiliates"
+    elif "partner" in lowered:
+        noun = "partners"
+    elif "supporter" in lowered:
+        noun = "supporters"
+    else:
+        noun = "linked members"
+    return f"{member_count} {noun}"
