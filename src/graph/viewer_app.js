@@ -977,28 +977,28 @@
   function evidenceActionsForEdge(edge) {
     const evidenceItems = [];
     const seen = new Set();
-    const pushEvidence = (evidence) => {
+    const pushEvidence = (evidence, sourceEdge = edge) => {
       if (!evidence || typeof evidence !== "object") return;
       const url = String(evidenceActionUrl(evidence) || evidence.document_url || "").trim();
       const page = String(evidence.page_hint || evidence.page_number || "").trim();
       const key = `${url}||${page}`;
       if (!url || seen.has(key)) return;
       seen.add(key);
-      evidenceItems.push(evidence);
+      evidenceItems.push({ evidence, sourceEdge });
     };
-    (Array.isArray(edge?.evidence_items) ? edge.evidence_items : []).forEach(pushEvidence);
-    if (edge?.evidence) pushEvidence(edge.evidence);
+    (Array.isArray(edge?.evidence_items) ? edge.evidence_items : []).forEach((item) => pushEvidence(item, edge));
+    if (edge?.evidence) pushEvidence(edge.evidence, edge);
     (Array.isArray(edge?.pathEdges) ? edge.pathEdges : []).forEach((pathEdge) => {
-      (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach(pushEvidence);
-      if (pathEdge?.evidence) pushEvidence(pathEdge.evidence);
+      (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach((item) => pushEvidence(item, pathEdge));
+      if (pathEdge?.evidence) pushEvidence(pathEdge.evidence, pathEdge);
     });
     return evidenceItems
-      .map((evidence) => {
+      .map(({ evidence, sourceEdge }) => {
         const url = evidenceActionUrl(evidence);
         if (!url) return null;
         return {
           type: "open_url",
-          label: evidenceLabelForEdge(edge),
+          label: evidenceLabelForEdge(sourceEdge || edge),
           url,
         };
       })
