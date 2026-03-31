@@ -1073,6 +1073,8 @@ svg.on("dblclick.zoom", null);
 let addressMap = null;
 let addressMarkersLayer = null;
 let currentMapRequestId = 0;
+let addressMarkerByNodeId = new Map();
+let addressGeocodeByNodeId = new Map();
 
 function iconPath(kind) {{
   if (kind === "identity") return "M12 12a3 3 0 1 0 0-6a3 3 0 0 0 0 6Zm-5.5 7a5.5 5.5 0 0 1 11 0";
@@ -2162,6 +2164,10 @@ function visibleAddressNodes() {{
   return allNodes.filter(node => node._visible && node.kind === "address");
 }}
 
+function allAddressNodes() {{
+  return allNodes.filter(node => node.kind === "address");
+}}
+
 function ensureAddressMap() {{
   if (addressMap) return;
   addressMap = L.map("address-map", {{ zoomControl: true }});
@@ -2254,6 +2260,47 @@ async function geocodeAddressNode(node) {{
   return null;
 }}
 
+function ensureAddressMarker(node, result) {{
+  if (!node?.id || !result) return null;
+  if (addressMarkerByNodeId.has(node.id)) return addressMarkerByNodeId.get(node.id);
+  const marker = L.marker([result.lat, result.lon])
+    .bindPopup(`<strong>${{escapeHtml(node.label || "Address")}}</strong><br>${{escapeHtml(result.label || "")}}`);
+  addressMarkerByNodeId.set(node.id, marker);
+  addressGeocodeByNodeId.set(node.id, result);
+  return marker;
+}}
+
+async function preloadAddressMarkers(nodes, requestId) {{
+  let geocodedCount = 0;
+  for (let index = 0; index < nodes.length; index += 1) {{
+    if (requestId !== currentMapRequestId) return null;
+    const node = nodes[index];
+    if (!node?.id) continue;
+    if (addressMarkerByNodeId.has(node.id)) {{
+      geocodedCount += 1;
+      continue;
+    }}
+    const result = addressGeocodeByNodeId.get(node.id) || await geocodeAddressNode(node);
+    if (!result) continue;
+    ensureAddressMarker(node, result);
+    geocodedCount += 1;
+  }}
+  return geocodedCount;
+}}
+
+function syncAddressMarkerVisibility(nodes) {{
+  const markers = [];
+  addressMarkersLayer.clearLayers();
+  nodes.forEach(node => {{
+    const marker = addressMarkerByNodeId.get(node.id);
+    if (!marker) return;
+    marker.addTo(addressMarkersLayer);
+    const result = addressGeocodeByNodeId.get(node.id);
+    if (result) markers.push({{ node, marker, ...result }});
+  }});
+  return markers;
+}}
+
 async function openMapView() {{
   closeContextMenu();
   hideTooltip();
@@ -2272,20 +2319,12 @@ async function openMapView() {{
   }}, 0);
   currentMapRequestId += 1;
   const requestId = currentMapRequestId;
-  const limitedNodes = addressNodes.slice(0, 50);
-  const markers = [];
+  const preloadNodes = allAddressNodes();
+  mapStatusEl.textContent = `Preloading ${{preloadNodes.length}} addresses for the map...`;
+  const geocodedCount = await preloadAddressMarkers(preloadNodes, requestId);
+  if (requestId !== currentMapRequestId || geocodedCount === null) return;
 
-  mapStatusEl.textContent = `Geocoding ${{limitedNodes.length}} visible addresses...`;
-  for (let index = 0; index < limitedNodes.length; index += 1) {{
-    if (requestId !== currentMapRequestId) return;
-    const node = limitedNodes[index];
-    const result = await geocodeAddressNode(node);
-    if (result) markers.push({{ node, ...result }});
-  }}
-
-  if (requestId !== currentMapRequestId) return;
-
-  addressMarkersLayer.clearLayers();
+  const markers = syncAddressMarkerVisibility(addressNodes);
   if (!markers.length) {{
     mapStatusEl.textContent = "No visible addresses could be geocoded yet.";
     addressMap.setView([20, 0], 2);
@@ -2293,21 +2332,10 @@ async function openMapView() {{
     return;
   }}
 
-  markers.forEach(marker => {{
-    L.marker([marker.lat, marker.lon])
-      .bindPopup(`<strong>${{escapeHtml(marker.node.label || "Address")}}</strong><br>${{escapeHtml(marker.label || "")}}`)
-      .addTo(addressMarkersLayer);
-  }});
-
   const bounds = L.latLngBounds(markers.map(marker => [marker.lat, marker.lon]));
   addressMap.fitBounds(bounds.pad(0.15));
   window.setTimeout(() => addressMap.invalidateSize(), 0);
-  mapStatusEl.textContent = markers.length === limitedNodes.length
-    ? `Mapped ${{markers.length}} visible addresses.`
-    : `Mapped ${{markers.length}} of ${{limitedNodes.length}} visible addresses.`;
-  if (addressNodes.length > limitedNodes.length) {{
-    mapStatusEl.textContent += ` Showing the first ${{limitedNodes.length}} only.`;
-  }}
+  mapStatusEl.textContent = `Mapped ${{markers.length}} visible addresses. Preloaded ${{addressMarkerByNodeId.size}} total markers.`;
 }}
 
 function openContextMenu(event, node) {{
@@ -2784,6 +2812,13 @@ function applyViewerState() {{
   updateFocusStyling(projection.rootIds);
   renderScorePanel();
   zoomToVisible();
+
+  const mapPaneActive = document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active");
+  if (mapPaneActive && addressMap) {{
+    openMapView().catch(() => {{
+      mapStatusEl.textContent = "Address geocoding failed.";
+    }});
+  }}
 
   const shownNodes = allNodes.filter(node => node._visible).length;
   statsEl.textContent = projection.rootIds.size || viewerState.showLowConfidence
