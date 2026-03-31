@@ -1,0 +1,50 @@
+<div class="topbar">
+  <h1>{title}</h1>
+  <div class="stats" id="stats">{node_count} nodes, {edge_count} edges</div>
+  <div class="search-box">
+    <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
+  </div>
+</div>
+<div class="legend compact-legend" id="compact-legend"></div>
+<button class="sidebar-handle open" id="toggle-sidebar" type="button" aria-label="Hide tools sidebar" title="Hide tools sidebar">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6l6 6"></path></svg>
+</button>
+<aside class="viewer-sidebar open" id="viewer-sidebar">
+  <div class="sidebar-header">
+    <h2>Tools</h2>
+  </div>
+  <div class="sidebar-tabs">
+    <button class="sidebar-tab active" data-tab="legend" type="button">Filter</button>
+    <button class="sidebar-tab" data-tab="map" type="button">Map</button>
+    <button class="sidebar-tab" data-tab="ranked" type="button">Ranked</button>
+  </div>
+  <div class="sidebar-body">
+    <div class="sidebar-pane active" data-pane="legend">
+      <div class="sidebar-section">
+        <div class="legend" id="legend"></div>
+        <label class="sidebar-meta-toggle" title="Show only indirect paths">
+          <span>Indirect only</span>
+          <input id="indirect-only" type="checkbox" />
+        </label>
+      </div>
+    </div>
+    <div class="sidebar-pane" data-pane="map">
+      <div class="sidebar-section">
+        <div class="map-toolbar">
+          <div class="sidebar-pane-title">Visible addresses</div>
+          <button class="toolbar-btn map-refresh-btn" id="refresh-map" type="button" aria-label="Refresh map" title="Refresh map">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 5.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+        </div>
+        <div class="analysis-status" id="map-status">Open the map tab to geocode the visible addresses.</div>
+        <div id="address-map"></div>
+      </div>
+    </div>
+    <div class="sidebar-pane" data-pane="ranked">
+      <div class="score-panel" id="score-panel"></div>
+    </div>
+  </div>
+</aside>
+<div id="graph"></div>
+<div class="tooltip" id="tooltip"></div>
+<div class="context-menu" id="context-menu"></div>
