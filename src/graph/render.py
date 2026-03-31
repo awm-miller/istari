@@ -1162,6 +1162,23 @@ function edgePairKey(a, b) {{
   return a < b ? `${{a}}||${{b}}` : `${{b}}||${{a}}`;
 }}
 
+function edgeBetweenNodes(leftId, rightId) {{
+  return (edgesByNodeId.get(leftId) || []).find(edge => (
+    edge.kind !== "hidden_connection"
+    && ((edge.source === leftId && edge.target === rightId) || (edge.source === rightId && edge.target === leftId))
+  )) || null;
+}}
+
+function pathEdgesFromHiddenChain(sourceId, targetId, hiddenNodeIds) {{
+  const nodeIds = [sourceId, ...hiddenNodeIds, targetId];
+  const pathEdges = [];
+  for (let index = 0; index < nodeIds.length - 1; index += 1) {{
+    const edge = edgeBetweenNodes(nodeIds[index], nodeIds[index + 1]);
+    if (edge) pathEdges.push(edge);
+  }}
+  return pathEdges;
+}}
+
 function isBridgeStartNode(node) {{
   return !!node && node.kind === "organisation";
 }}
@@ -1271,12 +1288,14 @@ function deriveHiddenConnectionEdges(rootIds, visibleIds, subgraph) {{
         const pairKey = edgePairKey(parentId, targetId);
         if (!hiddenConnections.has(pairKey) && hiddenNodeIds.length) {{
           const orderedHiddenNodes = [...hiddenNodeIds].reverse();
+          const pathEdges = pathEdgesFromHiddenChain(parentId, targetId, orderedHiddenNodes);
           hiddenConnections.set(pairKey, {{
             source: parentId,
             target: targetId,
             kind: "hidden_connection",
             hiddenNodeIds: orderedHiddenNodes,
-            tooltip_lines: hiddenConnectionTooltipLines(parentId, targetId, orderedHiddenNodes),
+            pathEdges,
+            tooltip_lines: hiddenConnectionTooltipLines(parentId, targetId, orderedHiddenNodes, pathEdges),
           }});
         }}
         break;
@@ -1605,16 +1624,37 @@ function evidenceActionUrl(evidence) {{
 }}
 
 function evidenceActionsForEdge(edge) {{
-  const evidence = edge?.evidence;
-  const url = evidenceActionUrl(evidence);
-  if (!url) return [];
-  const title = String(evidence?.title || edge.tooltip || "Evidence").trim();
-  const pageHint = String(evidence?.page_hint || "").trim();
-  return [{{
-    type: "open_url",
-    label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
-    url,
-  }}];
+  const evidenceItems = [];
+  const seen = new Set();
+  const pushEvidence = evidence => {{
+    if (!evidence || typeof evidence !== "object") return;
+    const url = String(evidence.document_url || "").trim();
+    const title = String(evidence.title || "").trim();
+    const page = String(evidence.page_hint || evidence.page_number || "").trim();
+    const key = `${{url}}||${{title}}||${{page}}`;
+    if (!url || seen.has(key)) return;
+    seen.add(key);
+    evidenceItems.push(evidence);
+  }};
+  (Array.isArray(edge?.evidence_items) ? edge.evidence_items : []).forEach(pushEvidence);
+  if (edge?.evidence) pushEvidence(edge.evidence);
+  (Array.isArray(edge?.pathEdges) ? edge.pathEdges : []).forEach(pathEdge => {{
+    (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach(pushEvidence);
+    if (pathEdge?.evidence) pushEvidence(pathEdge.evidence);
+  }});
+  return evidenceItems
+    .map(evidence => {{
+      const url = evidenceActionUrl(evidence);
+      if (!url) return null;
+      const title = String(evidence?.title || edge.tooltip || "Evidence").trim();
+      const pageHint = String(evidence?.page_hint || "").trim();
+      return {{
+        type: "open_url",
+        label: pageHint ? `Open evidence: ${{title}} (${{pageHint}})` : `Open evidence: ${{title}}`,
+        url,
+      }};
+    }})
+    .filter(Boolean);
 }}
 
 function mergeActionsForNode(node) {{
