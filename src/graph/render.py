@@ -648,6 +648,10 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
           <span>Indirect only</span>
           <input id="indirect-only" type="checkbox" />
         </label>
+        <label class="sidebar-meta-toggle" title="Show low confidence overlay">
+          <span>Low confidence overlay</span>
+          <input id="show-low-confidence" type="checkbox" />
+        </label>
       </div>
     </div>
     <div class="sidebar-pane" data-pane="map">
@@ -689,6 +693,7 @@ const MERGE_OVERRIDE_STORAGE_KEY = "istari-manual-merge-overrides-v1";
 const MERGE_OVERRIDE_URL = "/.netlify/functions/merge-overrides";
 const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
 const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
+const LOW_CONFIDENCE_EDGE_URL = "/.netlify/functions/low-confidence-edge";
 
 function isAddressMergeNode(node) {{
   return node?.kind === "address";
@@ -899,6 +904,8 @@ let showAddressesInput = null;
 let showLowConfidenceInput = null;
 let indirectOnlyInput = document.getElementById("indirect-only");
 const GEOCODE_CACHE_KEY = "istari-address-geocode-cache-v1";
+const lowConfidenceEdgeDetailCache = new Map();
+const lowConfidenceEdgeDetailPromises = new Map();
 
 const W = container.clientWidth;
 const H = container.clientHeight;
@@ -1079,10 +1086,6 @@ function renderLegend() {{
       <span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span>
       <input class="legend-toggle" id="show-people" type="checkbox" checked aria-label="People" />
     </label>`,
-    `<label class="row" title="Low confidence overlay">
-      <span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span>
-      <input class="legend-toggle" id="show-low-confidence" type="checkbox" aria-label="Low confidence overlay" />
-    </label>`,
     `<div class="row" title="OFAC sanctioned">
       <span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span>
     </div>`,
@@ -1104,11 +1107,65 @@ function renderCompactLegend() {{
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("address"))}} Address</span></div>`,
     `<div class="row"><span class="legend-key">${{iconSvgMarkup(iconSpec("person"))}} Person</span></div>`,
-    `<div class="row"><span class="legend-key"><span class="dot" style="background:var(--amber);border:2px dashed var(--amber)"></span> Low confidence overlay</span></div>`,
     `<div class="row"><span class="legend-key"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</span></div>`,
   ].join("");
 }}
 renderCompactLegend();
+
+function edgeTooltipLines(edge) {{
+  if (Array.isArray(edge?.tooltip_lines) && edge.tooltip_lines.length) return edge.tooltip_lines;
+  if (edge?.tooltip) return [edge.tooltip];
+  return [edge?.phrase || edge?.role_type || "link"];
+}}
+
+function applyLowConfidenceEdgeDetail(edge, detail) {{
+  if (!edge || !detail || typeof detail !== "object") return;
+  edge.tooltip = String(detail.tooltip || edge.tooltip || "");
+  edge.tooltip_lines = Array.isArray(detail.tooltip_lines)
+    ? detail.tooltip_lines.map(line => String(line || "")).filter(Boolean)
+    : edge.tooltip_lines;
+  edge.evidence = detail.evidence && typeof detail.evidence === "object" ? detail.evidence : null;
+  edge.evidence_items = Array.isArray(detail.evidence_items) ? detail.evidence_items : [];
+  edge._detailLoaded = true;
+  lowConfidenceEdgeDetailCache.set(edge.id, {{
+    tooltip: edge.tooltip,
+    tooltip_lines: edge.tooltip_lines,
+    evidence: edge.evidence,
+    evidence_items: edge.evidence_items,
+  }});
+}}
+
+async function ensureLowConfidenceEdgeDetail(edge) {{
+  if (!edge?.is_low_confidence || edge._detailLoaded || !edge.detail_available) return edge;
+  const cached = lowConfidenceEdgeDetailCache.get(edge.id);
+  if (cached) {{
+    applyLowConfidenceEdgeDetail(edge, cached);
+    return edge;
+  }}
+  if (lowConfidenceEdgeDetailPromises.has(edge.id)) {{
+    await lowConfidenceEdgeDetailPromises.get(edge.id);
+    return edge;
+  }}
+  const request = fetch(`${{LOW_CONFIDENCE_EDGE_URL}}?id=${{encodeURIComponent(edge.id)}}`)
+    .then(response => {{
+      if (!response.ok) throw new Error(`Low-confidence edge detail fetch failed: ${{response.status}}`);
+      return response.json();
+    }})
+    .then(detail => {{
+      applyLowConfidenceEdgeDetail(edge, detail);
+      return detail;
+    }})
+    .catch(error => {{
+      console.error(error);
+      return null;
+    }})
+    .finally(() => {{
+      lowConfidenceEdgeDetailPromises.delete(edge.id);
+    }});
+  lowConfidenceEdgeDetailPromises.set(edge.id, request);
+  await request;
+  return edge;
+}}
 
 function nodeTypeKey(node) {{
   if (node.kind === "seed" || node.lane === 1) return "identity";
@@ -1746,6 +1803,13 @@ function evidenceActionsForEdge(edge) {{
     .filter(Boolean);
 }}
 
+function handleEdgeMouseOver(event, edge) {{
+  showTooltip(event, edgeTooltipLines(edge));
+  if (edge?.is_low_confidence && !edge._detailLoaded && edge.detail_available) {{
+    ensureLowConfidenceEdgeDetail(edge);
+  }}
+}}
+
 function mergeActionsForNode(node) {{
   const actions = [];
   const pendingNode = nodeById.get(viewerState.pendingMergeNodeId);
@@ -1982,10 +2046,14 @@ async function openAnalysisView() {{
   renderAnalysisResult(payload);
 }}
 
-function openEdgeContextMenu(event, edge) {{
+async function openEdgeContextMenu(event, edge) {{
   event.preventDefault();
   event.stopPropagation();
   hideTooltip();
+
+  if (edge?.is_low_confidence && !edge._detailLoaded && edge.detail_available) {{
+    await ensureLowConfidenceEdgeDetail(edge);
+  }}
 
   const sourceNode = nodeById.get(edge.source);
   const targetNode = nodeById.get(edge.target);
@@ -2330,7 +2398,7 @@ function renderEdges() {{
     .style("pointer-events", "none");
 
   groups.select("line.role-edge-hit")
-    .on("mouseover", (event, edge) => showTooltip(event, edge.tooltip_lines || [edge.tooltip || "link"]))
+    .on("mouseover", handleEdgeMouseOver)
     .on("mousemove", positionTooltip)
     .on("mouseout", hideTooltip)
     .on("contextmenu", openEdgeContextMenu);

@@ -8,6 +8,7 @@ from openpyxl import Workbook
 
 from src.mapping_low_confidence import (
     MappingStore,
+    build_low_confidence_edge_details,
     build_low_confidence_overlay,
     import_mapping_workbooks,
 )
@@ -131,12 +132,22 @@ class MappingLowConfidenceTests(unittest.TestCase):
             self.assertEqual(overlay["edges"][0]["source"], "person:1")
             self.assertEqual(overlay["edges"][0]["target"], overlay["nodes"][0]["id"])
             self.assertTrue(overlay["edges"][0]["is_low_confidence"])
-            self.assertEqual(overlay["edges"][0]["evidence_items"][0]["document_url"], "https://example.test/source")
+            self.assertTrue(overlay["edges"][0]["detail_available"])
+            self.assertEqual(
+                overlay["edges"][0]["tooltip"],
+                "Imported from sample.xlsx / Links / row 2",
+            )
 
             matches = store.list_matches("run-1")
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0]["endpoint"], "from")
             self.assertEqual(matches[0]["matched_node_id"], "person:1")
+
+            details = build_low_confidence_edge_details(database_path=database_path)
+            self.assertEqual(
+                details["mapping-link:1"]["evidence_items"][0]["document_url"],
+                "https://example.test/source",
+            )
 
 
 if __name__ == "__main__":

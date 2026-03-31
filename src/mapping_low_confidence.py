@@ -555,11 +555,6 @@ def build_low_confidence_overlay(
     for row in entity_rows:
         entity_by_normalized.setdefault(str(row["normalized_label"]), row)
 
-    evidence_rows = store.list_evidence()
-    evidence_by_link_id: dict[int, list[sqlite3.Row]] = {}
-    for row in evidence_rows:
-        evidence_by_link_id.setdefault(int(row["mapping_link_id"]), []).append(row)
-
     store.clear_matches(run_key)
 
     overlay_nodes: dict[str, dict[str, Any]] = {}
@@ -604,26 +599,16 @@ def build_low_confidence_overlay(
         if source_id == target_id:
             continue
 
-        evidence_items = [
-            {
-                "title": str(item["title"] or item["url"] or "Evidence").strip(),
-                "document_url": str(item["url"] or "").strip(),
-                "page_hint": "",
-                "page_number": None,
-                "notes": str(item["snippet"] or "").strip(),
-            }
-            for item in evidence_by_link_id.get(int(link_row["id"]), [])
-            if str(item["url"] or "").strip()
-        ]
-        description = str(link_row["description"] or "").strip()
-        phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
-        tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), description] if line]
-        tooltip_lines.append(
-            f"Imported from {link_row['workbook_name']} / {link_row['sheet_name']} / row {link_row['row_number']}"
+        import_line = _mapping_import_line(
+            workbook_name=str(link_row["workbook_name"]),
+            sheet_name=str(link_row["sheet_name"]),
+            row_number=int(link_row["row_number"]),
         )
+        phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
+        tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), import_line] if line]
         overlay_edges.append(
             {
-                "id": f"mapping-link:{int(link_row['id'])}",
+                "id": _mapping_edge_id(int(link_row["id"])),
                 "source": source_id,
                 "target": target_id,
                 "kind": "mapping_link",
@@ -633,11 +618,10 @@ def build_low_confidence_overlay(
                 "source_provider": "mapping_import",
                 "confidence": "low",
                 "weight": 0.2,
-                "tooltip": description or f"{link_row['from_label']} {phrase} {link_row['to_label']}",
+                "tooltip": import_line,
                 "tooltip_lines": tooltip_lines,
                 "is_low_confidence": True,
-                "evidence": evidence_items[0] if evidence_items else None,
-                "evidence_items": evidence_items,
+                "detail_available": True,
             }
         )
         if from_match or to_match:
@@ -653,6 +637,34 @@ def build_low_confidence_overlay(
             "matched_link_count": matched_link_count,
         },
     }
+
+
+def build_low_confidence_edge_details(*, database_path: Path) -> dict[str, dict[str, Any]]:
+    store = MappingStore(database_path)
+    store.init_db()
+
+    evidence_by_link_id = _evidence_by_link_id(store.list_evidence())
+    detail_by_edge_id: dict[str, dict[str, Any]] = {}
+    for link_row in store.list_links():
+        link_id = int(link_row["id"])
+        description = str(link_row["description"] or "").strip()
+        phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
+        evidence_items = _mapping_evidence_items(evidence_by_link_id.get(link_id, []))
+        tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), description] if line]
+        tooltip_lines.append(
+            _mapping_import_line(
+                workbook_name=str(link_row["workbook_name"]),
+                sheet_name=str(link_row["sheet_name"]),
+                row_number=int(link_row["row_number"]),
+            )
+        )
+        detail_by_edge_id[_mapping_edge_id(link_id)] = {
+            "tooltip": description or f"{link_row['from_label']} {phrase} {link_row['to_label']}",
+            "tooltip_lines": tooltip_lines,
+            "evidence": evidence_items[0] if evidence_items else None,
+            "evidence_items": evidence_items,
+        }
+    return detail_by_edge_id
 
 
 def _cell_text(value: object) -> str:
@@ -751,6 +763,35 @@ def _ensure_overlay_node(
         "mapping_entity_type": entity_type,
     }
     return node_id
+
+
+def _mapping_edge_id(link_id: int) -> str:
+    return f"mapping-link:{link_id}"
+
+
+def _mapping_import_line(*, workbook_name: str, sheet_name: str, row_number: int) -> str:
+    return f"Imported from {workbook_name} / {sheet_name} / row {row_number}"
+
+
+def _mapping_evidence_items(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": str(item["title"] or item["url"] or "Evidence").strip(),
+            "document_url": str(item["url"] or "").strip(),
+            "page_hint": "",
+            "page_number": None,
+            "notes": str(item["snippet"] or "").strip(),
+        }
+        for item in rows
+        if str(item["url"] or "").strip()
+    ]
+
+
+def _evidence_by_link_id(rows: list[sqlite3.Row]) -> dict[int, list[sqlite3.Row]]:
+    grouped: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["mapping_link_id"]), []).append(row)
+    return grouped
 
 
 def _mapping_phrase(link_type: str) -> str:

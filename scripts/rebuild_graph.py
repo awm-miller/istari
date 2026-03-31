@@ -8,7 +8,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from src.config import load_settings
 from src.graph.build import consolidate_multi_run
 from src.graph.render import render_html
-from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
+from src.mapping_low_confidence import (
+    build_low_confidence_edge_details,
+    build_low_confidence_overlay,
+    default_mapping_db_path,
+)
 from src.storage.repository import Repository
 
 settings = load_settings()
@@ -27,6 +31,7 @@ data = consolidate_multi_run(run_ids)
 print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 
 low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data.get("run_id", ""))}}
+low_confidence_edge_details = {}
 mapping_db_path = default_mapping_db_path(settings.project_root)
 if mapping_db_path.exists():
     try:
@@ -35,10 +40,16 @@ if mapping_db_path.exists():
             database_path=mapping_db_path,
             run_key=str(data.get("run_id", "")),
         )
+        low_confidence_edge_details = build_low_confidence_edge_details(database_path=mapping_db_path)
         print(
             "Loaded low-confidence overlay "
             f"({len(low_confidence_data.get('nodes') or [])} nodes, "
             f"{len(low_confidence_data.get('edges') or [])} edges)",
+            flush=True,
+        )
+        print(
+            "Loaded low-confidence edge details "
+            f"({len(low_confidence_edge_details)} edges)",
             flush=True,
         )
     except Exception as error:
@@ -61,6 +72,11 @@ low_conf_json = json.dumps(low_confidence_data, ensure_ascii=False, indent=2)
 low_conf_out = pathlib.Path("output/graph-data-low-confidence.json")
 low_conf_out.write_text(low_conf_json, encoding="utf-8")
 print(f"Wrote {low_conf_out} ({len(low_conf_json)} bytes)", flush=True)
+
+low_conf_detail_json = json.dumps(low_confidence_edge_details, ensure_ascii=False, indent=2)
+low_conf_detail_out = pathlib.Path("output/graph-data-low-confidence-details.json")
+low_conf_detail_out.write_text(low_conf_detail_json, encoding="utf-8")
+print(f"Wrote {low_conf_detail_out} ({len(low_conf_detail_json)} bytes)", flush=True)
 
 netlify = pathlib.Path("netlify_graph_viewer/index.html")
 if netlify.parent.exists():

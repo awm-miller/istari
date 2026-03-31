@@ -1,2 +1,6 @@
 [build]
+  publish = "netlify_graph_viewer"
   functions = "netlify/functions"
+
+[functions]
+  included_files = ["output/graph-data-low-confidence-details.json"]
