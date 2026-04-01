@@ -26,7 +26,6 @@ from src.address_resolution import AddressMergeMatcher, address_bucket_keys, add
 from src.config import load_settings
 from src.graph.render import render_html as _render_html
 from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
-from src.ofac.screening import OFACScreener
 from src.resolution.features import person_name_similarity
 from src.search.queries import (
     _FUZZY_SWAPS,
@@ -135,28 +134,6 @@ def names_match(left: dict, right: dict) -> bool:
             if are_aliases(left_name, right_name):
                 return True
     return False
-
-
-def _load_screener() -> OFACScreener:
-    screener = OFACScreener()
-    sdn_path = Path(__file__).resolve().parents[1] / "data" / "sdn.csv"
-    if sdn_path.exists():
-        screener.load_csv(sdn_path)
-    return screener
-
-
-_screener: OFACScreener | None = None
-
-
-def get_screener() -> OFACScreener:
-    global _screener
-    if _screener is None:
-        _screener = _load_screener()
-    return _screener
-
-
-def is_sanctioned(name: str) -> bool:
-    return len(get_screener().screen_name(name)) > 0
 
 
 class UnionFind:
@@ -433,17 +410,41 @@ def _role_key(edge) -> tuple[int, str]:
     return (int(edge["organisation_id"]), _role_phrase(edge))
 
 
-def _tag_sanctioned_nodes(nodes: list[dict]) -> None:
+def _sanction_warning(sanction: dict[str, object]) -> str:
+    matches = sanction.get("matches") or []
+    sources = sorted(
+        {
+            str(source).strip()
+            for match in matches
+            for source in (match.get("sources") or [match.get("source")])
+            if str(source).strip()
+        }
+    )
+    if not sources:
+        return "\u26a0\ufe0f <strong>SANCTIONED (SANCTIONS LIST)</strong>"
+    return (
+        "\u26a0\ufe0f <strong>SANCTIONED</strong>: "
+        + ", ".join(sources)
+    )
+
+
+def _tag_sanctioned_nodes(nodes: list[dict], sanctions_by_person_id: dict[int, dict[str, object]]) -> None:
     for node in nodes:
-        if node.get("kind") not in ("seed", "seed_alias", "person"):
+        if node.get("kind") != "person":
             continue
-        names = [node["label"], *(node.get("aliases") or [])]
-        if any(is_sanctioned(n) for n in names):
-            node["sanctioned"] = True
-            warning = "\u26a0\ufe0f <strong>SANCTIONED (OFAC SDN)</strong>"
-            tooltip_lines = list(node.get("tooltip_lines") or [])
-            if not tooltip_lines or tooltip_lines[0] != warning:
-                node["tooltip_lines"] = [warning, *tooltip_lines]
+        person_ids = [int(person_id) for person_id in (node.get("person_ids") or [])]
+        matched = [
+            sanctions_by_person_id[person_id]
+            for person_id in person_ids
+            if sanctions_by_person_id.get(person_id, {}).get("is_sanctioned")
+        ]
+        if not matched:
+            continue
+        node["sanctioned"] = True
+        warning = _sanction_warning(matched[0])
+        tooltip_lines = list(node.get("tooltip_lines") or [])
+        if not tooltip_lines or tooltip_lines[0] != warning:
+            node["tooltip_lines"] = [warning, *tooltip_lines]
 
 
 def consolidate_run(run_id: int) -> dict:
@@ -478,6 +479,7 @@ def consolidate_run(run_id: int) -> dict:
         }
         for r in ranked
     ]
+    sanctions_by_person_id = repository.get_person_sanctions([p["person_id"] for p in people])
 
     # --- alias grouping (DOB-aware to prevent transitive bridging) ---
     uf = UnionFind()
@@ -927,7 +929,7 @@ def consolidate_run(run_id: int) -> dict:
             "tooltip": f"{a_label} & {b_label} share org: {se['shared_org']}",
         })
 
-    _tag_sanctioned_nodes(nodes)
+    _tag_sanctioned_nodes(nodes, sanctions_by_person_id)
     return {
         "seed_name": seed_name,
         "run_id": run_id,
@@ -950,6 +952,12 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
       lane 2: deduplicated organisations
       lane 3: deduplicated expanded people (merged only by alias matching)
     """
+    settings = load_settings()
+    repository = Repository(
+        settings.database_path,
+        settings.project_root / "src" / "storage" / "schema.sql",
+    )
+    repository.init_db()
     runs = []
     total_runs = len(run_ids)
     for index, rid in enumerate(run_ids, start=1):
@@ -1097,6 +1105,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 "label": str(node["label"]),
                 "aliases": list(node.get("aliases") or []),
                 "identity_keys": list(node.get("identity_keys") or []),
+                "person_ids": [int(person_id) for person_id in (node.get("person_ids") or [])],
                 "tooltip_lines": list(node.get("tooltip_lines") or []),
             })
         run_contexts.append({
@@ -1199,6 +1208,13 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "kind": "person",
             "lane": 4,
             "aliases": all_aliases,
+            "person_ids": sorted(
+                {
+                    int(person_id)
+                    for entry in entries
+                    for person_id in (entry.get("person_ids") or [])
+                }
+            ),
             "org_count": 0,
             "role_count": 0,
             "score": 0.0,
@@ -1550,7 +1566,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             "group_id": merged_id,
             "label": node["label"],
             "aliases": list(node.get("aliases") or []),
-            "person_ids": [],
+            "person_ids": list(node.get("person_ids") or []),
             "org_count": node["org_count"],
             "role_count": node["role_count"],
             "score": node["score"],
@@ -1576,7 +1592,15 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     consolidated.extend(merged_people_consolidated)
     consolidated.sort(key=lambda c: (-float(c["score"]), -int(c["org_count"]), c["label"]))
 
-    _tag_sanctioned_nodes(nodes)
+    sanctions_by_person_id = repository.get_person_sanctions(
+        [
+            int(person_id)
+            for node in nodes
+            if node.get("kind") == "person"
+            for person_id in (node.get("person_ids") or [])
+        ]
+    )
+    _tag_sanctioned_nodes(nodes, sanctions_by_person_id)
     print(f"[graph] Final merged graph: {len(nodes)} nodes, {len(edges)} edges", flush=True)
     return {
         "seed_name": "Istari",
@@ -2182,7 +2206,7 @@ function renderLegend() {{
     `<div class="row">${{iconSvgMarkup(iconSpec("organisation"))}} Other organisation</div>`,
     `<div class="row">${{iconSvgMarkup(iconSpec("address"))}} Address</div>`,
     `<div class="row">${{iconSvgMarkup(iconSpec("person"))}} Person</div>`,
-    `<div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned (OFAC)</div>`,
+    `<div class="row"><span class="dot" style="background:#ff2222;border:2px solid #ff2222"></span> Sanctioned</div>`,
   ];
   legendEl.innerHTML = rows.join("");
 }}

@@ -2,7 +2,7 @@
 
 CLI pipeline for linking people to England & Wales charities and companies.
 
-Given one or more **seed names**, Istari searches UK public registries, resolves entity matches with AI, expands the network of connected organisations and people, and screens results against the OFAC sanctions list — producing a ranked, explorable network graph.
+Given one or more **seed names**, Istari searches UK public registries, resolves entity matches with AI, expands the network of connected organisations and people, and screens results against sanctions lists — producing a ranked, explorable network graph.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 6. **Graph Consolidation** — Merge person aliases and equivalent addresses across runs so shared edges collapse onto common nodes. Address merging uses deterministic normalisation first, with an LLM fallback for ambiguous near-matches.
 
-7. **Output** — Serve an interactive 4-lane HTML network graph, export JSON for the Netlify viewer, and screen ranked people against the OFAC SDN sanctions list.
+7. **Output** — Serve an interactive 4-lane HTML network graph, export JSON for the Netlify viewer, and screen ranked people against sanctions lists.
 
 ### Data sources
 
@@ -30,7 +30,7 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 - **Companies House** — officer search, company profiles, appointments, date of birth
 - **Gemini / OpenAI** — entity resolution, address resolution, PDF extraction
 - **Serper** — web search for supplementary evidence
-- **OFAC SDN list** — US Treasury sanctions screening
+- **Sanctions lists** — OFAC SDN, UK Sanctions List, France DG Tresor, and Germany Finanzsanktionsliste
 
 ### Storage & output
 
@@ -75,7 +75,7 @@ python scripts/rebuild_graph.py
 | `step2-orgs RUN_ID` | Org expansion only |
 | `pdf-enrich RUN_ID` | PDF enrichment only |
 | `step3-people RUN_ID` | People expansion only |
-| `step4-ofac RUN_ID` | OFAC screening only |
+| `step4-ofac RUN_ID` | Sanctions screening only |
 | `rank` | Rank people by connections |
 | `export-network --run-id ID` | Export graph as JSON |
 | `web-ui` | Launch the Flask web UI |

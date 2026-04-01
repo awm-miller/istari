@@ -8,12 +8,14 @@ from unittest.mock import patch
 from src.charity_commission.search import CharityCommissionSearchProvider
 from src.config import Settings
 from src.models import EvidenceItem, NameVariant, OrganisationRecord, ResolutionDecision
+from src.ofac.screening import OFACScreener
 from src.pipeline import (
     add_organisation_to_run,
     run_name_pipeline,
     step1_expand_seed,
     step2_expand_connected_organisations,
     step3_expand_connected_people,
+    step4_ofac_screening,
 )
 from src.storage.repository import Repository
 
@@ -628,6 +630,69 @@ class PipelineTests(unittest.TestCase):
             ranked_names = [row["canonical_name"] for row in result["ranking"]]
             self.assertIn("Jane Trustee", ranked_names)
             self.assertIn("John Linked", ranked_names)
+
+    def test_step4_ofac_screening_persists_person_sanctions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            settings = build_test_settings(root)
+            repository = self._repository(root)
+            person_id = repository.upsert_person("John Doe", "person:john-doe")
+            ranking = [
+                {
+                    "person_id": person_id,
+                    "canonical_name": "John Doe",
+                    "identity_key": "person:john-doe",
+                    "organisation_count": 1,
+                    "role_count": 1,
+                    "weighted_organisation_score": 1.0,
+                }
+            ]
+
+            with patch.object(
+                OFACScreener,
+                "ensure_local_sources",
+                new=lambda self, target_dir: setattr(self, "_entries", [{"name": "DOE, John"}]),
+            ), patch.object(
+                OFACScreener,
+                "screen_name",
+                return_value=[{"source": "OFAC SDN", "source_id": "1", "name": "DOE, John"}],
+            ):
+                result = step4_ofac_screening(
+                    repository=repository,
+                    settings=settings,
+                    ranking=ranking,
+                )
+
+            sanctions = repository.get_person_sanctions([person_id])
+            self.assertTrue(result["sanctions_hits"]["John Doe"])
+            self.assertTrue(sanctions[person_id]["is_sanctioned"])
+            self.assertEqual(sanctions[person_id]["screened_name"], "John Doe")
+
+    def test_person_sanctions_persistence_handles_set_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            repository = self._repository(root)
+            person_id = repository.upsert_person("John Doe", "person:john-doe")
+            repository.upsert_person_sanctions(
+                person_id=person_id,
+                screened_name="John Doe",
+                screened_birth_month=10,
+                screened_birth_year=1952,
+                matches=[
+                    {
+                        "source": "Direction Generale du Tresor",
+                        "birth_month_years": {(10, 1952)},
+                        "_prepared_norms": frozenset({"john doe"}),
+                    }
+                ],
+            )
+
+            sanctions = repository.get_person_sanctions([person_id])
+            self.assertTrue(sanctions[person_id]["is_sanctioned"])
+            self.assertEqual(
+                sanctions[person_id]["matches"][0]["birth_month_years"],
+                [[10, 1952]],
+            )
 
 
 if __name__ == "__main__":

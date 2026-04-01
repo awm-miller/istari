@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _PLAIN_URL_RE = re.compile(r"(?<!\()(?P<url>https?://[^\s)>\]]+)")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 def _ensure_text_column(
@@ -30,7 +32,7 @@ def _ensure_text_column(
 
 
 def normalize_mapping_label(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", _clean_mapping_scalar(value).lower()).strip()
 
 
 def slugify_mapping_label(value: str) -> str:
@@ -40,6 +42,47 @@ def slugify_mapping_label(value: str) -> str:
 
 def default_mapping_db_path(project_root: Path) -> Path:
     return project_root / "data" / "mapping_links.sqlite"
+
+
+def _clean_mapping_scalar(value: str) -> str:
+    cleaned = str(value or "").replace("\ufffd", "")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _clean_mapping_block(value: str) -> str:
+    cleaned = str(value or "").replace("\ufffd", "")
+    return cleaned.strip()
+
+
+def canonicalize_entity_type(value: str) -> str:
+    text = _clean_mapping_scalar(value).lower()
+    if text in {"person", "individual"}:
+        return "individual"
+    if text in {"organisation", "organization", "org"}:
+        return "organisation"
+    return text
+
+
+def canonicalize_link_type(value: str) -> str:
+    return _clean_mapping_scalar(value).lower()
+
+
+def summarize_mapping_text(value: str, *, max_chars: int = 220) -> str:
+    raw_text = _clean_mapping_block(value)
+    if not raw_text:
+        return ""
+    text = _MARKDOWN_LINK_RE.sub(lambda match: match.group(1).strip(), raw_text)
+    text = _PLAIN_URL_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text).strip(" -:;,.")
+    if not text:
+        return ""
+    first_sentence = _SENTENCE_SPLIT_RE.split(text, maxsplit=1)[0].strip()
+    if first_sentence and len(first_sentence) <= max_chars:
+        return first_sentence
+    if len(text) <= max_chars:
+        return text
+    shortened = text[: max_chars - 3].rsplit(" ", 1)[0].strip()
+    return f"{shortened or text[: max_chars - 3].strip()}..."
 
 
 def extract_evidence_links(text: str) -> list[dict[str, str]]:
@@ -88,8 +131,17 @@ class MappingStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def managed_connection(self):
+        connection = self.connect()
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
+
     def init_db(self) -> None:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             connection.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -170,7 +222,7 @@ class MappingStore:
             )
 
     def clear_all(self) -> None:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             connection.execute("DELETE FROM mapping_matches")
             connection.execute("DELETE FROM mapping_evidence")
             connection.execute("DELETE FROM mapping_links")
@@ -178,7 +230,7 @@ class MappingStore:
             connection.execute("DELETE FROM mapping_imports")
 
     def create_import(self, source_dir: Path) -> int:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             cursor = connection.execute(
                 "INSERT INTO mapping_imports(source_dir) VALUES(?)",
                 (str(source_dir),),
@@ -197,7 +249,7 @@ class MappingStore:
         description: str,
         raw_row: list[str],
     ) -> int:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO mapping_entities(
@@ -217,10 +269,10 @@ class MappingStore:
                     workbook_name,
                     sheet_name,
                     row_number,
-                    label,
+                    _clean_mapping_scalar(label),
                     normalize_mapping_label(label),
-                    entity_type,
-                    description,
+                    canonicalize_entity_type(entity_type),
+                    _clean_mapping_block(description),
                     json.dumps(raw_row, ensure_ascii=False),
                 ),
             )
@@ -239,7 +291,7 @@ class MappingStore:
         description: str,
         raw_row: list[str],
     ) -> int:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO mapping_links(
@@ -262,12 +314,12 @@ class MappingStore:
                     workbook_name,
                     sheet_name,
                     row_number,
-                    from_label,
+                    _clean_mapping_scalar(from_label),
                     normalize_mapping_label(from_label),
-                    to_label,
+                    _clean_mapping_scalar(to_label),
                     normalize_mapping_label(to_label),
-                    link_type,
-                    description,
+                    canonicalize_link_type(link_type),
+                    _clean_mapping_block(description),
                     json.dumps(raw_row, ensure_ascii=False),
                 ),
             )
@@ -284,7 +336,7 @@ class MappingStore:
         snippet: str,
         document_summary: str = "",
     ) -> None:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO mapping_evidence(
@@ -309,7 +361,7 @@ class MappingStore:
             )
 
     def clear_matches(self, run_key: str) -> None:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             connection.execute("DELETE FROM mapping_matches WHERE run_key = ?", (run_key,))
 
     def insert_match(
@@ -322,7 +374,7 @@ class MappingStore:
         matched_node_label: str,
         match_type: str,
     ) -> None:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO mapping_matches(
@@ -345,7 +397,7 @@ class MappingStore:
             )
 
     def list_entities(self) -> list[sqlite3.Row]:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             return connection.execute(
                 """
                 SELECT *
@@ -355,7 +407,7 @@ class MappingStore:
             ).fetchall()
 
     def list_links(self) -> list[sqlite3.Row]:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             return connection.execute(
                 """
                 SELECT *
@@ -365,7 +417,7 @@ class MappingStore:
             ).fetchall()
 
     def list_evidence(self) -> list[sqlite3.Row]:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             return connection.execute(
                 """
                 SELECT *
@@ -375,7 +427,7 @@ class MappingStore:
             ).fetchall()
 
     def list_matches(self, run_key: str) -> list[sqlite3.Row]:
-        with self.connect() as connection:
+        with self.managed_connection() as connection:
             return connection.execute(
                 """
                 SELECT *
@@ -404,7 +456,7 @@ def import_mapping_workbooks(mapping_dir: Path, database_path: Path) -> dict[str
     link_count = 0
     evidence_count = 0
 
-    with store.connect() as connection:
+    with store.managed_connection() as connection:
         for workbook_path in workbook_paths:
             workbook = load_workbook(workbook_path, read_only=False, data_only=True)
             for worksheet in workbook.worksheets:
@@ -423,9 +475,9 @@ def import_mapping_workbooks(mapping_dir: Path, database_path: Path) -> dict[str
                         continue
 
                     if entity_cols["label"] is not None:
-                        label = values[entity_cols["label"]].strip()
-                        entity_type = _column_value(values, entity_cols["type"]).strip()
-                        description = _column_value(values, entity_cols["description"]).strip()
+                        label = _clean_mapping_scalar(values[entity_cols["label"]])
+                        entity_type = canonicalize_entity_type(_column_value(values, entity_cols["type"]))
+                        description = _clean_mapping_block(_column_value(values, entity_cols["description"]))
                         if label:
                             cursor = connection.execute(
                                 """
@@ -456,11 +508,11 @@ def import_mapping_workbooks(mapping_dir: Path, database_path: Path) -> dict[str
                             if int(cursor.rowcount or 0) > 0:
                                 entity_count += 1
 
-                    from_label = _column_value(values, link_cols["from"]).strip()
-                    to_label = _column_value(values, link_cols["to"]).strip()
+                    from_label = _clean_mapping_scalar(_column_value(values, link_cols["from"]))
+                    to_label = _clean_mapping_scalar(_column_value(values, link_cols["to"]))
                     if from_label and to_label:
-                        link_type = _column_value(values, link_cols["type"]).strip()
-                        description = _column_value(values, link_cols["description"]).strip()
+                        link_type = canonicalize_link_type(_column_value(values, link_cols["type"]))
+                        description = _clean_mapping_block(_column_value(values, link_cols["description"]))
                         cursor = connection.execute(
                             """
                             INSERT OR IGNORE INTO mapping_links(
@@ -548,6 +600,8 @@ def build_low_confidence_overlay(
     main_data: dict[str, Any],
     database_path: Path,
     run_key: str,
+    include_unmatched: bool = False,
+    include_generated_links: bool = False,
 ) -> dict[str, Any]:
     store = MappingStore(database_path)
     store.init_db()
@@ -594,8 +648,14 @@ def build_low_confidence_overlay(
     matched_link_count = 0
 
     for link_row in store.list_links():
+        if (
+            not include_generated_links
+            and str(link_row["workbook_name"] or "").strip() == "__evidence_enrichment__"
+        ):
+            continue
         from_match = _unique_match(node_index, str(link_row["from_normalized_label"]))
         to_match = _unique_match(node_index, str(link_row["to_normalized_label"]))
+        link_type = canonicalize_link_type(str(link_row["link_type"] or ""))
 
         if from_match:
             store.insert_match(
@@ -615,6 +675,9 @@ def build_low_confidence_overlay(
                 matched_node_label=to_match["node_label"],
                 match_type=to_match["match_type"],
             )
+
+        if not include_unmatched and not (from_match or to_match):
+            continue
 
         source_id = from_match["node_id"] if from_match else _ensure_overlay_node(
             overlay_nodes,
@@ -637,7 +700,9 @@ def build_low_confidence_overlay(
                 "document_url": str(item["url"] or "").strip(),
                 "page_hint": "",
                 "page_number": None,
-                "notes": str(item["document_summary"] or item["snippet"] or "").strip(),
+                "notes": summarize_mapping_text(
+                    str(item["document_summary"] or item["snippet"] or "").strip()
+                ),
             }
             for item in evidence_by_link_id.get(int(link_row["id"]), [])
             if str(item["url"] or "").strip()
@@ -651,8 +716,13 @@ def build_low_confidence_overlay(
             "",
         )
         description = summary_text or str(link_row["description"] or "").strip()
-        phrase = _mapping_phrase(str(link_row["link_type"] or "").strip())
-        tooltip_lines = [line for line in [str(link_row["link_type"] or "").strip(), description] if line]
+        tooltip_description = summarize_mapping_text(description)
+        phrase = _mapping_phrase(link_type)
+        tooltip_lines = [
+            line
+            for line in [link_type, tooltip_description]
+            if line
+        ]
         tooltip_lines.append(
             f"Imported from {link_row['workbook_name']} / {link_row['sheet_name']} / row {link_row['row_number']}"
         )
@@ -663,12 +733,13 @@ def build_low_confidence_overlay(
                 "target": target_id,
                 "kind": "mapping_link",
                 "phrase": phrase,
-                "role_type": str(link_row["link_type"] or "").strip() or "mapping_link",
-                "role_label": str(link_row["link_type"] or "").strip() or "mapping_link",
+                "role_type": link_type or "mapping_link",
+                "role_label": link_type or "mapping_link",
                 "source_provider": "mapping_import",
                 "confidence": "low",
                 "weight": 0.2,
-                "tooltip": description or f"{link_row['from_label']} {phrase} {link_row['to_label']}",
+                "tooltip": tooltip_description
+                or f"{link_row['from_label']} {phrase} {link_row['to_label']}",
                 "tooltip_lines": tooltip_lines,
                 "is_low_confidence": True,
                 "evidence": evidence_items[0] if evidence_items else None,
@@ -771,10 +842,12 @@ def _ensure_overlay_node(
     if node_id in overlay_nodes:
         return node_id
 
-    entity_type = str(entity_row["entity_type"] or "").strip() if entity_row else ""
+    entity_type = canonicalize_entity_type(str(entity_row["entity_type"] or "").strip()) if entity_row else ""
     description = str(entity_row["description"] or "").strip() if entity_row else ""
     kind, lane, registry_type = _infer_overlay_node_kind(entity_type)
-    tooltip_lines = [line for line in [entity_type, description] if line]
+    tooltip_lines = [
+        line for line in [entity_type, summarize_mapping_text(description, max_chars=160)] if line
+    ]
     if entity_row is not None:
         tooltip_lines.append(
             f"Imported from {entity_row['workbook_name']} / {entity_row['sheet_name']} / row {entity_row['row_number']}"

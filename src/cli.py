@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     step4_parser = subparsers.add_parser(
         "step4-ofac",
-        help="MVP step 4: screen ranked people for a run against the OFAC SDN list.",
+        help="MVP step 4: screen ranked people against sanctions lists.",
     )
     step4_parser.add_argument("run_id", type=int)
     step4_parser.add_argument("--limit", type=int, default=25)
@@ -260,7 +260,11 @@ def main() -> None:
             asdict(entry)
             for entry in rank_people(repository, limit=int(args.limit), run_id=int(args.run_id))
         ]
-        result = step4_ofac_screening(settings=settings, ranking=ranking)
+        result = step4_ofac_screening(
+            repository=repository,
+            settings=settings,
+            ranking=ranking,
+        )
         print(json.dumps(result, indent=2, default=str))
         return
 

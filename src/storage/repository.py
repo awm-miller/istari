@@ -8,6 +8,18 @@ from typing import Any
 from src.models import CandidateMatch, EvidenceItem, OrganisationRecord, ResolutionDecision
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(item) for item in sorted(value, key=repr)]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return value
+
+
 class Repository:
     def __init__(self, database_path: Path, schema_path: Path) -> None:
         self.database_path = Path(database_path)
@@ -672,6 +684,82 @@ class Repository:
                 """,
                 (run_id, run_id, run_id, limit),
             ).fetchall()
+
+    def upsert_person_sanctions(
+        self,
+        *,
+        person_id: int,
+        screened_name: str,
+        screened_birth_month: int | None,
+        screened_birth_year: int | None,
+        matches: list[dict[str, Any]],
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO person_sanctions(
+                    person_id,
+                    is_sanctioned,
+                    screened_name,
+                    screened_birth_month,
+                    screened_birth_year,
+                    matches_json,
+                    checked_at
+                ) VALUES(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(person_id) DO UPDATE SET
+                    is_sanctioned = excluded.is_sanctioned,
+                    screened_name = excluded.screened_name,
+                    screened_birth_month = excluded.screened_birth_month,
+                    screened_birth_year = excluded.screened_birth_year,
+                    matches_json = excluded.matches_json,
+                    checked_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    int(person_id),
+                    1 if matches else 0,
+                    str(screened_name or ""),
+                    screened_birth_month,
+                    screened_birth_year,
+                    json.dumps(_json_safe(matches)),
+                ),
+            )
+
+    def get_person_sanctions(self, person_ids: list[int]) -> dict[int, dict[str, Any]]:
+        cleaned_ids = sorted({int(person_id) for person_id in person_ids})
+        if not cleaned_ids:
+            return {}
+        placeholders = ",".join("?" for _ in cleaned_ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    person_id,
+                    is_sanctioned,
+                    screened_name,
+                    screened_birth_month,
+                    screened_birth_year,
+                    matches_json,
+                    checked_at
+                FROM person_sanctions
+                WHERE person_id IN ({placeholders})
+                """,
+                cleaned_ids,
+            ).fetchall()
+        result: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                matches = json.loads(str(row["matches_json"] or "[]"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                matches = []
+            result[int(row["person_id"])] = {
+                "is_sanctioned": bool(row["is_sanctioned"]),
+                "screened_name": str(row["screened_name"] or ""),
+                "screened_birth_month": row["screened_birth_month"],
+                "screened_birth_year": row["screened_birth_year"],
+                "matches": matches,
+                "checked_at": str(row["checked_at"] or ""),
+            }
+        return result
 
     def get_run_network_edges(self, run_id: int) -> list[sqlite3.Row]:
         with self.connect() as connection:

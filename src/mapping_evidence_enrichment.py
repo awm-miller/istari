@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -46,6 +47,102 @@ _FOCUS_KEYWORDS = (
     "supporters",
     "endorsed by",
 )
+_BAD_SUMMARY_PHRASES = (
+    "this document chunk",
+    "provided text chunk",
+    "website navigation",
+    "navigation menu",
+    "navigation links",
+    "main content sections",
+    "branding for",
+    "consists primarily of navigation",
+    "without any substantive content",
+    "boilerplate",
+    "online gambling platform",
+    "slot gacor",
+    "togel asia",
+)
+_SIGNATORY_CONTEXT_KEYWORDS = (
+    "open letter",
+    "joint statement",
+    "statement of solidarity",
+    "signatory",
+    "signatories",
+    "signed by",
+    "we, the undersigned",
+    "undersigned",
+    "petition",
+    "statement",
+)
+_SIGNATORY_CHUNK_KEYWORDS = (
+    "signatories",
+    "signed by",
+    "undersigned",
+    "statement of solidarity",
+    "open letter",
+    "joint statement",
+)
+_SIGNATORY_ROLE_TOKENS = (
+    "prof",
+    "professor",
+    "dr",
+    "imam",
+    "maulana",
+    "chair",
+    "director",
+    "trustee",
+    "secretary",
+    "president",
+    "ceo",
+    "chief executive",
+    "head imam",
+    "vice president",
+    "member",
+)
+_BAD_SIGNATORY_SUMMARY_PHRASES = (
+    "does not contain a list",
+    "does not contain the list",
+    "introductory part",
+    "does not contain a signatory list",
+    "does not contain signatories",
+)
+_RELEVANCE_STOPWORDS = {
+    "about",
+    "after",
+    "against",
+    "among",
+    "and",
+    "article",
+    "because",
+    "before",
+    "being",
+    "between",
+    "calling",
+    "campaign",
+    "document",
+    "during",
+    "from",
+    "have",
+    "http",
+    "https",
+    "into",
+    "joined",
+    "letter",
+    "open",
+    "published",
+    "section",
+    "signed",
+    "signing",
+    "students",
+    "that",
+    "their",
+    "them",
+    "they",
+    "this",
+    "through",
+    "with",
+    "were",
+}
 
 
 @dataclass(slots=True)
@@ -56,6 +153,18 @@ class MappingEvidenceDocument:
     local_path: str = ""
     text_path: str = ""
     text: str = ""
+
+
+@dataclass(slots=True)
+class MappingDocumentContext:
+    claim_texts: list[str]
+    source_labels: list[str]
+    target_labels: list[str]
+    link_types: list[str]
+    workbook_names: list[str]
+    sheet_names: list[str]
+    document_label: str
+    document_kind: str
 
 
 class _TextExtractor(HTMLParser):
@@ -123,6 +232,158 @@ def _sanitize_block_text(value: str) -> str:
     return "\n".join(compacted).strip()
 
 
+def _is_usable_document_summary(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    lowered = text.lower()
+    return not any(phrase in lowered for phrase in _BAD_SUMMARY_PHRASES)
+
+
+def _claim_terms(claim_texts: list[str], *, limit: int = 24) -> list[str]:
+    counts: dict[str, int] = {}
+    for claim_text in claim_texts:
+        normalized = re.sub(r"[^a-z0-9]+", " ", _clean_text(claim_text).lower())
+        for token in normalized.split():
+            if len(token) < 4 or token in _RELEVANCE_STOPWORDS:
+                continue
+            counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    return [token for token, _ in ranked[:limit]]
+
+
+def _relevance_score(text: str, claim_texts: list[str]) -> int:
+    normalized = re.sub(r"[^a-z0-9]+", " ", _clean_text(text).lower())
+    if not normalized:
+        return 0
+    score = 0
+    for token in _claim_terms(claim_texts):
+        if token in normalized:
+            score += 1 + normalized.count(token)
+    for phrase in _FOCUS_KEYWORDS:
+        if phrase in normalized:
+            score += 2
+    return score
+
+
+def _select_relevant_chunks(
+    chunks: list[str],
+    claim_texts: list[str],
+    *,
+    max_chunks: int,
+) -> list[str]:
+    if not chunks:
+        return []
+    capped_max_chunks = max(1, max_chunks)
+    if not claim_texts:
+        return chunks[:capped_max_chunks]
+    scored = [
+        (index, _relevance_score(chunk, claim_texts), chunk)
+        for index, chunk in enumerate(chunks)
+    ]
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    selected = scored[:capped_max_chunks]
+    if not any(score > 0 for _, score, _ in selected):
+        return chunks[:capped_max_chunks]
+    return [chunk for _, _, chunk in selected]
+
+
+def _select_best_summary(candidate_summaries: list[str], claim_texts: list[str]) -> str:
+    usable = [summary for summary in candidate_summaries if _is_usable_document_summary(summary)]
+    if not usable:
+        return ""
+    ranked = sorted(
+        usable,
+        key=lambda summary: (_relevance_score(summary, claim_texts), len(summary)),
+        reverse=True,
+    )
+    return ranked[0]
+
+
+def _most_common_text(values: list[str]) -> str:
+    cleaned = [_clean_text(value) for value in values if _clean_text(value)]
+    if not cleaned:
+        return ""
+    return Counter(cleaned).most_common(1)[0][0]
+
+
+def _classify_document_kind(
+    *,
+    claim_texts: list[str],
+    target_labels: list[str],
+    link_types: list[str],
+    document_title: str,
+) -> str:
+    link_type_values = {_clean_text(value).lower() for value in link_types if _clean_text(value)}
+    combined = " ".join(
+        [
+            *claim_texts,
+            *target_labels,
+            document_title,
+            " ".join(sorted(link_type_values)),
+        ]
+    ).lower()
+    signatory_hits = 0
+    if "signatory" in link_type_values:
+        signatory_hits += 3
+    signatory_hits += sum(1 for token in _SIGNATORY_CONTEXT_KEYWORDS if token in combined)
+    return "signatory_list" if signatory_hits >= 2 else "summary_only"
+
+
+def _build_document_context(
+    matching_rows: list[Any],
+    *,
+    document_title: str,
+) -> MappingDocumentContext:
+    claim_texts = [
+        _clean_text(row["link_description"] or "")
+        for row in matching_rows
+        if _clean_text(row["link_description"] or "")
+    ]
+    source_labels = [
+        _clean_text(row["from_label"] or "")
+        for row in matching_rows
+        if _clean_text(row["from_label"] or "")
+    ]
+    target_labels = [
+        _clean_text(row["to_label"] or "")
+        for row in matching_rows
+        if _clean_text(row["to_label"] or "")
+    ]
+    link_types = [
+        _clean_text(row["link_type"] or "")
+        for row in matching_rows
+        if _clean_text(row["link_type"] or "")
+    ]
+    workbook_names = [
+        _clean_text(row["workbook_name"] or "")
+        for row in matching_rows
+        if _clean_text(row["workbook_name"] or "")
+    ]
+    sheet_names = [
+        _clean_text(row["sheet_name"] or "")
+        for row in matching_rows
+        if _clean_text(row["sheet_name"] or "")
+    ]
+    document_label = _most_common_text(target_labels) or _clean_text(document_title) or "Evidence document"
+    document_kind = _classify_document_kind(
+        claim_texts=claim_texts,
+        target_labels=target_labels,
+        link_types=link_types,
+        document_title=document_title,
+    )
+    return MappingDocumentContext(
+        claim_texts=claim_texts,
+        source_labels=source_labels,
+        target_labels=target_labels,
+        link_types=link_types,
+        workbook_names=workbook_names,
+        sheet_names=sheet_names,
+        document_label=document_label,
+        document_kind=document_kind,
+    )
+
+
 def _chunk_source_text(text: str, *, max_chars: int = 12000) -> list[str]:
     cleaned = _sanitize_block_text(text)
     if not cleaned:
@@ -165,6 +426,37 @@ def _chunk_source_text(text: str, *, max_chars: int = 12000) -> list[str]:
     return chunks
 
 
+def _signatory_chunk_score(text: str, claim_texts: list[str]) -> int:
+    lowered = str(text or "").lower()
+    score = _relevance_score(text, claim_texts)
+    score += sum(3 for token in _SIGNATORY_CHUNK_KEYWORDS if token in lowered)
+    score += min(lowered.count("\n"), 20)
+    score += sum(1 for token in _SIGNATORY_ROLE_TOKENS if token in lowered)
+    if re.search(r"\b[a-z][a-z.'’-]+\s+[a-z][a-z.'’-]+\b", lowered):
+        score += 2
+    return score
+
+
+def _select_signatory_chunks(
+    chunks: list[str],
+    claim_texts: list[str],
+    *,
+    max_chunks: int,
+) -> list[str]:
+    if not chunks:
+        return []
+    capped_max_chunks = max(1, max_chunks)
+    scored = [
+        (index, _signatory_chunk_score(chunk, claim_texts), chunk)
+        for index, chunk in enumerate(chunks)
+    ]
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    selected = scored[:capped_max_chunks]
+    if not any(score > 0 for _, score, _ in selected):
+        return chunks[:capped_max_chunks]
+    return [chunk for _, _, chunk in selected]
+
+
 def _focus_source_text(text: str, *, max_chars: int = 18000) -> str:
     cleaned = _sanitize_block_text(text)
     if len(cleaned) <= max_chars:
@@ -205,6 +497,7 @@ def _build_extraction_prompt(
     document_title: str,
     document_url: str,
     chunk_text: str,
+    claim_context: str = "",
 ) -> str:
     return f"""\
 Read this evidence document chunk and return JSON only with this shape:
@@ -246,9 +539,62 @@ Rules:
 - Keep the summary to 1-2 short sentences about what the document says, not a paste of the document.
 - Ignore page chrome, menus, comments widgets, donation prompts, and other site boilerplate.
 - Prefer precision over recall.
+- Use the existing claim context below to decide what is relevant. If this chunk does not help validate or explain those claims, return an empty summary and no links.
+- Ignore unrelated bylines, photo credits, publishers, and article metadata unless they are directly part of the existing claims.
 
 Document title: {document_title}
 Document URL: {document_url}
+Existing claim context:
+{claim_context or "(none provided)"}
+
+Text:
+{chunk_text}"""
+
+
+def _build_signatory_extraction_prompt(
+    *,
+    document_title: str,
+    document_url: str,
+    document_label: str,
+    chunk_text: str,
+    claim_context: str = "",
+) -> str:
+    return f"""\
+Read this document chunk and return JSON only with this shape:
+{{
+  "summary": "",
+  "signatories": [
+    {{
+      "signer_name": "",
+      "signer_type": "person" | "organisation",
+      "signer_role_or_title": "",
+      "affiliation_name": "",
+      "affiliation_type": "organisation" | "other" | "",
+      "affiliation_role_or_type": "",
+      "signatory_line": "",
+      "confidence": 0.0
+    }}
+  ]
+}}
+
+Rules:
+- This mode is only for signatory lists, letters, statements, petitions, or similar documents.
+- Extract only explicit signatories named in this chunk.
+- Include both person signatories and organisation signatories.
+- Always treat the signer as signing `{document_label}`.
+- If a signatory line explicitly includes an affiliation or organisation on the same line, include it.
+- If a title or role is present next to the signer, include it in `signer_role_or_title`.
+- Keep `signatory_line` as a short near-verbatim snippet from the chunk that justifies the extraction.
+- Do not extract bylines, publishers, photo credits, quoted authors, article metadata, institutional hierarchies, or unrelated relationships.
+- Do not infer affiliations from surrounding prose; only include same-line or clearly attached signatory-list details.
+- Keep the summary to 1-2 short sentences about the document and the signatory list.
+- If this chunk does not contain signatory-list content relevant to the claim context, return an empty summary and an empty signatories list.
+
+Document title: {document_title}
+Document label: {document_label}
+Document URL: {document_url}
+Existing claim context:
+{claim_context or "(none provided)"}
 
 Text:
 {chunk_text}"""
@@ -317,6 +663,187 @@ def _parse_extraction_payload(payload: Any) -> tuple[str, list[dict[str, Any]], 
     return (summary, entities, links)
 
 
+def _parse_signatory_payload(payload: Any) -> tuple[str, list[dict[str, Any]]]:
+    if not isinstance(payload, dict):
+        return ("", [])
+    summary = _clean_text(payload.get("summary", ""))
+    signatories: list[dict[str, Any]] = []
+    raw_signatories = payload.get("signatories", [])
+    if not isinstance(raw_signatories, list):
+        return (summary, [])
+    for row in raw_signatories:
+        if not isinstance(row, dict):
+            continue
+        signer_name = _clean_text(row.get("signer_name", ""))
+        signer_type = _clean_text(row.get("signer_type", "")).lower()
+        signer_role_or_title = _clean_text(row.get("signer_role_or_title", ""))
+        affiliation_name = _clean_text(row.get("affiliation_name", ""))
+        affiliation_type = _clean_text(row.get("affiliation_type", "")).lower()
+        affiliation_role_or_type = _clean_text(row.get("affiliation_role_or_type", ""))
+        signatory_line = _clean_text(row.get("signatory_line", ""))
+        try:
+            confidence = float(row.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if not signer_name or signer_type not in {"person", "organisation"}:
+            continue
+        if affiliation_type not in {"organisation", "other", ""}:
+            affiliation_type = ""
+        signatories.append(
+            {
+                "signer_name": signer_name,
+                "signer_type": signer_type,
+                "signer_role_or_title": signer_role_or_title,
+                "affiliation_name": affiliation_name,
+                "affiliation_type": affiliation_type,
+                "affiliation_role_or_type": affiliation_role_or_type,
+                "signatory_line": signatory_line,
+                "confidence": max(0.0, min(confidence, 1.0)),
+            }
+        )
+    return (summary, signatories)
+
+
+def _signatory_description(
+    *,
+    signer_name: str,
+    document_label: str,
+    signer_role_or_title: str = "",
+) -> str:
+    if signer_role_or_title:
+        return f"{signer_name} is listed as a signatory to {document_label} ({signer_role_or_title})."
+    return f"{signer_name} is listed as a signatory to {document_label}."
+
+
+def _affiliation_description(
+    *,
+    signer_name: str,
+    affiliation_name: str,
+    document_label: str,
+    affiliation_role_or_type: str = "",
+) -> str:
+    if affiliation_role_or_type:
+        return (
+            f"{signer_name} is listed with {affiliation_name} as {affiliation_role_or_type} "
+            f"in the signatory list for {document_label}."
+        )
+    return f"{signer_name} is listed with {affiliation_name} in the signatory list for {document_label}."
+
+
+def _signatory_payload_to_entities_links(
+    *,
+    signatories: list[dict[str, Any]],
+    document_label: str,
+    document_summary: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    entities: list[dict[str, Any]] = []
+    links: list[dict[str, Any]] = []
+    seen_entities: set[tuple[str, str]] = set()
+
+    for signatory in signatories:
+        signer_name = str(signatory["signer_name"])
+        signer_type = str(signatory["signer_type"])
+        signer_role_or_title = str(signatory.get("signer_role_or_title", "") or "")
+        affiliation_name = str(signatory.get("affiliation_name", "") or "")
+        affiliation_type = str(signatory.get("affiliation_type", "") or "")
+        affiliation_role_or_type = str(signatory.get("affiliation_role_or_type", "") or "")
+        signatory_line = str(signatory.get("signatory_line", "") or "")
+        confidence = float(signatory.get("confidence", 0.0) or 0.0)
+
+        signer_entity_key = (signer_name.lower(), signer_type)
+        if signer_entity_key not in seen_entities:
+            seen_entities.add(signer_entity_key)
+            signer_description = _signatory_description(
+                signer_name=signer_name,
+                document_label=document_label,
+                signer_role_or_title=signer_role_or_title,
+            )
+            entities.append(
+                {
+                    "name": signer_name,
+                    "entity_type": signer_type,
+                    "organisation_type_hint": "",
+                    "description": signer_description,
+                    "confidence": confidence,
+                }
+            )
+
+        links.append(
+            {
+                "from_name": signer_name,
+                "from_type": signer_type,
+                "from_role_or_title": signer_role_or_title,
+                "to_name": document_label,
+                "to_type": "organisation",
+                "link_type": "signatory",
+                "description": _signatory_description(
+                    signer_name=signer_name,
+                    document_label=document_label,
+                    signer_role_or_title=signer_role_or_title,
+                ),
+                "evidence_snippet": signatory_line or document_summary,
+                "confidence": confidence,
+            }
+        )
+
+        if affiliation_name and affiliation_type == "organisation":
+            affiliation_entity_key = (affiliation_name.lower(), "organisation")
+            if affiliation_entity_key not in seen_entities:
+                seen_entities.add(affiliation_entity_key)
+                entities.append(
+                    {
+                        "name": affiliation_name,
+                        "entity_type": "organisation",
+                        "organisation_type_hint": "",
+                        "description": _affiliation_description(
+                            signer_name=signer_name,
+                            affiliation_name=affiliation_name,
+                            document_label=document_label,
+                            affiliation_role_or_type=affiliation_role_or_type,
+                        ),
+                        "confidence": confidence,
+                    }
+                )
+            links.append(
+                {
+                    "from_name": signer_name,
+                    "from_type": signer_type,
+                    "from_role_or_title": signer_role_or_title,
+                    "to_name": affiliation_name,
+                    "to_type": "organisation",
+                    "link_type": "affiliate",
+                    "description": _affiliation_description(
+                        signer_name=signer_name,
+                        affiliation_name=affiliation_name,
+                        document_label=document_label,
+                        affiliation_role_or_type=affiliation_role_or_type,
+                    ),
+                    "evidence_snippet": signatory_line or document_summary,
+                    "confidence": confidence,
+                }
+            )
+
+    return (entities, links)
+
+
+def _fallback_signatory_summary(document_label: str) -> str:
+    label = _clean_text(document_label) or "this document"
+    return (
+        f"This document contains a signatory list for {label}. "
+        "Extracted links represent explicit signatories and same-line listed affiliations."
+    )
+
+
+def _is_usable_signatory_summary(value: str) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(phrase in lowered for phrase in _BAD_SIGNATORY_SUMMARY_PHRASES):
+        return False
+    return True
+
+
 def _entity_type_label(entity: dict[str, Any]) -> str:
     entity_type = _clean_text(entity.get("entity_type", "")).lower()
     if entity_type == "organisation":
@@ -356,8 +883,9 @@ class MappingEvidenceEnricher:
         *,
         limit: int | None = None,
         only_urls: list[str] | None = None,
+        allow_generated_rows: bool = False,
     ) -> dict[str, Any]:
-        with self.store.connect() as connection:
+        with self.store.managed_connection() as connection:
             evidence_rows = connection.execute(
                 """
                 SELECT
@@ -366,7 +894,12 @@ class MappingEvidenceEnricher:
                     mapping_evidence.ordinal,
                     mapping_evidence.title,
                     mapping_evidence.url,
-                    mapping_links.description AS link_description
+                    mapping_links.from_label,
+                    mapping_links.to_label,
+                    mapping_links.link_type,
+                    mapping_links.description AS link_description,
+                    mapping_links.workbook_name,
+                    mapping_links.sheet_name
                 FROM mapping_evidence
                 JOIN mapping_links
                     ON mapping_links.id = mapping_evidence.mapping_link_id
@@ -388,15 +921,22 @@ class MappingEvidenceEnricher:
         if limit is not None and limit >= 0:
             urls = urls[:limit]
 
-        import_id = self.store.create_import(Path("mapping_evidence_enrichment"))
+        import_id = (
+            self.store.create_import(Path("mapping_evidence_enrichment"))
+            if allow_generated_rows
+            else None
+        )
         summary = {
             "document_count": 0,
             "generated_entity_count": 0,
             "generated_link_count": 0,
+            "removed_generated_entity_count": 0,
+            "removed_generated_link_count": 0,
             "updated_evidence_count": 0,
             "selected_url_count": len(urls),
             "processed_urls": [],
             "warnings": [],
+            "allow_generated_rows": allow_generated_rows,
         }
 
         for url in urls:
@@ -408,21 +948,33 @@ class MappingEvidenceEnricher:
                     url=url,
                     title=_clean_text(matching_rows[0]["title"] or "Evidence document"),
                 )
-                doc_summary, entities, links = self._extract_document(document)
+                document_context = _build_document_context(
+                    matching_rows,
+                    document_title=document.title,
+                )
+                doc_summary, entities, links = self._extract_document(
+                    document,
+                    context=document_context,
+                )
                 doc_key = _document_key(url)
                 self._update_evidence_summary(url=url, document_summary=doc_summary)
-                self._replace_generated_rows(
-                    import_id=import_id,
-                    doc_key=doc_key,
-                    document=document,
-                    document_summary=doc_summary,
-                    entities=entities,
-                    links=links,
-                )
+                if allow_generated_rows:
+                    self._replace_generated_rows(
+                        import_id=int(import_id),
+                        doc_key=doc_key,
+                        document=document,
+                        document_summary=doc_summary,
+                        entities=entities,
+                        links=links,
+                    )
+                    summary["generated_entity_count"] += len(entities)
+                    summary["generated_link_count"] += len(links)
+                else:
+                    removed_counts = self._clear_generated_rows(doc_key)
+                    summary["removed_generated_entity_count"] += removed_counts["entity_count"]
+                    summary["removed_generated_link_count"] += removed_counts["link_count"]
                 summary["document_count"] += 1
                 summary["updated_evidence_count"] += len(matching_rows)
-                summary["generated_entity_count"] += len(entities)
-                summary["generated_link_count"] += len(links)
                 summary["processed_urls"].append(url)
             except RuntimeError as exc:
                 summary["warnings"].append(f"{url}: {exc}")
@@ -506,21 +1058,53 @@ class MappingEvidenceEnricher:
     def _extract_document(
         self,
         document: MappingEvidenceDocument,
+        *,
+        context: MappingDocumentContext | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-        focused_text = _focus_source_text(document.text, max_chars=18000)
-        chunks = _chunk_source_text(focused_text, max_chars=1200)
+        context = context or MappingDocumentContext(
+            claim_texts=[],
+            source_labels=[],
+            target_labels=[],
+            link_types=[],
+            workbook_names=[],
+            sheet_names=[],
+            document_label=_clean_text(document.title) or "Evidence document",
+            document_kind="summary_only",
+        )
+        claim_texts = [str(value).strip() for value in (context.claim_texts or []) if str(value).strip()]
+        base_text = (
+            _sanitize_block_text(document.text)
+            if claim_texts
+            else _focus_source_text(document.text, max_chars=18000)
+        )
+        chunks = _chunk_source_text(base_text, max_chars=1200)
         if not chunks:
             raise RuntimeError("document text was empty after extraction")
-        merged_summary = ""
+        max_chunks = max(1, self.settings.pdf_enrichment_max_chunks)
+        if context.document_kind == "signatory_list":
+            selected_chunks = _select_signatory_chunks(chunks, claim_texts, max_chunks=max_chunks)
+        else:
+            selected_chunks = _select_relevant_chunks(chunks, claim_texts, max_chunks=max_chunks)
+        candidate_summaries: list[str] = []
         entity_map: dict[tuple[str, str], dict[str, Any]] = {}
         link_map: dict[tuple[str, str, str], dict[str, Any]] = {}
-        max_chunks = max(self.settings.pdf_enrichment_max_chunks, 12)
-        for index, chunk in enumerate(chunks[:max_chunks], start=1):
-            prompt = _build_extraction_prompt(
-                document_title=document.title,
-                document_url=document.url,
-                chunk_text=chunk,
-            )
+        claim_context = "\n".join(f"- {text}" for text in claim_texts[:5])
+        for index, chunk in enumerate(selected_chunks, start=1):
+            if context.document_kind == "signatory_list":
+                prompt = _build_signatory_extraction_prompt(
+                    document_title=document.title,
+                    document_url=document.url,
+                    document_label=context.document_label,
+                    chunk_text=chunk,
+                    claim_context=claim_context,
+                )
+            else:
+                prompt = _build_extraction_prompt(
+                    document_title=document.title,
+                    document_url=document.url,
+                    chunk_text=chunk,
+                    claim_context=claim_context,
+                )
             response = self.gemini.generate(
                 model=self.settings.pdf_enrichment_model,
                 prompt=prompt,
@@ -549,9 +1133,34 @@ class MappingEvidenceEnricher:
                 parsed = extract_json_document(response_text)
             except (ValueError, KeyError) as exc:
                 raise RuntimeError(f"Gemini returned invalid JSON for {document.url}: {exc}") from exc
-            chunk_summary, entities, links = _parse_extraction_payload(parsed)
-            if chunk_summary and not merged_summary:
-                merged_summary = chunk_summary
+            if context.document_kind == "signatory_list":
+                chunk_summary, signatories = _parse_signatory_payload(parsed)
+                entities, links = _signatory_payload_to_entities_links(
+                    signatories=signatories,
+                    document_label=context.document_label,
+                    document_summary=chunk_summary,
+                )
+            else:
+                chunk_summary, entities, links = _parse_extraction_payload(parsed)
+            if chunk_summary:
+                candidate_summaries.append(chunk_summary)
+            if claim_texts:
+                links = [
+                    link
+                    for link in links
+                    if _relevance_score(
+                        " ".join(
+                            [
+                                str(link.get("from_name", "")),
+                                str(link.get("to_name", "")),
+                                str(link.get("link_type", "")),
+                                str(link.get("description", "")),
+                            ]
+                        ),
+                        claim_texts,
+                    )
+                    > 0
+                ]
             for entity in entities:
                 key = (entity["name"].lower(), entity["entity_type"])
                 existing = entity_map.get(key)
@@ -566,18 +1175,73 @@ class MappingEvidenceEnricher:
                 existing = link_map.get(key)
                 if existing is None or float(link["confidence"]) > float(existing["confidence"]):
                     link_map[key] = link
+        merged_summary = _select_best_summary(candidate_summaries, claim_texts)
+        if context.document_kind == "signatory_list" and not _is_usable_signatory_summary(merged_summary):
+            merged_summary = _fallback_signatory_summary(context.document_label)
         return (merged_summary, list(entity_map.values()), list(link_map.values()))
 
     def _update_evidence_summary(self, *, url: str, document_summary: str) -> None:
-        with self.store.connect() as connection:
+        cleaned_summary = _clean_text(document_summary)
+        if not _is_usable_document_summary(cleaned_summary):
+            cleaned_summary = ""
+        with self.store.managed_connection() as connection:
             connection.execute(
                 """
                 UPDATE mapping_evidence
                 SET document_summary = ?
                 WHERE url = ?
                 """,
-                (_clean_text(document_summary), url),
+                (cleaned_summary, url),
             )
+
+    def _clear_generated_rows(self, doc_key: str) -> dict[str, int]:
+        workbook_name = _GENERATED_WORKBOOK_NAME
+        sheet_name = doc_key
+        with self.store.managed_connection() as connection:
+            generated_link_ids = [
+                int(row["id"])
+                for row in connection.execute(
+                    """
+                    SELECT id
+                    FROM mapping_links
+                    WHERE workbook_name = ? AND sheet_name = ?
+                    """,
+                    (workbook_name, sheet_name),
+                ).fetchall()
+            ]
+            generated_entity_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM mapping_entities
+                    WHERE workbook_name = ? AND sheet_name = ?
+                    """,
+                    (workbook_name, sheet_name),
+                ).fetchone()[0]
+            )
+            if generated_link_ids:
+                placeholders = ",".join("?" for _ in generated_link_ids)
+                connection.execute(
+                    f"DELETE FROM mapping_matches WHERE mapping_link_id IN ({placeholders})",
+                    generated_link_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM mapping_evidence WHERE mapping_link_id IN ({placeholders})",
+                    generated_link_ids,
+                )
+            generated_link_count = len(generated_link_ids)
+            connection.execute(
+                "DELETE FROM mapping_links WHERE workbook_name = ? AND sheet_name = ?",
+                (workbook_name, sheet_name),
+            )
+            connection.execute(
+                "DELETE FROM mapping_entities WHERE workbook_name = ? AND sheet_name = ?",
+                (workbook_name, sheet_name),
+            )
+        return {
+            "entity_count": generated_entity_count,
+            "link_count": generated_link_count,
+        }
 
     def _replace_generated_rows(
         self,
@@ -591,36 +1255,7 @@ class MappingEvidenceEnricher:
     ) -> None:
         workbook_name = _GENERATED_WORKBOOK_NAME
         sheet_name = doc_key
-        with self.store.connect() as connection:
-            generated_link_ids = [
-                int(row["id"])
-                for row in connection.execute(
-                    """
-                    SELECT id
-                    FROM mapping_links
-                    WHERE workbook_name = ? AND sheet_name = ?
-                    """,
-                    (workbook_name, sheet_name),
-                ).fetchall()
-            ]
-            if generated_link_ids:
-                placeholders = ",".join("?" for _ in generated_link_ids)
-                connection.execute(
-                    f"DELETE FROM mapping_matches WHERE mapping_link_id IN ({placeholders})",
-                    generated_link_ids,
-                )
-                connection.execute(
-                    f"DELETE FROM mapping_evidence WHERE mapping_link_id IN ({placeholders})",
-                    generated_link_ids,
-                )
-            connection.execute(
-                "DELETE FROM mapping_links WHERE workbook_name = ? AND sheet_name = ?",
-                (workbook_name, sheet_name),
-            )
-            connection.execute(
-                "DELETE FROM mapping_entities WHERE workbook_name = ? AND sheet_name = ?",
-                (workbook_name, sheet_name),
-            )
+        self._clear_generated_rows(doc_key)
 
         entity_names_in_links: set[str] = set()
         for link in links:
@@ -698,6 +1333,7 @@ class MappingEvidenceEnricher:
                     link["to_type"],
                     link["link_type"],
                     link["description"],
+                    link.get("evidence_snippet", ""),
                     document.url,
                 ],
             )
@@ -707,7 +1343,7 @@ class MappingEvidenceEnricher:
                 evidence_kind=document.source_type,
                 title=document.title or _safe_file_stem(doc_key),
                 url=document.url,
-                snippet=link["description"] or document_summary,
+                snippet=str(link.get("evidence_snippet") or link["description"] or document_summary),
                 document_summary=document_summary,
             )
             next_link_row += 1

@@ -283,23 +283,31 @@ def step2b_enrich_from_pdfs(
 
 def step4_ofac_screening(
     *,
+    repository: Repository,
     settings: Settings,
     ranking: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    screener = OFACScreener()
-    sdn_path = settings.project_root / "data" / "sdn.csv"
-    if not sdn_path.exists():
-        log.info("OFAC SDN file not found at %s — downloading ...", sdn_path)
-        screener.download_and_load(sdn_path.parent)
-    else:
-        screener.load_csv(sdn_path)
+    screener = OFACScreener(enable_remote_sources=True)
+    data_dir = settings.project_root / "data"
+    try:
+        screener.ensure_local_sources(data_dir)
+    except Exception as exc:
+        log.warning("Sanctions list download failed: %s", exc)
+        screener.load_sources(data_dir)
 
     if not screener.loaded:
-        log.warning("OFAC screening skipped — no SDN data available")
-        return {"ofac_hits": {}, "screened_count": 0, "sdn_entry_count": 0}
+        log.warning("Sanctions screening skipped — no local sanctions data available")
+        return {
+            "ofac_hits": {},
+            "sanctions_hits": {},
+            "screened_count": 0,
+            "sdn_entry_count": 0,
+            "sanctions_entry_count": 0,
+        }
 
     for entry in ranking:
         name = str(entry.get("canonical_name", ""))
+        person_id = int(entry.get("person_id") or 0)
         birth_month, birth_year = extract_identity_key_birth_month_year(
             str(entry.get("identity_key", ""))
         )
@@ -308,25 +316,40 @@ def step4_ofac_screening(
             birth_month=birth_month,
             birth_year=birth_year,
         )
+        entry["sanctions_hit"] = bool(hits)
+        entry["sanctions_matches"] = hits
         entry["ofac_hit"] = bool(hits)
         entry["ofac_matches"] = hits
+        entry["sanctions_birth_month"] = birth_month
+        entry["sanctions_birth_year"] = birth_year
         entry["ofac_birth_month"] = birth_month
         entry["ofac_birth_year"] = birth_year
+        if person_id:
+            repository.upsert_person_sanctions(
+                person_id=person_id,
+                screened_name=name,
+                screened_birth_month=birth_month,
+                screened_birth_year=birth_year,
+                matches=hits,
+            )
 
     log.info(
-        "OFAC screening: %d names checked, %d hits from %d SDN entries",
+        "Sanctions screening: %d names checked, %d hits from %d local entries",
         len(ranking),
         sum(1 for entry in ranking if entry.get("ofac_hit")),
         screener.entry_count,
     )
+    sanctions_hits = {
+        str(entry.get("canonical_name", "")): list(entry.get("ofac_matches") or [])
+        for entry in ranking
+        if entry.get("ofac_hit")
+    }
     return {
-        "ofac_hits": {
-            str(entry.get("canonical_name", "")): list(entry.get("ofac_matches") or [])
-            for entry in ranking
-            if entry.get("ofac_hit")
-        },
+        "ofac_hits": sanctions_hits,
+        "sanctions_hits": sanctions_hits,
         "screened_count": len(ranking),
         "sdn_entry_count": screener.entry_count,
+        "sanctions_entry_count": screener.entry_count,
     }
 
 
@@ -370,7 +393,7 @@ def run_registry_only_mvp(
     )
 
     ranking = step3["ranking"]
-    step4 = step4_ofac_screening(settings=settings, ranking=ranking)
+    step4 = step4_ofac_screening(repository=repository, settings=settings, ranking=ranking)
 
     return {
         "mode": "registry_only_mvp",

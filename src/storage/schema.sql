@@ -93,6 +93,16 @@ CREATE TABLE IF NOT EXISTS person_org_roles (
     UNIQUE(person_id, organisation_id, role_label, source)
 );
 
+CREATE TABLE IF NOT EXISTS person_sanctions (
+    person_id INTEGER PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    is_sanctioned INTEGER NOT NULL DEFAULT 0,
+    screened_name TEXT NOT NULL DEFAULT '',
+    screened_birth_month INTEGER,
+    screened_birth_year INTEGER,
+    matches_json TEXT NOT NULL DEFAULT '[]',
+    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS evidence_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -140,6 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_candidate_matches_run_id ON candidate_matches(run
 CREATE INDEX IF NOT EXISTS idx_resolution_decisions_run_id ON resolution_decisions(run_id);
 CREATE INDEX IF NOT EXISTS idx_roles_org_id ON person_org_roles(organisation_id);
 CREATE INDEX IF NOT EXISTS idx_roles_person_id ON person_org_roles(person_id);
+CREATE INDEX IF NOT EXISTS idx_person_sanctions_is_sanctioned ON person_sanctions(is_sanctioned);
 CREATE INDEX IF NOT EXISTS idx_people_canonical_name ON people(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_run_id ON run_organisations(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_org_id ON run_organisations(organisation_id);
