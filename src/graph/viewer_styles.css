@@ -231,7 +231,8 @@ body {{
   color: var(--text-bright);
 }
 .graph-node-label.sanctioned {{
-  color: #ffd7d7;
+  color: #ffe2e2;
+  text-shadow: 0 0 12px rgba(255, 99, 99, 0.45);
 }
 .graph-node-label.hovered {
   color: var(--text-bright);

@@ -4,6 +4,7 @@
   const LOW_CONFIDENCE_DATA_URL = "graph-data-low-confidence.json";
   const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
+  const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
 
   const COLORS = {
     amber: 0xd4a017,
@@ -28,6 +29,7 @@
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
   const indirectOnlyInput = document.getElementById("indirect-only");
+  const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
 
   let showIdentitiesInput;
@@ -65,6 +67,8 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
+  let mergeOverrides = { address: [], person: [], identity: [] };
+  let mergeOverridesLoadingPromise = null;
 
   const viewerState = {
     searchQuery: "",
@@ -72,7 +76,9 @@
     hiddenTypes: new Set(),
     showLowConfidence: false,
     showIndirectOnly: false,
+    showSanctionedOnly: false,
     analysisNodeIds: [],
+    mergeNodeIds: [],
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
@@ -293,6 +299,7 @@
     ].filter(Boolean));
     viewerState.showLowConfidence = !!showLowConfidenceInput?.checked;
     viewerState.showIndirectOnly = !!indirectOnlyInput?.checked;
+    viewerState.showSanctionedOnly = !!sanctionedOnlyInput?.checked;
   }
 
   function getMatchedNodeIds(query) {
@@ -594,11 +601,32 @@
     return { rootIds: qualifyingOrgIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
   }
 
+  function buildSanctionedProjection() {
+    const sanctionedIds = new Set(
+      allNodes
+        .filter((node) => node.kind !== "seed" && node.sanctioned)
+        .map((node) => node.id),
+    );
+    const visibleIds = new Set(sanctionedIds);
+    sanctionedIds.forEach((nodeId) => {
+      (edgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        const otherId = edge.source === nodeId ? edge.target : edge.source;
+        const otherNode = nodeById.get(otherId);
+        if (!otherNode || otherNode.kind === "seed") return;
+        visibleIds.add(otherId);
+      });
+    });
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), sanctionedIds, { keepDisconnectedIdentities: true });
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
+    return { rootIds: sanctionedIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
+  }
+
   function projectVisibleGraph() {
     const matchedIds = getMatchedNodeIds(viewerState.searchQuery);
     const rootIds = matchedIds.size ? matchedIds : new Set(viewerState.focusedNodeIds);
     if (matchedIds.size) return buildSearchProjection(matchedIds);
     if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
+    if (viewerState.showSanctionedOnly) return buildSanctionedProjection();
     if (!rootIds.size) {
       const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id))), new Set());
       const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
@@ -922,10 +950,313 @@
       .trim();
   }
 
+  function uniqueValues(values) {
+    const seen = new Set();
+    const result = [];
+    values.forEach((value) => {
+      const text = String(value || "").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      result.push(text);
+    });
+    return result;
+  }
+
+  function mergeKindForNode(node) {
+    if (!node || node.is_low_confidence) return null;
+    if (node.kind === "address") return "address";
+    if (node.kind === "person") return "person";
+    if (node.kind === "seed_alias" || node.lane === 1) return "identity";
+    return null;
+  }
+
+  function nodeMergeStableKeys(node) {
+    const kind = mergeKindForNode(node);
+    if (!kind) return [];
+    if (kind === "address") {
+      return uniqueValues(
+        ([
+          ...(Array.isArray(node.normalized_keys) ? node.normalized_keys : []),
+          node.normalized_key,
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .map((value) => `address:${value}`)),
+      );
+    }
+    if (kind === "person") {
+      const personIds = Array.isArray(node.person_ids) ? node.person_ids : [];
+      const keys = personIds.map((value) => `person:${String(value)}`);
+      if (keys.length) return uniqueValues(keys);
+      if (node.individual_key) return [`person-key:${String(node.individual_key)}`];
+      return [`person-id:${String(node.id)}`];
+    }
+    return uniqueValues([
+      `identity-id:${String(node.id)}`,
+      node.individual_key ? `identity-key:${String(node.individual_key)}` : "",
+    ]);
+  }
+
+  function nodeMergePrimaryKey(node) {
+    return nodeMergeStableKeys(node)[0] || "";
+  }
+
+  function cloneNodeForMerge(node) {
+    return {
+      ...node,
+      aliases: Array.isArray(node.aliases) ? node.aliases.slice() : [],
+      identity_keys: Array.isArray(node.identity_keys) ? node.identity_keys.slice() : [],
+      person_ids: Array.isArray(node.person_ids) ? node.person_ids.slice() : [],
+      normalized_keys: Array.isArray(node.normalized_keys) ? node.normalized_keys.slice() : [],
+      seed_names: Array.isArray(node.seed_names) ? node.seed_names.slice() : [],
+      tooltip_lines: Array.isArray(node.tooltip_lines) ? node.tooltip_lines.slice() : [],
+      appears_under_identities: Array.isArray(node.appears_under_identities)
+        ? node.appears_under_identities.map((item) => ({ ...item }))
+        : [],
+    };
+  }
+
+  function mergeNodeData(target, source) {
+    if (String(source.label || "").length > String(target.label || "").length) {
+      target.label = source.label;
+    }
+    target.aliases = uniqueValues([
+      ...(Array.isArray(target.aliases) ? target.aliases : []),
+      ...(Array.isArray(source.aliases) ? source.aliases : []),
+      source.label,
+    ]).filter((value) => value !== String(target.label || ""));
+    target.identity_keys = uniqueValues([
+      ...(Array.isArray(target.identity_keys) ? target.identity_keys : []),
+      ...(Array.isArray(source.identity_keys) ? source.identity_keys : []),
+    ]);
+    target.person_ids = uniqueValues([
+      ...(Array.isArray(target.person_ids) ? target.person_ids : []),
+      ...(Array.isArray(source.person_ids) ? source.person_ids : []),
+    ]);
+    target.normalized_keys = uniqueValues([
+      ...(Array.isArray(target.normalized_keys) ? target.normalized_keys : []),
+      ...(Array.isArray(source.normalized_keys) ? source.normalized_keys : []),
+    ]);
+    target.seed_names = uniqueValues([
+      ...(Array.isArray(target.seed_names) ? target.seed_names : []),
+      ...(Array.isArray(source.seed_names) ? source.seed_names : []),
+    ]);
+    target.tooltip_lines = uniqueValues([
+      ...(Array.isArray(target.tooltip_lines) ? target.tooltip_lines : []),
+      ...(Array.isArray(source.tooltip_lines) ? source.tooltip_lines : []),
+      `Merged with ${String(source.label || source.id || "node")}`,
+    ]);
+    target.appears_under_identities = [
+      ...(Array.isArray(target.appears_under_identities) ? target.appears_under_identities : []),
+      ...(Array.isArray(source.appears_under_identities) ? source.appears_under_identities : []),
+    ];
+    target.org_count = Math.max(Number(target.org_count || 0), Number(source.org_count || 0));
+    target.role_count = Math.max(Number(target.role_count || 0), Number(source.role_count || 0));
+    target.score = Math.max(Number(target.score || 0), Number(source.score || 0));
+    target.shared = !!target.shared || !!source.shared;
+  }
+
+  function dedupeMergedEdges(edges) {
+    const seen = new Map();
+    const result = [];
+    edges.forEach((edge) => {
+      if (!edge || edge.source === edge.target) return;
+      const key = [
+        edge.source,
+        edge.target,
+        edge.kind || "",
+        edge.phrase || "",
+        edge.role_type || "",
+        edge.role_label || "",
+        edge.tooltip || "",
+      ].join("||");
+      const existing = seen.get(key);
+      if (existing) {
+        if (!existing.evidence && edge.evidence) existing.evidence = edge.evidence;
+        if ((!existing.evidence_items || !existing.evidence_items.length) && edge.evidence_items?.length) {
+          existing.evidence_items = edge.evidence_items;
+        }
+        if ((!existing.tooltip_lines || !existing.tooltip_lines.length) && edge.tooltip_lines?.length) {
+          existing.tooltip_lines = edge.tooltip_lines;
+        }
+        return;
+      }
+      seen.set(key, edge);
+      result.push(edge);
+    });
+    return result;
+  }
+
+  function applyMergeOverrides(nodes, edges, overrides) {
+    const nextNodes = nodes.map(cloneNodeForMerge);
+    const nextEdges = edges.map((edge) => ({ ...edge }));
+    const nodeByMergeId = new Map(nextNodes.map((node) => [node.id, node]));
+    const stableLookupByKind = new Map();
+    ["address", "person", "identity"].forEach((kind) => {
+      const lookup = new Map();
+      nextNodes.forEach((node) => {
+        if (mergeKindForNode(node) !== kind) return;
+        nodeMergeStableKeys(node).forEach((key) => {
+          if (!lookup.has(key)) lookup.set(key, node.id);
+        });
+      });
+      stableLookupByKind.set(kind, lookup);
+    });
+
+    const redirects = new Map();
+    ["address", "person", "identity"].forEach((kind) => {
+      const lookup = stableLookupByKind.get(kind) || new Map();
+      (Array.isArray(overrides?.[kind]) ? overrides[kind] : []).forEach((row) => {
+        const sourceNodeId = lookup.get(String(row?.sourceId || ""));
+        const targetNodeId = lookup.get(String(row?.targetId || ""));
+        if (!sourceNodeId || !targetNodeId || sourceNodeId === targetNodeId) return;
+        redirects.set(sourceNodeId, targetNodeId);
+      });
+    });
+
+    function resolveNodeId(nodeId) {
+      let currentId = nodeId;
+      const seen = new Set();
+      while (redirects.has(currentId) && !seen.has(currentId)) {
+        seen.add(currentId);
+        currentId = redirects.get(currentId);
+      }
+      return currentId;
+    }
+
+    nextNodes.forEach((node) => {
+      const targetNodeId = resolveNodeId(node.id);
+      if (targetNodeId === node.id) return;
+      const targetNode = nodeByMergeId.get(targetNodeId);
+      if (!targetNode) return;
+      mergeNodeData(targetNode, node);
+    });
+
+    const keptNodes = nextNodes.filter((node) => resolveNodeId(node.id) === node.id);
+    const keptIds = new Set(keptNodes.map((node) => node.id));
+    const rewrittenEdges = nextEdges
+      .map((edge) => ({
+        ...edge,
+        source: resolveNodeId(edge.source),
+        target: resolveNodeId(edge.target),
+      }))
+      .filter((edge) => keptIds.has(edge.source) && keptIds.has(edge.target));
+
+    return {
+      nodes: keptNodes,
+      edges: dedupeMergedEdges(rewrittenEdges),
+    };
+  }
+
+  function rebuildBaseGraph() {
+    const merged = applyMergeOverrides(rawMainNodes, rawMainEdges, mergeOverrides);
+    baseNodes = merged.nodes.slice();
+    baseEdges = merged.edges.slice();
+  }
+
   function evidenceLabelForEdge(edge) {
     const firstLine = tooltipLinesForEdge(edge)[0];
     const summary = plainText(firstLine);
     return summary ? `Evidence for: ${summary}` : "Evidence";
+  }
+
+  function nodeAttributionEdges(node) {
+    return (edgesByNodeId.get(node?.id) || [])
+      .filter((edge) => edge && edge.kind !== "hidden_connection" && edge.kind !== "shared_org" && edge.kind !== "cross_seed")
+      .sort((left, right) => {
+        const leftEvidence = evidenceActionsForEdge(left).length;
+        const rightEvidence = evidenceActionsForEdge(right).length;
+        if (rightEvidence !== leftEvidence) return rightEvidence - leftEvidence;
+        return edgeSubtitle(left).localeCompare(edgeSubtitle(right));
+      });
+  }
+
+  function renderNodeAttributionHtml(node) {
+    const tooltipLines = tooltipLinesForNode(node);
+    const summary = tooltipLines.map((line) => plainText(line)).filter(Boolean);
+    const edges = nodeAttributionEdges(node);
+    return `
+      <div class="analysis-viewer">
+        <div class="analysis-selection">${escapeHtml(node.label || node.id || "Node")}</div>
+        ${summary.length ? `<div class="analysis-text">${summary.map((line) => escapeHtml(line)).join("<br>")}</div>` : ""}
+        <div class="analysis-claims">
+          ${edges.length ? edges.map((edge, index) => {
+            const sourceNode = nodeById.get(edge.source);
+            const targetNode = nodeById.get(edge.target);
+            const links = evidenceActionsForEdge(edge)
+              .map((action) => `<a href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)}</a>`)
+              .join(" · ");
+            return `
+              <div class="analysis-claim">
+                <div class="analysis-claim-text">${index + 1}. ${escapeHtml(plainText(tooltipLinesForEdge(edge)[0] || ""))}</div>
+                <div class="analysis-path-item">${escapeHtml(sourceNode?.label || edge.source)} -> ${escapeHtml(targetNode?.label || edge.target)} · ${escapeHtml(edgeSubtitle(edge) || "link")}</div>
+                <div class="analysis-claim-evidence">${links || '<span class="dim">No linked evidence.</span>'}</div>
+              </div>
+            `;
+          }).join("") : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function openNodeAttributionView(node) {
+    scorePanelEl.innerHTML = renderNodeAttributionHtml(node);
+    setSidebarTab("ranked");
+    toggleSidebar(true);
+  }
+
+  async function ensureMergeOverridesLoaded() {
+    if (mergeOverridesLoadingPromise) return mergeOverridesLoadingPromise;
+    mergeOverridesLoadingPromise = fetch(MERGE_OVERRIDES_URL)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Failed to load merge overrides (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        const overrides = payload?.overrides || {};
+        mergeOverrides = {
+          address: Array.isArray(overrides.address) ? overrides.address : [],
+          person: Array.isArray(overrides.person) ? overrides.person : [],
+          identity: Array.isArray(overrides.identity) ? overrides.identity : [],
+        };
+        rebuildBaseGraph();
+        return true;
+      })
+      .catch((error) => {
+        console.warn(error);
+        mergeOverrides = { address: [], person: [], identity: [] };
+        rebuildBaseGraph();
+        return false;
+      })
+      .finally(() => {
+        mergeOverridesLoadingPromise = null;
+      });
+    return mergeOverridesLoadingPromise;
+  }
+
+  async function persistMergeOverride(action) {
+    const response = await fetch(MERGE_OVERRIDES_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: action.kind,
+        sourceId: action.sourceKey,
+        targetId: action.targetKey,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Merge persistence failed (${response.status})`);
+    }
+    const payload = await response.json();
+    const overrides = payload?.overrides || {};
+    mergeOverrides = {
+      address: Array.isArray(overrides.address) ? overrides.address : [],
+      person: Array.isArray(overrides.person) ? overrides.person : [],
+      identity: Array.isArray(overrides.identity) ? overrides.identity : [],
+    };
+    viewerState.mergeNodeIds = [];
+    rebuildBaseGraph();
+    await applyViewerState();
   }
 
   function registryActionForNode(node) {
@@ -953,8 +1284,32 @@
     event.preventDefault();
     event.stopPropagation();
     hideTooltip();
+    const mergeKind = mergeKindForNode(node);
+    const mergePrimaryKey = nodeMergePrimaryKey(node);
+    const selectedMergeNodes = viewerState.mergeNodeIds
+      .map((nodeId) => nodeById.get(nodeId))
+      .filter(Boolean);
+    const compatibleMergeNode = selectedMergeNodes.find(
+      (candidate) => candidate.id !== node.id && mergeKindForNode(candidate) === mergeKind && nodeMergePrimaryKey(candidate),
+    );
     const actions = [
+      { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
       registryActionForNode(node),
+      mergeKind && mergePrimaryKey && compatibleMergeNode
+        ? {
+            label: `Persist merge with ${compatibleMergeNode.label}`,
+            type: "merge_persist",
+            kind: mergeKind,
+            sourceKey: nodeMergePrimaryKey(compatibleMergeNode),
+            targetKey: mergePrimaryKey,
+          }
+        : null,
+      mergeKind && mergePrimaryKey && viewerState.mergeNodeIds.includes(node.id)
+        ? { label: "Remove from merge selection", type: "merge_remove", nodeId: node.id }
+        : mergeKind && mergePrimaryKey
+          ? { label: "Add to merge selection", type: "merge_add", nodeId: node.id, kind: mergeKind }
+          : null,
+      viewerState.mergeNodeIds.length ? { label: "Clear merge selection", type: "merge_clear" } : null,
       viewerState.focusedNodeIds.has(node.id) ? { label: "Clear focus", type: "focus_clear" } : null,
       viewerState.analysisNodeIds.includes(node.id)
         ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
@@ -1234,7 +1589,7 @@
       if (!viewerState.searchQuery) viewerState.focusedNodeIds.clear();
       applyViewerState();
     });
-    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showOrganisationsInput, showPeopleInput, showAddressesInput, indirectOnlyInput]
+    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showOrganisationsInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput]
       .forEach((input) => input.addEventListener("change", applyViewerState));
     showLowConfidenceInput.addEventListener("change", async () => {
       if (showLowConfidenceInput.checked) {
@@ -1253,7 +1608,7 @@
         }
       });
     });
-    contextMenuEl.addEventListener("click", (event) => {
+    contextMenuEl.addEventListener("click", async (event) => {
       const button = event.target.closest(".context-menu-item");
       if (!button) return;
       const action = (contextMenuEl._actions || [])[Number(button.dataset.actionIndex || -1)];
@@ -1261,6 +1616,25 @@
       if (!action) return;
       if (action.type === "open_url" && action.url) {
         window.open(action.url, "_blank", "noopener,noreferrer");
+      } else if (action.type === "node_claims") {
+        const node = nodeById.get(action.nodeId);
+        if (node) openNodeAttributionView(node);
+      } else if (action.type === "merge_add") {
+        const current = viewerState.mergeNodeIds
+          .filter((nodeId) => nodeId !== action.nodeId)
+          .filter((nodeId) => mergeKindForNode(nodeById.get(nodeId)) === action.kind);
+        viewerState.mergeNodeIds = [...current, action.nodeId].slice(-2);
+      } else if (action.type === "merge_remove") {
+        viewerState.mergeNodeIds = viewerState.mergeNodeIds.filter((nodeId) => nodeId !== action.nodeId);
+      } else if (action.type === "merge_clear") {
+        viewerState.mergeNodeIds = [];
+      } else if (action.type === "merge_persist") {
+        try {
+          await persistMergeOverride(action);
+        } catch (error) {
+          console.error(error);
+          window.alert("Persisted merge failed.");
+        }
       } else if (action.type === "focus_clear") {
         viewerState.focusedNodeIds.clear();
         applyViewerState();
@@ -1282,6 +1656,7 @@
 
   async function boot() {
     renderLegend();
+    await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {
       onHover(node, event, hit) {
         if (!node) {

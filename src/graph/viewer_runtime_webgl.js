@@ -72,7 +72,7 @@
 
   function nodeStrokeWidth(node) {
     if (node._focused) return 2.8;
-    if (node.sanctioned) return 2.5;
+    if (node.sanctioned) return 3.4;
     if (node.is_low_confidence) return 1.4;
     return 1.2;
   }
@@ -80,7 +80,7 @@
   function nodeFillAlpha(node) {
     if (node._focused) return 0.28;
     if (node.is_low_confidence) return 0.14;
-    if (node.sanctioned) return 0.35;
+    if (node.sanctioned) return 0.48;
     return 0.18;
   }
 
@@ -270,10 +270,10 @@
       const scale = transform.k;
       if (rootIds.size) return sceneNodes;
       if (scale >= 0.85) return sceneNodes.slice(0, 1400);
-      const focused = sceneNodes.filter((node) => node._focused || node._hovered || node._searchHit);
+      const focused = sceneNodes.filter((node) => node._focused || node._hovered || node._searchHit || node.sanctioned);
       if (scale >= 0.45) {
         const ranked = sceneNodes
-          .filter((node) => !node._focused && !node._hovered && !node._searchHit && Number(node._rankScore || 0) > 0)
+          .filter((node) => !node._focused && !node._hovered && !node._searchHit && !node.sanctioned && Number(node._rankScore || 0) > 0)
           .sort((left, right) => Number(right._rankScore || 0) - Number(left._rankScore || 0))
           .slice(0, 220);
         return [...focused, ...ranked];
@@ -341,9 +341,9 @@
           nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned ? 1 : 0.7) });
         }
         if (node.sanctioned) {
-          overlayLayer.roundRect(bounds.x - 3, bounds.y - 3, bounds.width + 6, bounds.height + 6, (bounds.height + 6) / 2);
-          overlayLayer.fill({ color: 0xff2222, alpha: 0.08 });
-          overlayLayer.stroke({ color: 0xff6b6b, width: isHovered ? 2.8 : 2.2, alpha: 0.95 });
+          overlayLayer.roundRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8, (bounds.height + 8) / 2);
+          overlayLayer.fill({ color: 0xff2222, alpha: 0.12 });
+          overlayLayer.stroke({ color: 0xff8a8a, width: isHovered ? 3.4 : 2.8, alpha: 1 });
         }
 
       });
