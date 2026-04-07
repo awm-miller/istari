@@ -23,7 +23,9 @@ from src.mapping_evidence_enrichment import (
 from src.mapping_low_confidence import (
     MappingStore,
     build_low_confidence_overlay,
+    default_overlay_mapping_db_path,
     import_mapping_workbooks,
+    rebuild_overlay_mapping_db,
 )
 
 
@@ -88,6 +90,78 @@ class FakeMappingEvidenceEnricher(MappingEvidenceEnricher):
 
 
 class MappingLowConfidenceTests(unittest.TestCase):
+    def test_rebuild_overlay_mapping_db_combines_clean_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            data_dir = root / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            source_paths = [
+                data_dir / "mapping_links.signatory-clean.sqlite",
+                data_dir / "mapping_links.normalize-after-rest.sqlite",
+            ]
+            for index, path in enumerate(source_paths, start=1):
+                store = MappingStore(path)
+                store.init_db()
+                import_id = store.create_import(root / f"source-{index}")
+                shared_link_id = store.insert_link(
+                    import_id=import_id,
+                    workbook_name="shared.xlsx",
+                    sheet_name="Links",
+                    row_number=1,
+                    from_label="Person One",
+                    to_label="Campaign A",
+                    link_type="signatory",
+                    description="Shared row",
+                    raw_row=["Person One", "Campaign A", "signatory"],
+                )
+                store.insert_evidence(
+                    mapping_link_id=shared_link_id,
+                    ordinal=1,
+                    evidence_kind="plain_url",
+                    title="shared",
+                    url="https://example.test/shared",
+                    snippet="Shared evidence",
+                )
+                store.insert_entity(
+                    import_id=import_id,
+                    workbook_name="shared.xlsx",
+                    sheet_name="Entities",
+                    row_number=1,
+                    label="Campaign A",
+                    entity_type="Campaign",
+                    description="Shared campaign",
+                    raw_row=["Campaign A", "Campaign"],
+                )
+            second_store = MappingStore(source_paths[1])
+            second_import_id = second_store.create_import(root / "source-2-extra")
+            unique_link_id = second_store.insert_link(
+                import_id=second_import_id,
+                workbook_name="generated.xlsx",
+                sheet_name="Links",
+                row_number=2,
+                from_label="Person Two",
+                to_label="Campaign B",
+                link_type="affiliate",
+                description="Unique row",
+                raw_row=["Person Two", "Campaign B", "affiliate"],
+            )
+            second_store.insert_evidence(
+                mapping_link_id=unique_link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="unique",
+                url="https://example.test/unique",
+                snippet="Unique evidence",
+            )
+
+            combined_path = rebuild_overlay_mapping_db(root)
+
+            self.assertEqual(combined_path, default_overlay_mapping_db_path(root))
+            combined_store = MappingStore(combined_path)
+            self.assertEqual(len(combined_store.list_links()), 2)
+            self.assertEqual(len(combined_store.list_evidence()), 2)
+            self.assertEqual(len(combined_store.list_entities()), 1)
+
     def test_import_mapping_workbooks_extracts_entities_links_and_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -219,6 +293,155 @@ class MappingLowConfidenceTests(unittest.TestCase):
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0]["endpoint"], "from")
             self.assertEqual(matches[0]["matched_node_id"], "person:1")
+
+    def test_build_low_confidence_overlay_marks_signatory_target_as_expandable_document(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database_path = root / "mapping.sqlite"
+            store = MappingStore(database_path)
+            store.init_db()
+            import_id = store.create_import(root)
+            document_label = "Statement of support for Moazzam Begg (February 2014)"
+            matched_link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name=_GENERATED_WORKBOOK_NAME,
+                sheet_name="doc-1",
+                row_number=1,
+                from_label="Mohammed Kozbar",
+                to_label=document_label,
+                link_type="signatory",
+                description="Matched signatory row",
+                raw_row=["Mohammed Kozbar", document_label, "signatory"],
+            )
+            store.insert_evidence(
+                mapping_link_id=matched_link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/cage",
+                snippet="Matched signatory row",
+                document_summary="Support statement with signatories and affiliations.",
+            )
+            unmatched_link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name=_GENERATED_WORKBOOK_NAME,
+                sheet_name="doc-1",
+                row_number=2,
+                from_label="New Signatory",
+                to_label=document_label,
+                link_type="signatory",
+                description="Unmatched signatory row",
+                raw_row=["New Signatory", document_label, "signatory"],
+            )
+            store.insert_evidence(
+                mapping_link_id=unmatched_link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/cage",
+                snippet="Unmatched signatory row",
+                document_summary="Support statement with signatories and affiliations.",
+            )
+
+            overlay = build_low_confidence_overlay(
+                main_data={
+                    "nodes": [
+                        {
+                            "id": "person:1",
+                            "label": "Mohammed Kozbar",
+                            "kind": "person",
+                            "lane": 4,
+                            "aliases": [],
+                        }
+                    ],
+                    "edges": [],
+                },
+                database_path=database_path,
+                run_key="run-1",
+                include_unmatched=True,
+                include_generated_links=True,
+            )
+
+            document_node = next(node for node in overlay["nodes"] if node["label"] == document_label)
+            self.assertEqual(document_node["registry_type"], "other")
+            self.assertTrue(document_node["low_confidence_expandable"])
+            self.assertEqual(document_node["mapping_entity_type"], "other organisation")
+            self.assertEqual(len(overlay["edges"]), 2)
+
+    def test_build_low_confidence_overlay_resolves_person_via_seed_name_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database_path = root / "mapping.sqlite"
+            store = MappingStore(database_path)
+            store.init_db()
+            import_id = store.create_import(root)
+            store.insert_entity(
+                import_id=import_id,
+                workbook_name=_GENERATED_WORKBOOK_NAME,
+                sheet_name="doc-1",
+                row_number=1,
+                label="Mohammed Kozbar",
+                entity_type="individual",
+                description="Signer",
+                raw_row=["Mohammed Kozbar", "individual"],
+            )
+            link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name=_GENERATED_WORKBOOK_NAME,
+                sheet_name="doc-1",
+                row_number=1,
+                from_label="Mohammed Kozbar",
+                to_label="Statement of support for Moazzam Begg (February 2014)",
+                link_type="signatory",
+                description="Matched signatory row",
+                raw_row=["Mohammed Kozbar", "Statement of support for Moazzam Begg (February 2014)", "signatory"],
+            )
+            store.insert_evidence(
+                mapping_link_id=link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/cage",
+                snippet="Matched signatory row",
+                document_summary="Support statement with signatories and affiliations.",
+            )
+
+            overlay = build_low_confidence_overlay(
+                main_data={
+                    "nodes": [
+                        {
+                            "id": "seed:14",
+                            "label": "Mohamed Kozbar",
+                            "kind": "seed",
+                            "lane": 0,
+                            "aliases": [],
+                        },
+                        {
+                            "id": "identity:14:person:365",
+                            "label": "KOZBAR, Mohamad Abdul Karim",
+                            "kind": "seed_alias",
+                            "lane": 1,
+                            "aliases": ["Mohamad Abdul Karim Kozbar", "Mohammed KOZBAR"],
+                        },
+                    ],
+                    "edges": [
+                        {
+                            "kind": "alias",
+                            "source": "seed:14",
+                            "target": "identity:14:person:365",
+                        }
+                    ],
+                },
+                database_path=database_path,
+                run_key="run-1",
+                include_unmatched=True,
+                include_generated_links=True,
+            )
+
+            self.assertTrue(any(
+                edge["source"] == "seed:14" or edge["target"] == "seed:14"
+                for edge in overlay["edges"]
+            ))
 
     def test_build_low_confidence_overlay_skips_fully_unmatched_links_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

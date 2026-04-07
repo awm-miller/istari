@@ -25,7 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.address_resolution import AddressMergeMatcher, address_bucket_keys, addresses_match
 from src.config import load_settings
 from src.graph.render import render_html as _render_html
-from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
+from src.mapping_low_confidence import (
+    build_low_confidence_overlay,
+    rebuild_overlay_mapping_db,
+)
 from src.resolution.features import person_name_similarity
 from src.search.queries import (
     _FUZZY_SWAPS,
@@ -3026,7 +3029,7 @@ def main() -> None:
         print()
 
     project_root = Path(__file__).resolve().parents[1]
-    mapping_db_path = default_mapping_db_path(project_root)
+    mapping_db_path = rebuild_overlay_mapping_db(project_root)
     low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data["run_id"])}}
     if mapping_db_path.exists():
         try:
@@ -3034,6 +3037,8 @@ def main() -> None:
                 main_data=data,
                 database_path=mapping_db_path,
                 run_key=str(data["run_id"]),
+                include_unmatched=True,
+                include_generated_links=True,
             )
             print(
                 "Loaded low-confidence overlay: "

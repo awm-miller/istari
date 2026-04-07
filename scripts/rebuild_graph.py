@@ -13,7 +13,10 @@ from src.graph.address_coordinates import (
 )
 from src.graph.build import consolidate_multi_run
 from src.graph.render import render_html
-from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
+from src.mapping_low_confidence import (
+    build_low_confidence_overlay,
+    rebuild_overlay_mapping_db,
+)
 from src.ranking import rank_people
 from src.services.mvp_pipeline import step4_ofac_screening
 from src.storage.repository import Repository
@@ -66,13 +69,15 @@ print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 
 low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data.get("run_id", ""))}}
 address_coordinates = {"coordinates": [], "summary": {}}
-mapping_db_path = default_mapping_db_path(settings.project_root)
+mapping_db_path = rebuild_overlay_mapping_db(settings.project_root)
 if mapping_db_path.exists():
     try:
         low_confidence_data = build_low_confidence_overlay(
             main_data=data,
             database_path=mapping_db_path,
             run_key=str(data.get("run_id", "")),
+            include_unmatched=True,
+            include_generated_links=True,
         )
         print(
             "Loaded low-confidence overlay "

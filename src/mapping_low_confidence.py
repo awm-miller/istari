@@ -7,9 +7,27 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from src.search.queries import generate_name_variants, normalize_name
+
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _PLAIN_URL_RE = re.compile(r"(?<!\()(?P<url>https?://[^\s)>\]]+)")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_LOW_CONFIDENCE_OVERLAY_SOURCE_NAMES = (
+    "mapping_links.sqlite",
+    "mapping_links.signatory-clean.sqlite",
+    "mapping_links.guardian-normalize.sqlite",
+    "mapping_links.normalize-after-rest.sqlite",
+)
+_OTHER_ORGANISATION_HINTS = (
+    "open letter",
+    "letter",
+    "statement",
+    "campaign",
+    "petition",
+    "manifesto",
+    "declaration",
+    "appeal",
+)
 
 
 def _ensure_text_column(
@@ -42,6 +60,220 @@ def slugify_mapping_label(value: str) -> str:
 
 def default_mapping_db_path(project_root: Path) -> Path:
     return project_root / "data" / "mapping_links.sqlite"
+
+
+def default_overlay_mapping_db_path(project_root: Path) -> Path:
+    return project_root / "data" / "mapping_links.combined.sqlite"
+
+
+def _mapping_db_has_rows(database_path: Path) -> bool:
+    path = Path(database_path)
+    if not path.exists():
+        return False
+    connection = sqlite3.connect(path)
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        }
+        if "mapping_links" not in tables:
+            return False
+        return bool(connection.execute("SELECT 1 FROM mapping_links LIMIT 1").fetchone())
+    finally:
+        connection.close()
+
+
+def overlay_mapping_source_paths(project_root: Path) -> list[Path]:
+    data_dir = Path(project_root) / "data"
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    for name in _LOW_CONFIDENCE_OVERLAY_SOURCE_NAMES:
+        path = data_dir / name
+        if path in seen or not _mapping_db_has_rows(path):
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def rebuild_overlay_mapping_db(project_root: Path) -> Path:
+    target_path = default_overlay_mapping_db_path(project_root)
+    target_store = MappingStore(target_path)
+    target_store.init_db()
+    target_store.clear_all()
+
+    source_paths = overlay_mapping_source_paths(project_root)
+    if not source_paths:
+        return target_path
+
+    seen_entity_keys: set[tuple[str, str, int]] = set()
+    seen_link_keys: dict[tuple[str, str, int], int] = {}
+    seen_evidence_keys: set[tuple[str, str, int, int]] = set()
+
+    with target_store.managed_connection() as target_connection:
+        for source_path in source_paths:
+            source_connection = sqlite3.connect(source_path)
+            source_connection.row_factory = sqlite3.Row
+            try:
+                source_dir_row = source_connection.execute(
+                    "SELECT source_dir FROM mapping_imports ORDER BY id LIMIT 1"
+                ).fetchone()
+                source_dir = (
+                    str(source_dir_row["source_dir"]).strip()
+                    if source_dir_row and str(source_dir_row["source_dir"]).strip()
+                    else str(source_path)
+                )
+                import_id = int(
+                    target_connection.execute(
+                        "INSERT INTO mapping_imports(source_dir) VALUES(?)",
+                        (source_dir,),
+                    ).lastrowid
+                )
+                for row in source_connection.execute(
+                    """
+                    SELECT *
+                    FROM mapping_entities
+                    ORDER BY workbook_name, sheet_name, row_number
+                    """
+                ).fetchall():
+                    entity_key = (
+                        str(row["workbook_name"]),
+                        str(row["sheet_name"]),
+                        int(row["row_number"]),
+                    )
+                    if entity_key in seen_entity_keys:
+                        continue
+                    seen_entity_keys.add(entity_key)
+                    target_connection.execute(
+                        """
+                        INSERT INTO mapping_entities(
+                            import_id,
+                            workbook_name,
+                            sheet_name,
+                            row_number,
+                            label,
+                            normalized_label,
+                            entity_type,
+                            description,
+                            raw_row_json
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            import_id,
+                            row["workbook_name"],
+                            row["sheet_name"],
+                            row["row_number"],
+                            row["label"],
+                            row["normalized_label"],
+                            row["entity_type"],
+                            row["description"],
+                            row["raw_row_json"],
+                        ),
+                    )
+                for row in source_connection.execute(
+                    """
+                    SELECT *
+                    FROM mapping_links
+                    ORDER BY workbook_name, sheet_name, row_number
+                    """
+                ).fetchall():
+                    link_key = (
+                        str(row["workbook_name"]),
+                        str(row["sheet_name"]),
+                        int(row["row_number"]),
+                    )
+                    if link_key in seen_link_keys:
+                        continue
+                    link_id = int(
+                        target_connection.execute(
+                            """
+                            INSERT INTO mapping_links(
+                                import_id,
+                                workbook_name,
+                                sheet_name,
+                                row_number,
+                                from_label,
+                                from_normalized_label,
+                                to_label,
+                                to_normalized_label,
+                                link_type,
+                                description,
+                                quality,
+                                raw_row_json
+                            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                import_id,
+                                row["workbook_name"],
+                                row["sheet_name"],
+                                row["row_number"],
+                                row["from_label"],
+                                row["from_normalized_label"],
+                                row["to_label"],
+                                row["to_normalized_label"],
+                                row["link_type"],
+                                row["description"],
+                                row["quality"],
+                                row["raw_row_json"],
+                            ),
+                        ).lastrowid
+                    )
+                    seen_link_keys[link_key] = link_id
+                for row in source_connection.execute(
+                    """
+                    SELECT
+                        link.workbook_name,
+                        link.sheet_name,
+                        link.row_number,
+                        evidence.ordinal,
+                        evidence.evidence_kind,
+                        evidence.title,
+                        evidence.url,
+                        evidence.snippet,
+                        evidence.document_summary
+                    FROM mapping_evidence AS evidence
+                    JOIN mapping_links AS link ON link.id = evidence.mapping_link_id
+                    ORDER BY link.workbook_name, link.sheet_name, link.row_number, evidence.ordinal
+                    """
+                ).fetchall():
+                    evidence_key = (
+                        str(row["workbook_name"]),
+                        str(row["sheet_name"]),
+                        int(row["row_number"]),
+                        int(row["ordinal"]),
+                    )
+                    if evidence_key in seen_evidence_keys:
+                        continue
+                    new_link_id = seen_link_keys.get(evidence_key[:3])
+                    if not new_link_id:
+                        continue
+                    seen_evidence_keys.add(evidence_key)
+                    target_connection.execute(
+                        """
+                        INSERT INTO mapping_evidence(
+                            mapping_link_id,
+                            ordinal,
+                            evidence_kind,
+                            title,
+                            url,
+                            snippet,
+                            document_summary
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            new_link_id,
+                            row["ordinal"],
+                            row["evidence_kind"],
+                            row["title"],
+                            row["url"],
+                            row["snippet"],
+                            row["document_summary"],
+                        ),
+                    )
+            finally:
+                source_connection.close()
+
+    return target_path
 
 
 def _clean_mapping_scalar(value: str) -> str:
@@ -607,29 +839,69 @@ def build_low_confidence_overlay(
     store.init_db()
 
     node_index: dict[str, list[dict[str, str]]] = {}
-    for node in main_data.get("nodes") or []:
-        if str(node.get("kind") or "") == "seed":
+    person_index: dict[str, list[dict[str, str]]] = {}
+    seed_identity_ids: dict[str, str] = {}
+    identity_to_seed: dict[str, str] = {}
+    seed_label_by_id: dict[str, str] = {}
+    for edge in main_data.get("edges") or []:
+        if str(edge.get("kind") or "") != "alias":
             continue
+        source_id = str(edge.get("source") or "")
+        target_id = str(edge.get("target") or "")
+        if source_id.startswith("seed:") and target_id:
+            seed_identity_ids.setdefault(source_id, target_id)
+            identity_to_seed.setdefault(target_id, source_id)
+        elif target_id.startswith("seed:") and source_id:
+            seed_identity_ids.setdefault(target_id, source_id)
+            identity_to_seed.setdefault(source_id, target_id)
+
+    for node in main_data.get("nodes") or []:
+        node_id = str(node.get("id") or "")
         label = str(node.get("label") or "").strip()
-        if label:
-            node_index.setdefault(normalize_mapping_label(label), []).append(
-                {
-                    "node_id": str(node["id"]),
-                    "node_label": label,
-                    "match_type": "exact_label",
-                }
-            )
-        for alias in node.get("aliases") or []:
-            alias_text = str(alias or "").strip()
-            if not alias_text:
+        aliases = [str(alias or "").strip() for alias in (node.get("aliases") or []) if str(alias or "").strip()]
+        if str(node.get("kind") or "") == "seed" and label:
+            seed_label_by_id[node_id] = label
+        if str(node.get("kind") or "") != "seed":
+            if label:
+                _add_match_candidate(
+                    node_index,
+                    normalize_mapping_label(label),
+                    node_id=node_id,
+                    node_label=label,
+                    match_type="exact_label",
+                )
+            for alias_text in aliases:
+                _add_match_candidate(
+                    node_index,
+                    normalize_mapping_label(alias_text),
+                    node_id=node_id,
+                    node_label=label or alias_text,
+                    match_type="exact_alias",
+                )
+        person_like = bool(node.get("lane") in {1, 4} or str(node.get("kind") or "") in {"person", "seed_alias"})
+        if person_like:
+            for text in [label, *aliases]:
+                for variant in _person_variant_texts(text):
+                    _add_match_candidate(
+                        person_index,
+                        _person_match_key(variant),
+                        node_id=node_id,
+                        node_label=label or variant,
+                        match_type="person_variant",
+                    )
+        if str(node.get("kind") or "") == "seed":
+            identity_id = seed_identity_ids.get(node_id, "")
+            if not identity_id:
                 continue
-            node_index.setdefault(normalize_mapping_label(alias_text), []).append(
-                {
-                    "node_id": str(node["id"]),
-                    "node_label": label or alias_text,
-                    "match_type": "exact_alias",
-                }
-            )
+            for text in [label, *aliases]:
+                for variant in _person_variant_texts(text):
+                    _add_match_candidate(
+                        person_index,
+                        _person_match_key(variant),
+                        node_id=identity_id,
+                        node_label=label or variant,
+                        match_type="seed_alias_variant",
+                    )
 
     entity_rows = store.list_entities()
     entity_by_normalized: dict[str, sqlite3.Row] = {}
@@ -646,6 +918,9 @@ def build_low_confidence_overlay(
     overlay_nodes: dict[str, dict[str, Any]] = {}
     overlay_edges: list[dict[str, Any]] = []
     matched_link_count = 0
+    generated_doc_nodes_by_sheet: dict[str, set[str]] = {}
+    generated_doc_nodes_by_signer: dict[str, dict[str, set[str]]] = {}
+    generated_affiliations: list[dict[str, Any]] = []
 
     for link_row in store.list_links():
         if (
@@ -653,8 +928,28 @@ def build_low_confidence_overlay(
             and str(link_row["workbook_name"] or "").strip() == "__evidence_enrichment__"
         ):
             continue
+        from_entity_row = entity_by_normalized.get(str(link_row["from_normalized_label"]))
+        to_entity_row = entity_by_normalized.get(str(link_row["to_normalized_label"]))
         from_match = _unique_match(node_index, str(link_row["from_normalized_label"]))
         to_match = _unique_match(node_index, str(link_row["to_normalized_label"]))
+        from_entity_type = canonicalize_entity_type(str(from_entity_row["entity_type"] or "").strip()) if from_entity_row else ""
+        to_entity_type = canonicalize_entity_type(str(to_entity_row["entity_type"] or "").strip()) if to_entity_row else ""
+        if not from_match and from_entity_type == "individual":
+            from_match = _unique_match(person_index, _person_match_key(str(link_row["from_label"])))
+        if not to_match and to_entity_type == "individual":
+            to_match = _unique_match(person_index, _person_match_key(str(link_row["to_label"])))
+        if from_entity_type == "individual":
+            from_match = _promote_person_match_to_seed(
+                from_match,
+                identity_to_seed=identity_to_seed,
+                seed_label_by_id=seed_label_by_id,
+            )
+        if to_entity_type == "individual":
+            to_match = _promote_person_match_to_seed(
+                to_match,
+                identity_to_seed=identity_to_seed,
+                seed_label_by_id=seed_label_by_id,
+            )
         link_type = canonicalize_link_type(str(link_row["link_type"] or ""))
 
         if from_match:
@@ -677,21 +972,6 @@ def build_low_confidence_overlay(
             )
 
         if not include_unmatched and not (from_match or to_match):
-            continue
-
-        source_id = from_match["node_id"] if from_match else _ensure_overlay_node(
-            overlay_nodes,
-            label=str(link_row["from_label"]),
-            normalized_label=str(link_row["from_normalized_label"]),
-            entity_row=entity_by_normalized.get(str(link_row["from_normalized_label"])),
-        )
-        target_id = to_match["node_id"] if to_match else _ensure_overlay_node(
-            overlay_nodes,
-            label=str(link_row["to_label"]),
-            normalized_label=str(link_row["to_normalized_label"]),
-            entity_row=entity_by_normalized.get(str(link_row["to_normalized_label"])),
-        )
-        if source_id == target_id:
             continue
 
         evidence_items = [
@@ -717,6 +997,27 @@ def build_low_confidence_overlay(
         )
         description = summary_text or str(link_row["description"] or "").strip()
         tooltip_description = summarize_mapping_text(description)
+
+        source_id = from_match["node_id"] if from_match else _ensure_overlay_node(
+            overlay_nodes,
+            label=str(link_row["from_label"]),
+            normalized_label=str(link_row["from_normalized_label"]),
+            entity_row=from_entity_row,
+            link_type=link_type,
+            endpoint="from",
+            description_hint=description,
+        )
+        target_id = to_match["node_id"] if to_match else _ensure_overlay_node(
+            overlay_nodes,
+            label=str(link_row["to_label"]),
+            normalized_label=str(link_row["to_normalized_label"]),
+            entity_row=to_entity_row,
+            link_type=link_type,
+            endpoint="to",
+            description_hint=description,
+        )
+        if source_id == target_id:
+            continue
         phrase = _mapping_phrase(link_type)
         tooltip_lines = [
             line
@@ -726,6 +1027,64 @@ def build_low_confidence_overlay(
         tooltip_lines.append(
             f"Imported from {link_row['workbook_name']} / {link_row['sheet_name']} / row {link_row['row_number']}"
         )
+        source_node = overlay_nodes.get(source_id) if source_id in overlay_nodes else next(
+            (node for node in main_data.get("nodes") or [] if str(node.get("id")) == source_id),
+            None,
+        )
+        target_node = overlay_nodes.get(target_id) if target_id in overlay_nodes else next(
+            (node for node in main_data.get("nodes") or [] if str(node.get("id")) == target_id),
+            None,
+        )
+        workbook_name = str(link_row["workbook_name"] or "").strip()
+        sheet_name = str(link_row["sheet_name"] or "").strip()
+        if workbook_name == "__evidence_enrichment__":
+            if "signatory" in link_type:
+                signer_id = ""
+                document_id = ""
+                if (
+                    source_node
+                    and _is_person_anchor_node(source_node)
+                    and target_node
+                    and bool(target_node.get("low_confidence_expandable"))
+                ):
+                    signer_id = source_id
+                    document_id = target_id
+                elif (
+                    target_node
+                    and _is_person_anchor_node(target_node)
+                    and source_node
+                    and bool(source_node.get("low_confidence_expandable"))
+                ):
+                    signer_id = target_id
+                    document_id = source_id
+                if signer_id and document_id:
+                    generated_doc_nodes_by_sheet.setdefault(sheet_name, set()).add(document_id)
+                    signer_docs = generated_doc_nodes_by_signer.setdefault(sheet_name, {})
+                    signer_docs.setdefault(signer_id, set()).add(document_id)
+            elif "affiliate" in link_type:
+                signer_id = ""
+                organisation_id = ""
+                if source_node and _is_person_anchor_node(source_node) and target_node and str(target_node.get("kind") or "") == "organisation":
+                    signer_id = source_id
+                    organisation_id = target_id
+                elif target_node and _is_person_anchor_node(target_node) and source_node and str(source_node.get("kind") or "") == "organisation":
+                    signer_id = target_id
+                    organisation_id = source_id
+                if signer_id and organisation_id:
+                    generated_affiliations.append(
+                        {
+                            "sheet_name": sheet_name,
+                            "signer_id": signer_id,
+                            "organisation_id": organisation_id,
+                            "organisation_label": str(target_node.get("label") if organisation_id == target_id else source_node.get("label") if source_node else ""),
+                            "tooltip_description": tooltip_description,
+                            "evidence_items": evidence_items,
+                            "tooltip_lines": tooltip_lines,
+                            "link_row_id": int(link_row["id"]),
+                        }
+                    )
+                    if generated_doc_nodes_by_signer.get(sheet_name, {}).get(signer_id):
+                        continue
         overlay_edges.append(
             {
                 "id": f"mapping-link:{int(link_row['id'])}",
@@ -748,6 +1107,43 @@ def build_low_confidence_overlay(
         )
         if from_match or to_match:
             matched_link_count += 1
+
+    seen_derived_edge_keys: set[tuple[str, str, str]] = set()
+    for affiliation in generated_affiliations:
+        doc_ids = generated_doc_nodes_by_signer.get(affiliation["sheet_name"], {}).get(affiliation["signer_id"], set())
+        if not doc_ids:
+            continue
+        for document_id in doc_ids:
+            derived_key = (document_id, affiliation["organisation_id"], "represented_organisation")
+            if derived_key in seen_derived_edge_keys:
+                continue
+            seen_derived_edge_keys.add(derived_key)
+            overlay_edges.append(
+                {
+                    "id": f"mapping-doc-link:{slugify_mapping_label(document_id)}:{slugify_mapping_label(affiliation['organisation_id'])}",
+                    "source": document_id,
+                    "target": affiliation["organisation_id"],
+                    "kind": "mapping_document_affiliation",
+                    "phrase": "lists",
+                    "role_type": "represented_organisation",
+                    "role_label": "represented organisation",
+                    "source_provider": "mapping_import",
+                    "confidence": "low",
+                    "weight": 0.2,
+                    "tooltip": affiliation["tooltip_description"] or f"{document_id} lists {affiliation['organisation_label']}",
+                    "tooltip_lines": [
+                        "represented organisation",
+                        *[
+                            line
+                            for line in affiliation["tooltip_lines"][1:]
+                            if line and not line.startswith("Imported from ")
+                        ],
+                    ],
+                    "is_low_confidence": True,
+                    "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
+                    "evidence_items": affiliation["evidence_items"],
+                }
+            )
 
     return {
         "nodes": list(overlay_nodes.values()),
@@ -818,17 +1214,81 @@ def _unique_match(
     return next(iter(unique_by_node_id.values()))
 
 
-def _infer_overlay_node_kind(entity_type: str) -> tuple[str, int, str]:
+def _person_match_key(value: str) -> str:
+    return normalize_mapping_label(normalize_name(value))
+
+
+def _add_match_candidate(
+    index: dict[str, list[dict[str, str]]],
+    key: str,
+    *,
+    node_id: str,
+    node_label: str,
+    match_type: str,
+) -> None:
+    normalized_key = str(key or "").strip()
+    if not normalized_key:
+        return
+    index.setdefault(normalized_key, []).append(
+        {
+            "node_id": node_id,
+            "node_label": node_label,
+            "match_type": match_type,
+        }
+    )
+
+
+def _person_variant_texts(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    variants = [text]
+    try:
+        variants.extend(item.name for item in generate_name_variants(text, "balanced"))
+    except Exception:
+        pass
+    return list(dict.fromkeys(item for item in variants if str(item or "").strip()))
+
+
+def _promote_person_match_to_seed(
+    match: dict[str, str] | None,
+    *,
+    identity_to_seed: dict[str, str],
+    seed_label_by_id: dict[str, str],
+) -> dict[str, str] | None:
+    if not match:
+        return None
+    seed_id = identity_to_seed.get(str(match.get("node_id") or ""))
+    if not seed_id:
+        return match
+    return {
+        "node_id": seed_id,
+        "node_label": seed_label_by_id.get(seed_id) or str(match.get("node_label") or seed_id),
+        "match_type": f"{match.get('match_type', 'match')}_seed",
+    }
+
+
+def _infer_overlay_node_kind(
+    entity_type: str,
+    *,
+    link_type: str = "",
+    endpoint: str = "",
+) -> tuple[str, int, str, bool]:
     lowered = str(entity_type or "").strip().lower()
+    lowered_link_type = str(link_type or "").strip().lower()
     if "address" in lowered:
-        return ("address", 3, "")
+        return ("address", 3, "", False)
     if lowered in {"individual", "person"} or "individual" in lowered or "person" in lowered:
-        return ("person", 4, "")
+        return ("person", 4, "", False)
     if "charity" in lowered:
-        return ("organisation", 2, "charity")
+        return ("organisation", 2, "charity", False)
     if "company" in lowered:
-        return ("organisation", 2, "company")
-    return ("organisation", 2, "")
+        return ("organisation", 2, "company", False)
+    if any(token in lowered for token in _OTHER_ORGANISATION_HINTS):
+        return ("organisation", 2, "other", True)
+    if endpoint == "to" and "signatory" in lowered_link_type:
+        return ("organisation", 2, "other", True)
+    return ("organisation", 2, "", False)
 
 
 def _ensure_overlay_node(
@@ -837,16 +1297,28 @@ def _ensure_overlay_node(
     label: str,
     normalized_label: str,
     entity_row: sqlite3.Row | None,
+    link_type: str = "",
+    endpoint: str = "",
+    description_hint: str = "",
 ) -> str:
     node_id = f"mapping-node:{slugify_mapping_label(normalized_label or label)}"
     if node_id in overlay_nodes:
         return node_id
 
     entity_type = canonicalize_entity_type(str(entity_row["entity_type"] or "").strip()) if entity_row else ""
-    description = str(entity_row["description"] or "").strip() if entity_row else ""
-    kind, lane, registry_type = _infer_overlay_node_kind(entity_type)
+    description = (
+        str(entity_row["description"] or "").strip()
+        if entity_row
+        else str(description_hint or "").strip()
+    )
+    kind, lane, registry_type, is_expandable = _infer_overlay_node_kind(
+        entity_type,
+        link_type=link_type,
+        endpoint=endpoint,
+    )
+    display_entity_type = entity_type or ("other organisation" if registry_type == "other" else "")
     tooltip_lines = [
-        line for line in [entity_type, summarize_mapping_text(description, max_chars=160)] if line
+        line for line in [display_entity_type, summarize_mapping_text(description, max_chars=160)] if line
     ]
     if entity_row is not None:
         tooltip_lines.append(
@@ -861,7 +1333,8 @@ def _ensure_overlay_node(
         "aliases": [],
         "tooltip_lines": tooltip_lines,
         "is_low_confidence": True,
-        "mapping_entity_type": entity_type,
+        "mapping_entity_type": display_entity_type,
+        "low_confidence_expandable": is_expandable,
     }
     return node_id
 
@@ -879,3 +1352,28 @@ def _mapping_phrase(link_type: str) -> str:
     if "campaign" in lowered:
         return "is linked through"
     return "is linked to"
+
+
+def _display_endpoint_metadata(
+    *,
+    label: str,
+    normalized_label: str,
+    entity_row: sqlite3.Row | None,
+    link_type: str,
+    endpoint: str,
+    description_hint: str = "",
+) -> tuple[str, int, str, bool]:
+    entity_type = canonicalize_entity_type(str(entity_row["entity_type"] or "").strip()) if entity_row else ""
+    return _infer_overlay_node_kind(
+        entity_type,
+        link_type=link_type,
+        endpoint=endpoint,
+    )
+
+
+def _is_person_anchor_node(node: dict[str, Any] | None) -> bool:
+    if not node:
+        return False
+    kind = str(node.get("kind") or "")
+    lane = int(node.get("lane") or 0)
+    return kind in {"person", "seed", "seed_alias"} or lane in {0, 1, 4}

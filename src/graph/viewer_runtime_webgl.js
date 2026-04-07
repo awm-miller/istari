@@ -70,6 +70,14 @@
     return null;
   }
 
+  function isLowConfidenceDocumentNode(node) {
+    return !!node
+      && !!node.is_low_confidence
+      && node.kind === "organisation"
+      && String(node.registry_type || "").toLowerCase() === "other"
+      && !!node.low_confidence_expandable;
+  }
+
   function nodeStrokeWidth(node) {
     if (node._focused) return 2.8;
     if (node.sanctioned) return 3.4;

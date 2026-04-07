@@ -22,7 +22,9 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 6. **Graph Consolidation** — Merge duplicate people and addresses across runs into one unified graph.
 
-7. **Output** — Serve an interactive network graph and export JSON for the web viewer.
+7. **Low-Confidence Overlay** — Fold cleaned mapping databases into a separate overlay, resolve matched people onto existing graph seeds, and include reviewer-visible `seed -> open letter -> represented organisation` chains.
+
+8. **Output** — Serve an interactive network graph and export JSON for the web viewer.
 
 ### Data sources
 
@@ -38,6 +40,17 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 - **Flask web UI** — interactive network graph at `localhost:5000`
 - **JSON export** — graph payload for the Netlify viewer
 - **Graph rebuild** — cross-run merge of people and addresses into a single combined graph
+- **Low-confidence overlay** — separate JSON layer for dashed yellow evidence chains from cleaned mapping/signatory databases
+
+## Low-confidence inclusions
+
+The combined graph now has a dedicated low-confidence overlay for mapping-derived evidence such as open letters and signatory lists.
+
+- Matched people resolve onto the existing graph seed when there is a unique seed/identity match.
+- Open letters are emitted as low-confidence organisation-style document nodes.
+- Represented organisations listed in those letters are emitted as linked organisation nodes.
+- In the viewer, these inclusions are meant to read as `seed -> letter -> organisation`.
+- The overlay is exported separately from the consolidated graph so it can be toggled on and off in the Netlify viewer.
 
 ## Quick start
 
