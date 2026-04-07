@@ -1247,15 +1247,15 @@ def build_low_confidence_overlay(
                     "source": document_id,
                     "target": affiliation["organisation_id"],
                     "kind": "mapping_document_affiliation",
-                    "phrase": "lists",
+                    "phrase": "includes signatories representing",
                     "role_type": "represented_organisation",
                     "role_label": "represented organisation",
                     "source_provider": "mapping_import",
                     "confidence": "low",
                     "weight": 0.2,
-                    "tooltip": affiliation["tooltip_description"] or f"{document_id} lists {affiliation['organisation_label']}",
+                    "tooltip": affiliation["tooltip_description"] or f"{document_id} includes signatories representing {affiliation['organisation_label']}",
                     "tooltip_lines": [
-                        "represented organisation",
+                        "includes signatories representing",
                         *[
                             line
                             for line in affiliation["tooltip_lines"][1:]
