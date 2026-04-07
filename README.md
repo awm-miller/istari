@@ -10,19 +10,19 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 ### How it works
 
-1. **Seed Expansion** — Generate spelling and transliteration variants of the seed name, then search the Charity Commission, Companies House, and the web (Serper) for registry evidence.
+1. **Seed Expansion** — Generate name variants and search UK charity/company registries for matches.
 
-2. **Identity Resolution** — Score each candidate match deterministically. Ambiguous mid-range candidates are sent to an LLM (Gemini or OpenAI) for a same-person judgement. Officers are keyed on name + birth month/year so distinct people with the same name stay separate.
+2. **Identity Resolution** — Score candidates with rules; use an LLM to decide ambiguous same-person matches.
 
-3. **Org Expansion** — Walk linked charities and companies outward from confirmed matches. An address-pivot search discovers additional organisations registered at the same physical addresses.
+3. **Org Expansion** — Follow confirmed matches to linked charities and companies; find more orgs at shared addresses.
 
-4. **People Expansion** — Pull trustees, directors, secretaries, and officers for every scoped organisation. People are ranked by the number and weight of their connections.
+4. **People Expansion + Sanctions** — Pull officers and trustees for each organisation; rank by connection strength; screen against sanctions lists.
 
-5. **PDF Enrichment** — Download charity/company PDFs (annual reports, accounts) and extract structured mentions via Gemini, including the connection phrase and explanatory detail for each mention.
+5. **PDF Enrichment** — Download annual reports and filings; extract names and roles using Gemini.
 
-6. **Graph Consolidation** — Merge person aliases and equivalent addresses across runs so shared edges collapse onto common nodes. Address merging uses deterministic normalisation first, with an LLM fallback for ambiguous near-matches.
+6. **Graph Consolidation** — Merge duplicate people and addresses across runs into one unified graph.
 
-7. **Output** — Serve an interactive 4-lane HTML network graph, export JSON for the Netlify viewer, and screen ranked people against sanctions lists.
+7. **Output** — Serve an interactive network graph and export JSON for the web viewer.
 
 ### Data sources
 
