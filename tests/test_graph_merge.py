@@ -14,6 +14,18 @@ _SPEC.loader.exec_module(cg)
 
 
 class GraphMergeTests(unittest.TestCase):
+    def test_matches_seed_alias_uses_aliases_not_just_label(self) -> None:
+        self.assertTrue(
+            cg.matches_seed_alias(
+                "Mohamed Kozbar",
+                [
+                    "KOZBAR, Mohamad Abdul Karim",
+                    "KOZBAR, Mohamad",
+                    "Mohammed KOZBAR",
+                ],
+            )
+        )
+
     def test_multi_run_merges_equivalent_addresses(self) -> None:
         run_one = {
             "seed_name": "Seed One",

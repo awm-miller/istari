@@ -92,6 +92,14 @@ def are_aliases(name_a: str, name_b: str) -> bool:
     return given_a.issubset(given_b) or given_b.issubset(given_a)
 
 
+def matches_seed_alias(seed_name: str, names: list[str]) -> bool:
+    return any(
+        are_aliases(seed_name, str(name))
+        for name in names
+        if str(name).strip()
+    )
+
+
 _DOB_RE = re.compile(r"(\d{4}-\d{2})$")
 
 
@@ -565,7 +573,7 @@ def consolidate_run(run_id: int) -> dict:
             "org_count": len(org_ids),
             "role_count": len(role_keys),
             "score": round(total_weight, 4),
-            "is_seed_alias": are_aliases(seed_name, label),
+            "is_seed_alias": matches_seed_alias(seed_name, all_names),
         })
         for pid in pid_set:
             person_id_to_group_id[pid] = group_id
@@ -1265,7 +1273,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     pruned_ids: set[str] = set()
     for mid, mnode in list(merged_person_nodes.items()):
         names = [mnode["label"], *(mnode.get("aliases") or [])]
-        if any(are_aliases(n, idn) for n in names for idn in all_identity_names):
+        if any(matches_seed_alias(str(identity_name), names) for identity_name in all_identity_names):
             pruned_ids.add(mid)
     for mid in pruned_ids:
         del merged_person_nodes[mid]
