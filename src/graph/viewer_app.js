@@ -1932,12 +1932,13 @@
         viewerState.analysisNodeIds = [];
       }
     });
-    document.addEventListener("click", (event) => {
+    document.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
       if (event.target.closest("#context-menu")) return;
       if (event.target.closest("#canvas-search-popover")) return;
       closeContextMenu();
       hideCanvasSearchPopover();
-    });
+    }, true);
     window.addEventListener("blur", () => {
       closeContextMenu();
       hideCanvasSearchPopover();
