@@ -90,38 +90,41 @@
 
   <!-- Title line -->
   <text x="60" y="606" font-size="14" font-weight="600" fill="#92400E">Low-Confidence Overlay</text>
-  <text x="250" y="606" font-size="12" fill="#B45309"> cleaned mapping databases rendered as a dashed review layer</text>
+  <text x="250" y="606" font-size="12" fill="#B45309">cleaned mapping databases rendered as a dashed review layer</text>
 
   <!-- Bullet points -->
   <circle cx="58" cy="633" r="3" fill="#D97706"/>
-  <text x="72" y="636" font-size="12" fill="#475569">Resolve matched people onto existing seeds when there is a unique seed/identity path.</text>
+  <text x="72" y="636" font-size="12" fill="#475569">Resolve matched people onto existing identity nodes when there is a unique seed/identity path.</text>
 
   <circle cx="58" cy="655" r="3" fill="#D97706"/>
-  <text x="72" y="658" font-size="12" fill="#475569">Emit open letters as document nodes; keep represented organisations attached to the letter.</text>
+  <text x="72" y="658" font-size="12" fill="#475569">Resolve organisations by exact match, company-suffix variants, then a narrow AI pass for unresolved names.</text>
 
   <circle cx="58" cy="677" r="3" fill="#D97706"/>
-  <text x="72" y="680" font-size="12" fill="#475569">Viewer shape: seed &#x2192; open letter &#x2192; organisation, shown as yellow dashed inclusions.</text>
+  <text x="72" y="680" font-size="12" fill="#475569">Persist accepted low-confidence org resolutions into mapping_matches during rebuilds.</text>
 
   <circle cx="58" cy="699" r="3" fill="#D97706"/>
-  <text x="72" y="702" font-size="12" fill="#475569">Low-confidence data stays in a separate overlay JSON so reviewers can toggle it on and off.</text>
+  <text x="72" y="702" font-size="12" fill="#475569">Viewer shape: identity &#x2192; open letter &#x2192; organisation, shown as yellow dashed inclusions.</text>
+
+  <circle cx="58" cy="721" r="3" fill="#D97706"/>
+  <text x="72" y="724" font-size="12" fill="#475569">Low-confidence data stays in a separate overlay JSON so reviewers can toggle it on and off.</text>
 
   <!-- Chain diagram: Seed ’ Open Letter ’ Organisation -->
-  <rect x="240" y="730" width="80" height="26" rx="6"
+  <rect x="220" y="748" width="80" height="26" rx="6"
         fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="280" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Seed</text>
+  <text x="260" y="765" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Identity</text>
 
-  <line x1="320" y1="743" x2="360" y2="743" stroke="#D97706" stroke-width="1.5"
+  <line x1="300" y1="761" x2="340" y2="761" stroke="#D97706" stroke-width="1.5"
         stroke-dasharray="4 3" marker-end="url(#amber-arrow)"/>
 
-  <rect x="360" y="730" width="110" height="26" rx="6"
+  <rect x="340" y="748" width="110" height="26" rx="6"
         fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="415" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Open Letter</text>
+  <text x="395" y="765" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Open Letter</text>
 
-  <line x1="470" y1="743" x2="510" y2="743" stroke="#D97706" stroke-width="1.5"
+  <line x1="450" y1="761" x2="490" y2="761" stroke="#D97706" stroke-width="1.5"
         stroke-dasharray="4 3" marker-end="url(#amber-arrow)"/>
 
-  <rect x="510" y="730" width="120" height="26" rx="6"
+  <rect x="490" y="748" width="120" height="26" rx="6"
         fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="570" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Organisation</text>
+  <text x="550" y="765" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Organisation</text>
 
 </svg>

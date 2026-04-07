@@ -78,6 +78,8 @@ if mapping_db_path.exists():
             run_key=str(data.get("run_id", "")),
             include_unmatched=True,
             include_generated_links=True,
+            enable_ai_org_matching=True,
+            settings=settings,
         )
         print(
             "Loaded low-confidence overlay "

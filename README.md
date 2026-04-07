@@ -22,9 +22,11 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 The combined graph includes a dedicated low-confidence overlay for mapping-derived evidence such as open letters and signatory lists, folded in from cleaned mapping databases.
 
-- Matched people resolve onto the existing graph seed when there is a unique seed/identity match.
+- Matched people resolve onto the existing graph identity node when there is a unique seed/identity match.
+- Matched organisations resolve onto existing graph organisations in three passes: exact label or alias match, deterministic company-suffix variants such as `Ltd`/`Limited`, then an AI tie-break only for unresolved organisation labels with a short candidate list.
+- Accepted low-confidence organisation resolutions are persisted into `mapping_matches` inside `data/mapping_links.combined.sqlite` during graph rebuilds.
 - Open letters are emitted as low-confidence document nodes; represented organisations listed in those letters are emitted as linked organisation nodes.
-- In the viewer these appear as reviewer-visible **seed → open letter → organisation** chains, rendered as yellow dashed inclusions.
+- In the viewer these appear as reviewer-visible **identity → open letter → organisation** chains, rendered as yellow dashed inclusions.
 - The overlay is exported separately from the consolidated graph so it can be toggled on and off in the Netlify viewer.
 
 ### Data sources

@@ -89,6 +89,21 @@ class FakeMappingEvidenceEnricher(MappingEvidenceEnricher):
         return (self._summary_text, list(self._entities), list(self._links))
 
 
+class FakeOrganisationMatchResolver:
+    def __init__(self, *, match_node_id: str, match_node_label: str) -> None:
+        self.match_node_id = match_node_id
+        self.match_node_label = match_node_label
+        self.calls: list[dict[str, object]] = []
+
+    def resolve(self, **kwargs: object) -> dict[str, str] | None:
+        self.calls.append(kwargs)
+        return {
+            "node_id": self.match_node_id,
+            "node_label": self.match_node_label,
+            "match_type": "organisation_ai",
+        }
+
+
 class MappingLowConfidenceTests(unittest.TestCase):
     def test_rebuild_overlay_mapping_db_combines_clean_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -442,6 +457,90 @@ class MappingLowConfidenceTests(unittest.TestCase):
             matched_to = next(match for match in matches if match["endpoint"] == "to")
             self.assertEqual(matched_to["matched_node_id"], "org:145")
             self.assertEqual(matched_to["match_type"], "organisation_variant")
+
+    def test_build_low_confidence_overlay_can_use_ai_for_unresolved_organisation_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database_path = root / "mapping.sqlite"
+            store = MappingStore(database_path)
+            store.init_db()
+            import_id = store.create_import(root)
+            store.insert_entity(
+                import_id=import_id,
+                workbook_name="sample.xlsx",
+                sheet_name="Entities",
+                row_number=1,
+                label="North London Central Mosque",
+                entity_type="organisation",
+                description="Organisation from signatory sheet",
+                raw_row=["North London Central Mosque", "organisation"],
+            )
+            link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name="sample.xlsx",
+                sheet_name="Connections",
+                row_number=1,
+                from_label="Person One",
+                to_label="North London Central Mosque",
+                link_type="affiliate",
+                description="Matched affiliate row",
+                raw_row=["Person One", "North London Central Mosque", "affiliate"],
+            )
+            store.insert_evidence(
+                mapping_link_id=link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/source",
+                snippet="Matched affiliate row",
+                document_summary="Affiliate row with unresolved organisation label.",
+            )
+
+            resolver = FakeOrganisationMatchResolver(
+                match_node_id="org:161",
+                match_node_label="NORTH LONDON CENTRAL MOSQUE TRUST",
+            )
+            overlay = build_low_confidence_overlay(
+                main_data={
+                    "nodes": [
+                        {
+                            "id": "person:1",
+                            "label": "Person One",
+                            "kind": "person",
+                            "lane": 4,
+                            "aliases": [],
+                        },
+                        {
+                            "id": "org:161",
+                            "label": "NORTH LONDON CENTRAL MOSQUE TRUST",
+                            "kind": "organisation",
+                            "lane": 2,
+                            "registry_type": "charity",
+                            "aliases": [],
+                        },
+                    ],
+                    "edges": [],
+                },
+                database_path=database_path,
+                run_key="run-1",
+                enable_ai_org_matching=True,
+                settings=_test_settings(root),
+                organisation_match_resolver=resolver,
+            )
+
+            self.assertEqual(overlay["nodes"], [])
+            self.assertEqual(len(overlay["edges"]), 1)
+            self.assertEqual(overlay["edges"][0]["source"], "person:1")
+            self.assertEqual(overlay["edges"][0]["target"], "org:161")
+
+            self.assertEqual(len(resolver.calls), 1)
+            self.assertEqual(resolver.calls[0]["label"], "North London Central Mosque")
+
+            matches = store.list_matches("run-1")
+            self.assertEqual(len(matches), 2)
+            matched_to = next(match for match in matches if match["endpoint"] == "to")
+            self.assertEqual(matched_to["matched_node_id"], "org:161")
+            self.assertEqual(matched_to["match_type"], "organisation_ai")
 
     def test_build_low_confidence_overlay_resolves_person_via_seed_name_variants(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

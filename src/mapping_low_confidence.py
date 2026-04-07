@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+from src.config import Settings, load_settings
+from src.gemini_api import GeminiClient, extract_gemini_text
+from src.openai_api import OpenAIResponsesClient, extract_json_document, extract_output_text
 from src.search.queries import generate_name_variants, normalize_name
+
+log = logging.getLogger("istari.mapping_low_confidence")
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _PLAIN_URL_RE = re.compile(r"(?<!\()(?P<url>https?://[^\s)>\]]+)")
@@ -40,6 +48,9 @@ _ORGANISATION_SUFFIX_TOKENS = {
     "company",
     "co",
 }
+_ORGANISATION_AI_MIN_RATIO = 0.84
+_ORGANISATION_AI_MIN_OVERLAP = 2
+_ORGANISATION_AI_MAX_CANDIDATES = 5
 
 
 def _ensure_text_column(
@@ -846,12 +857,16 @@ def build_low_confidence_overlay(
     run_key: str,
     include_unmatched: bool = False,
     include_generated_links: bool = False,
+    enable_ai_org_matching: bool = False,
+    settings: Settings | None = None,
+    organisation_match_resolver: Any | None = None,
 ) -> dict[str, Any]:
     store = MappingStore(database_path)
     store.init_db()
 
     node_index: dict[str, list[dict[str, str]]] = {}
     person_index: dict[str, list[dict[str, str]]] = {}
+    organisation_entries: list[dict[str, Any]] = []
     seed_identity_ids: dict[str, str] = {}
     identity_to_seed: dict[str, str] = {}
     seed_label_by_id: dict[str, str] = {}
@@ -912,6 +927,19 @@ def build_low_confidence_overlay(
                             node_label=label or alias_text,
                             match_type="organisation_variant",
                         )
+        if str(node.get("kind") or "") == "organisation" and label:
+            organisation_entries.append(
+                {
+                    "node_id": node_id,
+                    "node_label": label,
+                    "registry_type": str(node.get("registry_type") or ""),
+                    "match_keys": sorted({
+                        key
+                        for text in [label, *aliases]
+                        for key in _organisation_match_keys(text)
+                    }),
+                }
+            )
         person_like = bool(node.get("lane") in {1, 4} or str(node.get("kind") or "") in {"person", "seed_alias"})
         if person_like:
             for text in [label, *aliases]:
@@ -949,6 +977,10 @@ def build_low_confidence_overlay(
 
     store.clear_matches(run_key)
 
+    if organisation_match_resolver is None and enable_ai_org_matching:
+        effective_settings = settings or load_settings()
+        organisation_match_resolver = OrganisationMatchResolver(effective_settings)
+
     overlay_nodes: dict[str, dict[str, Any]] = {}
     overlay_edges: list[dict[str, Any]] = []
     matched_link_count = 0
@@ -973,6 +1005,48 @@ def build_low_confidence_overlay(
         if not to_match and to_entity_type == "individual":
             to_match = _unique_match(person_index, _person_match_key(str(link_row["to_label"])))
         link_type = canonicalize_link_type(str(link_row["link_type"] or ""))
+        if (
+            not from_match
+            and _should_try_ai_organisation_match(
+                entity_type=from_entity_type,
+                label=str(link_row["from_label"]),
+                link_type=link_type,
+                endpoint="from",
+            )
+        ):
+            from_match = _resolve_organisation_match_with_ai(
+                label=str(link_row["from_label"]),
+                link_type=link_type,
+                endpoint="from",
+                counterpart_label=str(link_row["to_label"]),
+                description=str(link_row["description"] or ""),
+                organisation_entries=organisation_entries,
+                organisation_match_resolver=organisation_match_resolver,
+                workbook_name=str(link_row["workbook_name"] or ""),
+                sheet_name=str(link_row["sheet_name"] or ""),
+                row_number=int(link_row["row_number"]),
+            )
+        if (
+            not to_match
+            and _should_try_ai_organisation_match(
+                entity_type=to_entity_type,
+                label=str(link_row["to_label"]),
+                link_type=link_type,
+                endpoint="to",
+            )
+        ):
+            to_match = _resolve_organisation_match_with_ai(
+                label=str(link_row["to_label"]),
+                link_type=link_type,
+                endpoint="to",
+                counterpart_label=str(link_row["from_label"]),
+                description=str(link_row["description"] or ""),
+                organisation_entries=organisation_entries,
+                organisation_match_resolver=organisation_match_resolver,
+                workbook_name=str(link_row["workbook_name"] or ""),
+                sheet_name=str(link_row["sheet_name"] or ""),
+                row_number=int(link_row["row_number"]),
+            )
 
         if from_match:
             store.insert_match(
@@ -1310,6 +1384,258 @@ def _organisation_match_keys(value: str) -> list[str]:
         if tokens:
             keys.append(" ".join(tokens))
     return list(dict.fromkeys(key for key in keys if key))
+
+
+def _is_organisation_entity_type(entity_type: str) -> bool:
+    lowered = str(entity_type or "").strip().lower()
+    return (
+        "organisation" in lowered
+        or "organization" in lowered
+        or "company" in lowered
+        or "charity" in lowered
+        or lowered == "org"
+    )
+
+
+def _looks_like_overlay_document(label: str, *, link_type: str, endpoint: str) -> bool:
+    normalized = normalize_mapping_label(label)
+    if any(hint in normalized for hint in _OTHER_ORGANISATION_HINTS):
+        return True
+    return endpoint == "to" and "signatory" in str(link_type or "").strip().lower()
+
+
+def _should_try_ai_organisation_match(
+    *,
+    entity_type: str,
+    label: str,
+    link_type: str,
+    endpoint: str,
+) -> bool:
+    return (
+        _is_organisation_entity_type(entity_type)
+        and bool(str(label or "").strip())
+        and not _looks_like_overlay_document(label, link_type=link_type, endpoint=endpoint)
+    )
+
+
+def _score_organisation_candidate(
+    label: str,
+    candidate: dict[str, Any],
+) -> dict[str, Any] | None:
+    normalized_label = normalize_mapping_label(label)
+    label_tokens = set(normalized_label.split())
+    if not normalized_label or len(label_tokens) < 2:
+        return None
+    best: dict[str, Any] | None = None
+    for key in candidate.get("match_keys") or []:
+        key_tokens = set(str(key or "").split())
+        overlap = len(label_tokens & key_tokens)
+        subset = bool(label_tokens and (label_tokens.issubset(key_tokens) or key_tokens.issubset(label_tokens)))
+        ratio = SequenceMatcher(None, normalized_label, str(key or "")).ratio()
+        if overlap < _ORGANISATION_AI_MIN_OVERLAP:
+            continue
+        if not subset and ratio < _ORGANISATION_AI_MIN_RATIO:
+            continue
+        scored = {
+            "node_id": candidate["node_id"],
+            "node_label": candidate["node_label"],
+            "registry_type": candidate.get("registry_type", ""),
+            "matched_key": str(key or ""),
+            "overlap": overlap,
+            "subset": subset,
+            "ratio": ratio,
+            "score": (100.0 if subset else 0.0) + (overlap * 10.0) + ratio,
+        }
+        if best is None or scored["score"] > best["score"]:
+            best = scored
+    return best
+
+
+def _organisation_ai_candidates(
+    label: str,
+    organisation_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    scored = []
+    for entry in organisation_entries:
+        candidate = _score_organisation_candidate(label, entry)
+        if candidate:
+            scored.append(candidate)
+    scored.sort(
+        key=lambda item: (-float(item["score"]), -int(item["overlap"]), -float(item["ratio"]), str(item["node_label"])),
+    )
+    seen_node_ids: set[str] = set()
+    unique_candidates: list[dict[str, Any]] = []
+    for item in scored:
+        if item["node_id"] in seen_node_ids:
+            continue
+        seen_node_ids.add(item["node_id"])
+        unique_candidates.append(item)
+        if len(unique_candidates) >= _ORGANISATION_AI_MAX_CANDIDATES:
+            break
+    return unique_candidates
+
+
+@dataclass(slots=True)
+class OrganisationMatchResolver:
+    settings: Settings
+    _gemini: GeminiClient | None = field(init=False, default=None)
+    _openai: OpenAIResponsesClient | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self.settings.resolution_provider == "gemini" and self.settings.gemini_api_key:
+            self._gemini = GeminiClient(
+                api_key=self.settings.gemini_api_key,
+                cache_dir=self.settings.cache_dir / "gemini_low_confidence_org_resolution",
+            )
+        elif self.settings.openai_api_key:
+            self._openai = OpenAIResponsesClient(
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_base_url,
+                cache_dir=self.settings.cache_dir / "openai_low_confidence_org_resolution",
+                user_agent=self.settings.user_agent,
+            )
+
+    @property
+    def has_llm(self) -> bool:
+        return self._gemini is not None or self._openai is not None
+
+    def resolve(
+        self,
+        *,
+        label: str,
+        candidates: list[dict[str, Any]],
+        link_type: str,
+        endpoint: str,
+        counterpart_label: str,
+        description: str,
+        workbook_name: str,
+        sheet_name: str,
+        row_number: int,
+    ) -> dict[str, str] | None:
+        if not self.has_llm or not candidates:
+            return None
+        prompt = _build_organisation_resolution_prompt(
+            label=label,
+            candidates=candidates,
+            link_type=link_type,
+            endpoint=endpoint,
+            counterpart_label=counterpart_label,
+            description=description,
+            workbook_name=workbook_name,
+            sheet_name=sheet_name,
+            row_number=row_number,
+        )
+        try:
+            if self._gemini is not None:
+                response = self._gemini.generate(
+                    model=self.settings.gemini_resolution_model,
+                    prompt=prompt,
+                )
+                document = extract_json_document(extract_gemini_text(response))
+            else:
+                response = self._openai.create_response(
+                    model=self.settings.openai_resolution_model,
+                    input_text=prompt,
+                    metadata={"task": "low_confidence_org_resolution"},
+                )
+                document = extract_json_document(extract_output_text(response))
+        except Exception as exc:
+            log.warning("Low-confidence organisation LLM match failed for %r: %s", label, exc)
+            return None
+        if str(document.get("status") or "").strip().lower() != "match":
+            return None
+        candidate_id = str(document.get("candidate_id") or "").strip()
+        match = next((candidate for candidate in candidates if candidate["node_id"] == candidate_id), None)
+        if not match:
+            return None
+        return {
+            "node_id": match["node_id"],
+            "node_label": match["node_label"],
+            "match_type": "organisation_ai",
+        }
+
+
+def _build_organisation_resolution_prompt(
+    *,
+    label: str,
+    candidates: list[dict[str, Any]],
+    link_type: str,
+    endpoint: str,
+    counterpart_label: str,
+    description: str,
+    workbook_name: str,
+    sheet_name: str,
+    row_number: int,
+) -> str:
+    candidate_lines = []
+    for candidate in candidates:
+        candidate_lines.append(
+            "\n".join(
+                [
+                    f"- candidate_id: {candidate['node_id']}",
+                    f"  label: {candidate['node_label']}",
+                    f"  registry_type: {candidate.get('registry_type', '')}",
+                    f"  matched_key: {candidate.get('matched_key', '')}",
+                    f"  token_overlap: {candidate.get('overlap', 0)}",
+                    f"  subset_match: {str(candidate.get('subset', False)).lower()}",
+                    f"  similarity: {round(float(candidate.get('ratio') or 0.0), 3)}",
+                ]
+            )
+        )
+    return f"""\
+Choose whether the imported low-confidence organisation label matches one existing organisation node in the main graph.
+Return JSON only with this shape:
+{{
+  "status": "match" | "no_match",
+  "candidate_id": "",
+  "explanation": ""
+}}
+
+Imported organisation label: {label}
+Endpoint: {endpoint}
+Counterpart label: {counterpart_label}
+Link type: {link_type}
+Workbook: {workbook_name}
+Sheet: {sheet_name}
+Row: {row_number}
+Description: {summarize_mapping_text(description, max_chars=300)}
+
+Match only if the candidate is the same real-world organisation, not merely a thematically similar body.
+
+Candidates:
+{chr(10).join(candidate_lines)}
+"""
+
+
+def _resolve_organisation_match_with_ai(
+    *,
+    label: str,
+    link_type: str,
+    endpoint: str,
+    counterpart_label: str,
+    description: str,
+    organisation_entries: list[dict[str, Any]],
+    organisation_match_resolver: Any | None,
+    workbook_name: str,
+    sheet_name: str,
+    row_number: int,
+) -> dict[str, str] | None:
+    if organisation_match_resolver is None:
+        return None
+    candidates = _organisation_ai_candidates(label, organisation_entries)
+    if not candidates:
+        return None
+    return organisation_match_resolver.resolve(
+        label=label,
+        candidates=candidates,
+        link_type=link_type,
+        endpoint=endpoint,
+        counterpart_label=counterpart_label,
+        description=description,
+        workbook_name=workbook_name,
+        sheet_name=sheet_name,
+        row_number=row_number,
+    )
 
 
 def _promote_person_match_to_seed(
