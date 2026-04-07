@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 840" width="860" height="840"
+     font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F8FAFC"/>
+    </linearGradient>
+    <marker id="amber-arrow" viewBox="0 0 8 8" refX="7" refY="4"
+            markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#D97706"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="860" height="840" fill="url(#bg)"/>
+
+  <!-- Timeline vertical line -->
+  <line x1="70" y1="75" x2="70" y2="495" stroke="#E2E8F0" stroke-width="2"/>
+
+  <!-- Directional chevrons between steps -->
+  <polygon points="66,91 70,99 74,91"   fill="#CBD5E1"/>
+  <polygon points="66,167 70,175 74,167" fill="#CBD5E1"/>
+  <polygon points="66,243 70,251 74,243" fill="#CBD5E1"/>
+  <polygon points="66,319 70,327 74,319" fill="#CBD5E1"/>
+  <polygon points="66,395 70,403 74,395" fill="#CBD5E1"/>
+  <polygon points="66,471 70,479 74,471" fill="#CBD5E1"/>
+
+  <!-- ==================== Step 1: Seed Expansion (Data Gathering) ==================== -->
+  <rect x="96" y="30" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#93C5FD" stroke-width="1.5"/>
+  <circle cx="70" cy="57" r="18" fill="#2563EB"/>
+  <text x="70" y="62" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">1</text>
+  <text x="114" y="52" font-size="14" font-weight="600" fill="#1E293B">Seed Expansion</text>
+  <text x="114" y="70" font-size="12" fill="#64748B">Generate name variants; search charity &amp; company registries</text>
+
+  <!-- ==================== Step 2: Identity Resolution (AI / LLM) ==================== -->
+  <rect x="96" y="106" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#C4B5FD" stroke-width="1.5"/>
+  <circle cx="70" cy="133" r="18" fill="#7C3AED"/>
+  <text x="70" y="138" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">2</text>
+  <text x="114" y="128" font-size="14" font-weight="600" fill="#1E293B">Identity Resolution</text>
+  <text x="114" y="146" font-size="12" fill="#64748B">Score candidates; LLM decides ambiguous matches</text>
+
+  <!-- ==================== Step 3: Org Expansion (Data Gathering) ==================== -->
+  <rect x="96" y="182" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#93C5FD" stroke-width="1.5"/>
+  <circle cx="70" cy="209" r="18" fill="#2563EB"/>
+  <text x="70" y="214" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">3</text>
+  <text x="114" y="204" font-size="14" font-weight="600" fill="#1E293B">Org Expansion</text>
+  <text x="114" y="222" font-size="12" fill="#64748B">Follow links to related charities &amp; companies</text>
+
+  <!-- ==================== Step 4: People Expansion + Sanctions (Data Gathering) ==================== -->
+  <rect x="96" y="258" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#93C5FD" stroke-width="1.5"/>
+  <circle cx="70" cy="285" r="18" fill="#2563EB"/>
+  <text x="70" y="290" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">4</text>
+  <text x="114" y="280" font-size="14" font-weight="600" fill="#1E293B">People Expansion + Sanctions</text>
+  <text x="114" y="298" font-size="12" fill="#64748B">Pull officers &amp; trustees; screen against sanctions lists</text>
+
+  <!-- ==================== Step 5: PDF Enrichment (AI / LLM) ==================== -->
+  <rect x="96" y="334" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#C4B5FD" stroke-width="1.5"/>
+  <circle cx="70" cy="361" r="18" fill="#7C3AED"/>
+  <text x="70" y="366" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">5</text>
+  <text x="114" y="356" font-size="14" font-weight="600" fill="#1E293B">PDF Enrichment</text>
+  <text x="114" y="374" font-size="12" fill="#64748B">Download filings; extract names &amp; roles via Gemini</text>
+
+  <!-- ==================== Step 6: Graph Consolidation (Graph Build) ==================== -->
+  <rect x="96" y="410" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#FCD34D" stroke-width="1.5"/>
+  <circle cx="70" cy="437" r="18" fill="#D97706"/>
+  <text x="70" y="442" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">6</text>
+  <text x="114" y="432" font-size="14" font-weight="600" fill="#1E293B">Graph Consolidation</text>
+  <text x="114" y="450" font-size="12" fill="#64748B">Merge duplicate people &amp; addresses into one graph</text>
+
+  <!-- ==================== Step 7: Output (Graph Build) ==================== -->
+  <rect x="96" y="486" width="510" height="54" rx="10" fill="#FFFFFF" stroke="#FCD34D" stroke-width="1.5"/>
+  <circle cx="70" cy="513" r="18" fill="#D97706"/>
+  <text x="70" y="518" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">7</text>
+  <text x="114" y="508" font-size="14" font-weight="600" fill="#1E293B">Output</text>
+  <text x="114" y="526" font-size="12" fill="#64748B">Interactive network graph + JSON export</text>
+
+  <!-- ==================== Legend ==================== -->
+  <rect x="632" y="248" width="195" height="100" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+  <circle cx="650" cy="275" r="6" fill="#2563EB"/>
+  <text x="668" y="279" font-size="12.5" fill="#475569">Data Gathering</text>
+  <circle cx="650" cy="301" r="6" fill="#7C3AED"/>
+  <text x="668" y="305" font-size="12.5" fill="#475569">AI / LLM</text>
+  <circle cx="650" cy="327" r="6" fill="#D97706"/>
+  <text x="668" y="331" font-size="12.5" fill="#475569">Graph Build</text>
+
+  <!-- ==================== Low-Confidence Overlay ==================== -->
+  <rect x="40" y="580" width="790" height="245" rx="10"
+        fill="#FFFBEB" stroke="#D97706" stroke-width="1.5" stroke-dasharray="8 4"/>
+
+  <!-- Title line -->
+  <text x="60" y="606" font-size="14" font-weight="600" fill="#92400E">Low-Confidence Overlay</text>
+  <text x="250" y="606" font-size="12" fill="#B45309"> cleaned mapping databases rendered as a dashed review layer</text>
+
+  <!-- Bullet points -->
+  <circle cx="58" cy="633" r="3" fill="#D97706"/>
+  <text x="72" y="636" font-size="12" fill="#475569">Resolve matched people onto existing seeds when there is a unique seed/identity path.</text>
+
+  <circle cx="58" cy="655" r="3" fill="#D97706"/>
+  <text x="72" y="658" font-size="12" fill="#475569">Emit open letters as document nodes; keep represented organisations attached to the letter.</text>
+
+  <circle cx="58" cy="677" r="3" fill="#D97706"/>
+  <text x="72" y="680" font-size="12" fill="#475569">Viewer shape: seed &#x2192; open letter &#x2192; organisation, shown as yellow dashed inclusions.</text>
+
+  <circle cx="58" cy="699" r="3" fill="#D97706"/>
+  <text x="72" y="702" font-size="12" fill="#475569">Low-confidence data stays in a separate overlay JSON so reviewers can toggle it on and off.</text>
+
+  <!-- Chain diagram: Seed ’ Open Letter ’ Organisation -->
+  <rect x="240" y="730" width="80" height="26" rx="6"
+        fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="280" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Seed</text>
+
+  <line x1="320" y1="743" x2="360" y2="743" stroke="#D97706" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#amber-arrow)"/>
+
+  <rect x="360" y="730" width="110" height="26" rx="6"
+        fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="415" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Open Letter</text>
+
+  <line x1="470" y1="743" x2="510" y2="743" stroke="#D97706" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#amber-arrow)"/>
+
+  <rect x="510" y="730" width="120" height="26" rx="6"
+        fill="#FFFBEB" stroke="#D97706" stroke-width="1" stroke-dasharray="4 3"/>
+  <text x="570" y="747" text-anchor="middle" font-size="11" font-weight="500" fill="#92400E">Organisation</text>
+
+</svg>

@@ -6,51 +6,46 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 ## Architecture
 
-![Pipeline Architecture](docs/architecture.png)
+![Pipeline Architecture](docs/architecture.svg)
 
-### How it works
+### Pipeline steps
 
 1. **Seed Expansion** — Generate name variants and search UK charity/company registries for matches.
-
 2. **Identity Resolution** — Score candidates with rules; use an LLM to decide ambiguous same-person matches.
-
 3. **Org Expansion** — Follow confirmed matches to linked charities and companies; find more orgs at shared addresses.
-
 4. **People Expansion + Sanctions** — Pull officers and trustees for each organisation; rank by connection strength; screen against sanctions lists.
-
 5. **PDF Enrichment** — Download annual reports and filings; extract names and roles using Gemini.
-
 6. **Graph Consolidation** — Merge duplicate people and addresses across runs into one unified graph.
+7. **Output** — Serve an interactive network graph and export JSON for the web viewer.
 
-7. **Low-Confidence Overlay** — Fold cleaned mapping databases into a separate overlay, resolve matched people onto existing graph seeds, and include reviewer-visible `seed -> open letter -> represented organisation` chains.
+### Low-confidence overlay
 
-8. **Output** — Serve an interactive network graph and export JSON for the web viewer.
+The combined graph includes a dedicated low-confidence overlay for mapping-derived evidence such as open letters and signatory lists, folded in from cleaned mapping databases.
+
+- Matched people resolve onto the existing graph seed when there is a unique seed/identity match.
+- Open letters are emitted as low-confidence document nodes; represented organisations listed in those letters are emitted as linked organisation nodes.
+- In the viewer these appear as reviewer-visible **seed → open letter → organisation** chains, rendered as yellow dashed inclusions.
+- The overlay is exported separately from the consolidated graph so it can be toggled on and off in the Netlify viewer.
 
 ### Data sources
 
-- **Charity Commission for England & Wales** — charity search, trustee details, linked entities
-- **Companies House** — officer search, company profiles, appointments, date of birth
-- **Gemini / OpenAI** — entity resolution, address resolution, PDF extraction
-- **Serper** — web search for supplementary evidence
-- **Sanctions lists** — OFAC SDN, UK Sanctions List, France DG Tresor, and Germany Finanzsanktionsliste
+| Source | Usage |
+|---|---|
+| **Charity Commission for England & Wales** | Charity search, trustee details, linked entities |
+| **Companies House** | Officer search, company profiles, appointments, date of birth |
+| **Gemini / OpenAI** | Entity resolution, address resolution, PDF extraction |
+| **Serper** | Web search for supplementary evidence |
+| **Sanctions lists** | OFAC SDN, UK Sanctions List, France DG Tresor, Germany Finanzsanktionsliste |
 
 ### Storage & output
 
-- **SQLite** — entities, relationships, resolution decisions, and run metadata
-- **Flask web UI** — interactive network graph at `localhost:5000`
-- **JSON export** — graph payload for the Netlify viewer
-- **Graph rebuild** — cross-run merge of people and addresses into a single combined graph
-- **Low-confidence overlay** — separate JSON layer for dashed yellow evidence chains from cleaned mapping/signatory databases
-
-## Low-confidence inclusions
-
-The combined graph now has a dedicated low-confidence overlay for mapping-derived evidence such as open letters and signatory lists.
-
-- Matched people resolve onto the existing graph seed when there is a unique seed/identity match.
-- Open letters are emitted as low-confidence organisation-style document nodes.
-- Represented organisations listed in those letters are emitted as linked organisation nodes.
-- In the viewer, these inclusions are meant to read as `seed -> letter -> organisation`.
-- The overlay is exported separately from the consolidated graph so it can be toggled on and off in the Netlify viewer.
+| Component | Description |
+|---|---|
+| **SQLite** | Entities, relationships, resolution decisions, and run metadata |
+| **Flask web UI** | Interactive network graph at `localhost:5000` |
+| **JSON export** | Graph payload for the Netlify viewer |
+| **Graph rebuild** | Cross-run merge of people and addresses into a single combined graph |
+| **Low-confidence overlay** | Separate JSON layer for dashed yellow evidence chains from cleaned mapping/signatory databases |
 
 ## Quick start
 
