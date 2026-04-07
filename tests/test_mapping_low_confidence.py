@@ -459,11 +459,11 @@ class MappingLowConfidenceTests(unittest.TestCase):
             )
 
             self.assertTrue(any(
-                edge["source"] == "seed:14" or edge["target"] == "seed:14"
+                edge["source"] == "identity:14:person:365" or edge["target"] == "identity:14:person:365"
                 for edge in overlay["edges"]
             ))
             self.assertTrue(any(
-                edge["source"] == "seed:14" and edge["target"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
+                edge["source"] == "identity:14:person:365" and edge["target"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
                 for edge in overlay["edges"]
             ))
             self.assertTrue(any(
@@ -473,7 +473,7 @@ class MappingLowConfidenceTests(unittest.TestCase):
                 for edge in overlay["edges"]
             ))
             self.assertFalse(any(
-                edge["source"] == "seed:14" and edge["target"] == "mapping-node:islam_expo"
+                edge["source"] == "identity:14:person:365" and edge["target"] == "mapping-node:islam_expo"
                 for edge in overlay["edges"]
             ))
 

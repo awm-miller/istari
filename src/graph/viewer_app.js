@@ -284,7 +284,7 @@
     const mainNode = sourceMainNode || targetMainNode;
     const overlayNode = lowConfidenceNodeById.get(sourceMainNode ? edge.target : edge.source) || null;
     if (!mainNode || !overlayNode) return false;
-    return (mainNode.kind === "person" || mainNode.kind === "organisation" || mainNode.kind === "seed")
+    return (mainNode.kind === "person" || mainNode.kind === "organisation" || mainNode.kind === "seed" || mainNode.kind === "seed_alias" || mainNode.lane === 1)
       && overlayNode.kind === "organisation";
   }
 

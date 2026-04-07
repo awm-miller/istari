@@ -938,18 +938,6 @@ def build_low_confidence_overlay(
             from_match = _unique_match(person_index, _person_match_key(str(link_row["from_label"])))
         if not to_match and to_entity_type == "individual":
             to_match = _unique_match(person_index, _person_match_key(str(link_row["to_label"])))
-        if from_entity_type == "individual":
-            from_match = _promote_person_match_to_seed(
-                from_match,
-                identity_to_seed=identity_to_seed,
-                seed_label_by_id=seed_label_by_id,
-            )
-        if to_entity_type == "individual":
-            to_match = _promote_person_match_to_seed(
-                to_match,
-                identity_to_seed=identity_to_seed,
-                seed_label_by_id=seed_label_by_id,
-            )
         link_type = canonicalize_link_type(str(link_row["link_type"] or ""))
 
         if from_match:
