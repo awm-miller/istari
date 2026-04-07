@@ -1,6 +1,10 @@
 <div class="topbar">
   <h1>{title}</h1>
   <div class="stats" id="stats">{node_count} nodes, {edge_count} edges</div>
+  <div class="compare-summary hidden" id="compare-summary">
+    <span class="compare-summary-label" id="compare-summary-label"></span>
+    <button class="compare-summary-clear" id="compare-clear" type="button">Clear added trees</button>
+  </div>
   <div class="search-box">
     <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
   </div>
@@ -43,6 +47,11 @@
   </div>
 </aside>
 <div id="graph"></div>
+<div class="canvas-search-popover hidden" id="canvas-search-popover" aria-live="polite">
+  <div class="canvas-search-title" id="canvas-search-title">Add tree</div>
+  <input id="canvas-search-input" type="search" placeholder="Search for a node to add..." autocomplete="off" />
+  <div class="canvas-search-results" id="canvas-search-results"></div>
+</div>
 <div class="tooltip" id="tooltip"></div>
 <div class="context-menu" id="context-menu"></div>
 <div class="modal-backdrop modal-left" id="details-modal" aria-hidden="true">

@@ -494,7 +494,11 @@
 
     function handleContextMenu(event) {
       const hit = pickHit(event.clientX, event.clientY);
-      if (!hit) return;
+      if (!hit) {
+        event.preventDefault();
+        options.onBackgroundContextMenu?.(event);
+        return;
+      }
       if (hit.zone === "edge") {
         options.onEdgeContextMenu?.(hit.edge, event);
         return;

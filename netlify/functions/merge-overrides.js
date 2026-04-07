@@ -1,4 +1,6 @@
-const { getStore } = require("@netlify/blobs");
+const fs = require("fs");
+const path = require("path");
+const { connectLambda, getStore } = require("@netlify/blobs");
 
 const STORE_NAME = "istari-manual-merges";
 const STORE_KEY = "overrides";
@@ -37,8 +39,41 @@ function json(statusCode, body) {
   };
 }
 
+function readSiteIdFromState() {
+  try {
+    const statePath = path.join(process.cwd(), ".netlify", "state.json");
+    const raw = fs.readFileSync(statePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return String(parsed?.siteId || "").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function fallbackStore() {
+  const siteID = String(process.env.NETLIFY_SITE_ID || readSiteIdFromState() || "").trim();
+  const token = String(process.env.NETLIFY_AUTH_TOKEN || process.env.NETLIFY_API_TOKEN || "").trim();
+  if (!siteID || !token) {
+    throw new Error("Merge overrides store is not configured.");
+  }
+  return getStore({
+    name: STORE_NAME,
+    siteID,
+    token,
+  });
+}
+
+function createStore(event) {
+  try {
+    connectLambda(event);
+    return getStore(STORE_NAME);
+  } catch (_error) {
+    return fallbackStore();
+  }
+}
+
 exports.handler = async function handler(event) {
-  const store = getStore(STORE_NAME);
+  const store = createStore(event);
   const current = normalizeOverrides((await store.get(STORE_KEY, { type: "json" })) || {});
 
   if (event.httpMethod === "GET") {

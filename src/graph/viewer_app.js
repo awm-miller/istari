@@ -19,6 +19,13 @@
   const container = document.getElementById("graph");
   const tooltip = document.getElementById("tooltip");
   const searchInput = document.getElementById("search");
+  const compareSummaryEl = document.getElementById("compare-summary");
+  const compareSummaryLabelEl = document.getElementById("compare-summary-label");
+  const compareClearButton = document.getElementById("compare-clear");
+  const canvasSearchPopoverEl = document.getElementById("canvas-search-popover");
+  const canvasSearchTitleEl = document.getElementById("canvas-search-title");
+  const canvasSearchInput = document.getElementById("canvas-search-input");
+  const canvasSearchResultsEl = document.getElementById("canvas-search-results");
   const statsEl = document.getElementById("stats");
   const legendEl = document.getElementById("legend");
   const compactLegendEl = document.getElementById("compact-legend");
@@ -74,10 +81,12 @@
   let addressCoordinatesLoadingPromise = null;
   let mergeOverrides = { address: [], name: [] };
   let mergeOverridesLoadingPromise = null;
+  let canvasSearchAnchor = { x: 0, y: 0 };
 
   const viewerState = {
     searchQuery: "",
     focusedNodeIds: new Set(),
+    extraRootIds: [],
     hiddenTypes: new Set(),
     showLowConfidence: false,
     showIndirectOnly: false,
@@ -95,6 +104,56 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#39;");
+  }
+
+  function isComparableNode(node) {
+    return !!node && node.kind !== "seed";
+  }
+
+  function setSingleFocus(nodeId = "") {
+    viewerState.focusedNodeIds = nodeId ? new Set([nodeId]) : new Set();
+  }
+
+  function currentFocusedNode() {
+    const focusId = [...viewerState.focusedNodeIds][0] || "";
+    return nodeById.get(focusId) || null;
+  }
+
+  function clearExtraRoots() {
+    viewerState.extraRootIds = [];
+  }
+
+  function renderExtraTreeSummary() {
+    const extraNodes = viewerState.extraRootIds.map((id) => nodeById.get(id)).filter(isComparableNode);
+    compareSummaryEl.classList.toggle("hidden", !extraNodes.length);
+    compareClearButton.disabled = !extraNodes.length;
+    if (!extraNodes.length) {
+      compareSummaryLabelEl.textContent = "";
+      return;
+    }
+    compareSummaryLabelEl.textContent = `Added trees: ${extraNodes.map((node) => node.label || node.id).join(", ")}`;
+  }
+
+  function sanitizeSelectionState() {
+    setSingleFocus(
+      [...viewerState.focusedNodeIds].find((id) => isComparableNode(nodeById.get(id))) || "",
+    );
+    viewerState.extraRootIds = viewerState.extraRootIds.filter((id, index, ids) => (
+      ids.indexOf(id) === index && isComparableNode(nodeById.get(id))
+    ));
+  }
+
+  function addExtraRoot(nodeId) {
+    const node = nodeById.get(nodeId);
+    if (!isComparableNode(node)) return false;
+    if (viewerState.extraRootIds.includes(nodeId)) return false;
+    if (viewerState.focusedNodeIds.has(nodeId) && !viewerState.searchQuery) return false;
+    viewerState.extraRootIds = [...viewerState.extraRootIds, nodeId];
+    return true;
+  }
+
+  function removeExtraRoot(nodeId) {
+    viewerState.extraRootIds = viewerState.extraRootIds.filter((id) => id !== nodeId);
   }
 
   function normalizeNodeKind(node) {
@@ -118,6 +177,75 @@
     if (node.kind === "organisation" && String(node.registry_type || "").toLowerCase() === "charity") return "charity";
     if (node.kind === "organisation" && String(node.registry_type || "").toLowerCase() === "company") return "company";
     return "organisation";
+  }
+
+  function canvasSearchCandidates(query) {
+    const trimmed = String(query || "").trim().toLowerCase();
+    if (!trimmed) return [];
+    return allNodes
+      .filter((node) => (
+        isComparableNode(node)
+        && !viewerState.extraRootIds.includes(node.id)
+        && nodeMatchesQuery(node, trimmed)
+      ))
+      .sort((left, right) => {
+        const leftStarts = String(left.label || "").toLowerCase().startsWith(trimmed) ? 1 : 0;
+        const rightStarts = String(right.label || "").toLowerCase().startsWith(trimmed) ? 1 : 0;
+        if (leftStarts !== rightStarts) return rightStarts - leftStarts;
+        const scoreDiff = nodeRankScore(right) - nodeRankScore(left);
+        if (scoreDiff !== 0) return scoreDiff;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      })
+      .slice(0, 8);
+  }
+
+  function positionCanvasSearchPopover(clientX, clientY) {
+    const width = Math.min(360, Math.max(280, window.innerWidth - 24));
+    const left = Math.max(12, Math.min(clientX, window.innerWidth - width - 12));
+    const top = Math.max(72, Math.min(clientY, window.innerHeight - 340));
+    canvasSearchPopoverEl.style.left = `${left}px`;
+    canvasSearchPopoverEl.style.top = `${top}px`;
+  }
+
+  function renderCanvasSearchResults() {
+    const results = canvasSearchCandidates(canvasSearchInput.value);
+    canvasSearchResultsEl.innerHTML = results.length
+      ? results.map((node) => `
+        <button type="button" class="canvas-search-result" data-node-id="${escapeHtml(node.id)}">
+          <strong>${escapeHtml(node.label || node.id)}</strong>
+          <span>${escapeHtml(nodeTypeLabel(node))}</span>
+        </button>
+      `).join("")
+      : '<div class="canvas-search-empty">Type a name, address, or alias to add another tree.</div>';
+  }
+
+  function hideCanvasSearchPopover() {
+    canvasSearchPopoverEl.classList.add("hidden");
+    canvasSearchInput.value = "";
+    canvasSearchResultsEl.innerHTML = "";
+  }
+
+  function showCanvasSearchPopover(clientX, clientY) {
+    canvasSearchAnchor = { x: clientX, y: clientY };
+    canvasSearchTitleEl.textContent = "Add tree";
+    canvasSearchPopoverEl.classList.remove("hidden");
+    positionCanvasSearchPopover(clientX, clientY);
+    canvasSearchInput.value = "";
+    renderCanvasSearchResults();
+    setTimeout(() => canvasSearchInput.focus(), 0);
+  }
+
+  function addTreeFromCanvasSearch(nodeId) {
+    hideCanvasSearchPopover();
+    const hasBaseTree = !!viewerState.searchQuery || viewerState.focusedNodeIds.size > 0 || viewerState.showIndirectOnly || viewerState.showSanctionedOnly;
+    if (!hasBaseTree && !viewerState.extraRootIds.length) {
+      setSingleFocus(nodeId);
+      applyViewerState();
+      return;
+    }
+    if (addExtraRoot(nodeId)) {
+      applyViewerState();
+    }
   }
 
   function isFilterableType(typeKey) {
@@ -626,12 +754,7 @@
     return { rootIds: sanctionedIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
   }
 
-  function projectVisibleGraph() {
-    const matchedIds = getMatchedNodeIds(viewerState.searchQuery);
-    const rootIds = matchedIds.size ? matchedIds : new Set(viewerState.focusedNodeIds);
-    if (matchedIds.size) return buildSearchProjection(matchedIds);
-    if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
-    if (viewerState.showSanctionedOnly) return buildSanctionedProjection();
+  function buildFocusedProjection(rootIds) {
     if (!rootIds.size) {
       const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id))), new Set());
       const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
@@ -641,6 +764,15 @@
     const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(subgraph.reachableIds)), rootIds);
     const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
     return { rootIds, visibleIds, edgeIds };
+  }
+
+  function projectVisibleGraph() {
+    const matchedIds = getMatchedNodeIds(viewerState.searchQuery);
+    const rootIds = matchedIds.size ? matchedIds : new Set(viewerState.focusedNodeIds);
+    if (matchedIds.size) return buildSearchProjection(matchedIds);
+    if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
+    if (viewerState.showSanctionedOnly) return buildSanctionedProjection();
+    return buildFocusedProjection(rootIds);
   }
 
   function textWidth(text, bold = false) {
@@ -670,14 +802,23 @@
     return badgeWidth(node) + labelWidth + 28 + focusButtonWidth(node);
   }
 
-  function avgNeighborX(node, visibleEdgeSet) {
+  function buildEdgeAdjacency(nodes, edges) {
+    const edgeAdjacency = new Map(nodes.map((node) => [node.id, []]));
+    edges.forEach((edge) => {
+      if (!edgeAdjacency.has(edge.source) || !edgeAdjacency.has(edge.target)) return;
+      edgeAdjacency.get(edge.source).push(edge);
+      edgeAdjacency.get(edge.target).push(edge);
+    });
+    return edgeAdjacency;
+  }
+
+  function avgNeighborX(node, edgeAdjacency, nodeLookup, fallbackCenter = (container.clientWidth || window.innerWidth) / 2) {
     const xs = [];
-    (edgesByNodeId.get(node.id) || []).forEach((edge) => {
-      if (!visibleEdgeSet.has(edge)) return;
-      const other = nodeById.get(edge.source === node.id ? edge.target : edge.source);
+    (edgeAdjacency.get(node.id) || []).forEach((edge) => {
+      const other = nodeLookup.get(edge.source === node.id ? edge.target : edge.source);
       if (other && other._visible && other.x != null && other.lane !== node.lane) xs.push(other.x);
     });
-    if (!xs.length) return (container.clientWidth || window.innerWidth) / 2;
+    if (!xs.length) return fallbackCenter;
     return xs.reduce((sum, value) => sum + value, 0) / xs.length;
   }
 
@@ -687,24 +828,25 @@
       + Number(node.role_count || 0);
   }
 
-  function layoutVisibleNodes(rootIds) {
-    const width = container.clientWidth || window.innerWidth;
-    const visibleEdgeSet = new Set(visibleEdges);
-    let curY = 72;
+  function layoutNodesInBounds(nodes, edges, rootIds, bounds) {
+    const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
+    const edgeAdjacency = buildEdgeAdjacency(nodes, edges);
+    const fallbackCenter = bounds.left + ((bounds.right - bounds.left) / 2);
+    let curY = bounds.top + 72;
     [1, 2, 3, 4].forEach((lane) => {
-      const laneNodes = visibleNodes.filter((node) => Number(node.lane || 0) === lane);
+      const laneNodes = nodes.filter((node) => Number(node.lane || 0) === lane);
       laneNodes.sort((left, right) => {
         const connectionDiff = nodeConnectionOrderScore(right) - nodeConnectionOrderScore(left);
         if (connectionDiff !== 0) return connectionDiff;
-        const neighborDiff = avgNeighborX(left, visibleEdgeSet) - avgNeighborX(right, visibleEdgeSet);
+        const neighborDiff = avgNeighborX(left, edgeAdjacency, nodeLookup, fallbackCenter) - avgNeighborX(right, edgeAdjacency, nodeLookup, fallbackCenter);
         if (neighborDiff !== 0) return neighborDiff;
         return String(left.label || "").localeCompare(String(right.label || ""));
       });
       const spacing = 16;
       const rowGap = 18;
       const pad = 18;
-      const usableMin = pad;
-      const usableMax = width - pad;
+      const usableMin = bounds.left + pad;
+      const usableMax = bounds.right - pad;
       const maxRowW = Math.max(120, usableMax - usableMin);
       const rows = [];
       let currentRow = [];
@@ -724,7 +866,8 @@
       if (currentRow.length) rows.push(currentRow);
       const rowStep = rows.length ? Math.max(...rows.flat().map((node) => pillHeight(node))) + rowGap : 0;
       rows.forEach((row, rowIndex) => {
-        let cx = usableMin;
+        const rowW = row.reduce((sum, node) => sum + pillWidth(node), 0) + (spacing * Math.max(0, row.length - 1));
+        let cx = usableMin + Math.max(0, (maxRowW - rowW) / 2);
         const rowY = curY + (rowIndex * rowStep);
         row.forEach((node) => {
           const widthForNode = pillWidth(node);
@@ -741,19 +884,81 @@
       const laneHeight = rows.length * rowStep;
       curY += Math.max(laneHeight, 30) + 50;
     });
+    return curY;
   }
 
-  function ensureSceneMetadata() {
-    visibleNodes.forEach((node) => {
+  function layoutVisibleNodes(rootIds) {
+    const width = container.clientWidth || window.innerWidth;
+    layoutNodesInBounds(visibleNodes, visibleEdges, rootIds, { left: 0, right: width, top: 0 });
+  }
+
+  function ensureSceneMetadata(nodes = visibleNodes, edges = visibleEdges) {
+    const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
+    nodes.forEach((node) => {
       node._colorValue = nodeColorValue(node);
       node._rankScore = nodeRankScore(node);
       node._fontSize = fontSize(node);
     });
-    visibleEdges.forEach((edge) => {
-      edge._sourceNode = nodeById.get(edge.source);
-      edge._targetNode = nodeById.get(edge.target);
+    edges.forEach((edge) => {
+      edge._sourceNode = nodeLookup.get(edge.source) || nodeById.get(edge.source);
+      edge._targetNode = nodeLookup.get(edge.target) || nodeById.get(edge.target);
       edge._colorValue = edgeColorValue(edge);
     });
+  }
+
+  function buildSceneForProjection(projection, bounds) {
+    const rootIds = new Set(projection.rootIds || []);
+    const sceneNodes = allNodes
+      .filter((node) => projection.visibleIds.has(node.id))
+      .map((node) => ({ ...node, _visible: true }));
+    const sceneEdges = projection.edgeIds
+      .filter((edge) => projection.visibleIds.has(edge.source) && projection.visibleIds.has(edge.target))
+      .map((edge) => ({ ...edge }));
+    layoutNodesInBounds(sceneNodes, sceneEdges, rootIds, bounds);
+    ensureSceneMetadata(sceneNodes, sceneEdges);
+    return { nodes: sceneNodes, edges: sceneEdges, rootIds: [...rootIds] };
+  }
+
+  function buildCombinedScene(baseProjection) {
+    const width = container.clientWidth || window.innerWidth;
+    const scenes = [{ projection: baseProjection }];
+    viewerState.extraRootIds.forEach((nodeId) => {
+      scenes.push({ projection: buildSearchProjection(new Set([nodeId])) });
+    });
+    if (scenes.length === 1) {
+      const fullScene = buildSceneForProjection(baseProjection, { left: 0, right: width, top: 0 });
+      return {
+        nodes: fullScene.nodes,
+        edges: fullScene.edges,
+        rootIds: fullScene.rootIds,
+      };
+    }
+    const columns = scenes.length === 2 ? 2 : Math.min(scenes.length, 3);
+    const outerPad = 18;
+    const gutter = 18;
+    const usableWidth = Math.max(240, width - (outerPad * 2) - (gutter * Math.max(0, columns - 1)));
+    const columnWidth = usableWidth / columns;
+    let rowTop = 0;
+    const combinedNodes = [];
+    const combinedEdges = [];
+    const combinedRootIds = [];
+    for (let start = 0; start < scenes.length; start += columns) {
+      const rowScenes = scenes.slice(start, start + columns);
+      let rowBottom = rowTop;
+      rowScenes.forEach((entry, offset) => {
+        const left = outerPad + (offset * (columnWidth + gutter));
+        const scene = buildSceneForProjection(entry.projection, { left, right: left + columnWidth, top: rowTop });
+        combinedNodes.push(...scene.nodes);
+        combinedEdges.push(...scene.edges);
+        combinedRootIds.push(...scene.rootIds);
+        rowBottom = Math.max(
+          rowBottom,
+          ...scene.nodes.map((node) => Number(node.y || rowTop) + (Number(node._pillHeight || 0) / 2)),
+        );
+      });
+      rowTop = rowBottom + 120;
+    }
+    return { nodes: combinedNodes, edges: combinedEdges, rootIds: combinedRootIds };
   }
 
   function showTooltip(event, lines) {
@@ -843,6 +1048,7 @@
     const nextOpen = forceOpen == null ? !sidebarEl.classList.contains("open") : !!forceOpen;
     sidebarEl.classList.toggle("open", nextOpen);
     toggleSidebarButton.classList.toggle("open", nextOpen);
+    renderExtraTreeSummary();
   }
 
   function renderScorePanel() {
@@ -1343,6 +1549,32 @@
     contextMenuEl.style.top = `${Math.min(event.clientY, window.innerHeight - 220)}px`;
   }
 
+  function openCanvasContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    hideTooltip();
+    hideCanvasSearchPopover();
+    const actions = [
+      { label: "Add tree...", type: "canvas_add_prompt" },
+      ...viewerState.extraRootIds.map((nodeId) => {
+        const node = nodeById.get(nodeId);
+        return node ? { label: `Remove ${node.label || node.id}`, type: "canvas_remove_tree", nodeId } : null;
+      }).filter(Boolean),
+      viewerState.extraRootIds.length ? { label: "Clear added trees", type: "canvas_clear_trees" } : null,
+    ].filter(Boolean);
+    contextMenuEl.innerHTML = `
+      <div class="context-menu-title">Canvas</div>
+      <div class="context-menu-actions">
+        ${actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join("")}
+      </div>
+    `;
+    contextMenuEl._actions = actions;
+    contextMenuEl.style.display = "block";
+    contextMenuEl.style.left = `${Math.min(event.clientX, window.innerWidth - 280)}px`;
+    contextMenuEl.style.top = `${Math.min(event.clientY, window.innerHeight - 260)}px`;
+    canvasSearchAnchor = { x: event.clientX, y: event.clientY };
+  }
+
   function evidenceActionsForEdge(edge) {
     const evidenceItems = [];
     const seen = new Set();
@@ -1569,19 +1801,21 @@
   async function applyViewerState() {
     syncHiddenTypeState();
     rebuildActiveGraph();
+    sanitizeSelectionState();
     const projection = projectVisibleGraph();
+    const scene = buildCombinedScene(projection);
+    const visibleIds = new Set(scene.nodes.map((node) => node.id));
     allNodes.forEach((node) => {
-      node._visible = projection.visibleIds.has(node.id);
+      node._visible = visibleIds.has(node.id);
     });
-    visibleNodes = allNodes.filter((node) => node._visible);
-    visibleEdges = projection.edgeIds;
-    layoutVisibleNodes(projection.rootIds);
-    ensureSceneMetadata();
+    visibleNodes = scene.nodes;
+    visibleEdges = scene.edges;
     renderer.setGraph({
       nodes: visibleNodes,
       edges: visibleEdges,
-      rootIds: [...projection.rootIds],
+      rootIds: scene.rootIds,
     });
+    renderExtraTreeSummary();
     renderer.fitToNodes(visibleNodes);
     renderScorePanel();
 
@@ -1589,7 +1823,8 @@
       openMapView().catch(() => {});
     }
 
-    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges`;
+    const extraSuffix = viewerState.extraRootIds.length ? ` + ${viewerState.extraRootIds.length} added tree${viewerState.extraRootIds.length === 1 ? "" : "s"}` : "";
+    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges${extraSuffix}`;
   }
 
   function bindUiEvents() {
@@ -1602,6 +1837,29 @@
       viewerState.searchQuery = searchInput.value.trim();
       if (!viewerState.searchQuery) viewerState.focusedNodeIds.clear();
       applyViewerState();
+    });
+    compareClearButton.addEventListener("click", () => {
+      clearExtraRoots();
+      applyViewerState();
+    });
+    canvasSearchInput.addEventListener("input", () => {
+      renderCanvasSearchResults();
+    });
+    canvasSearchResultsEl.addEventListener("click", (event) => {
+      const button = event.target.closest(".canvas-search-result");
+      if (!button) return;
+      addTreeFromCanvasSearch(String(button.dataset.nodeId || ""));
+    });
+    canvasSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        hideCanvasSearchPopover();
+        closeContextMenu();
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const firstResult = canvasSearchCandidates(canvasSearchInput.value)[0];
+        if (firstResult) addTreeFromCanvasSearch(firstResult.id);
+      }
     });
     [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showOrganisationsInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput]
       .forEach((input) => input.addEventListener("change", applyViewerState));
@@ -1650,6 +1908,15 @@
           console.error(error);
           window.alert("Persisted merge failed.");
         }
+      } else if (action.type === "canvas_add_prompt") {
+        closeContextMenu();
+        showCanvasSearchPopover(canvasSearchAnchor.x, canvasSearchAnchor.y);
+      } else if (action.type === "canvas_remove_tree") {
+        removeExtraRoot(action.nodeId);
+        applyViewerState();
+      } else if (action.type === "canvas_clear_trees") {
+        clearExtraRoots();
+        applyViewerState();
       } else if (action.type === "focus_clear") {
         viewerState.focusedNodeIds.clear();
         applyViewerState();
@@ -1665,11 +1932,24 @@
         viewerState.analysisNodeIds = [];
       }
     });
-    document.addEventListener("click", closeContextMenu);
-    window.addEventListener("blur", closeContextMenu);
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("#context-menu")) return;
+      if (event.target.closest("#canvas-search-popover")) return;
+      closeContextMenu();
+      hideCanvasSearchPopover();
+    });
+    window.addEventListener("blur", () => {
+      closeContextMenu();
+      hideCanvasSearchPopover();
+    });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && detailsModalEl.classList.contains("open")) {
         closeDetailsModal();
+        return;
+      }
+      if (event.key === "Escape") {
+        closeContextMenu();
+        hideCanvasSearchPopover();
       }
     });
   }
@@ -1699,9 +1979,12 @@
       onEdgeContextMenu(edge, event) {
         openEdgeContextMenu(edge, event);
       },
+      onBackgroundContextMenu(event) {
+        openCanvasContextMenu(event);
+      },
       onClick(node) {
         if (!node) return;
-        viewerState.focusedNodeIds = new Set([node.id]);
+        setSingleFocus(node.id);
         viewerState.searchQuery = "";
         searchInput.value = "";
         applyViewerState();
