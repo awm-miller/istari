@@ -28,6 +28,18 @@ _OTHER_ORGANISATION_HINTS = (
     "declaration",
     "appeal",
 )
+_ORGANISATION_SUFFIX_TOKENS = {
+    "ltd",
+    "limited",
+    "plc",
+    "llp",
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "company",
+    "co",
+}
 
 
 def _ensure_text_column(
@@ -870,6 +882,17 @@ def build_low_confidence_overlay(
                     node_label=label,
                     match_type="exact_label",
                 )
+                if str(node.get("kind") or "") == "organisation":
+                    for variant_key in _organisation_match_keys(label):
+                        if variant_key == normalize_mapping_label(label):
+                            continue
+                        _add_match_candidate(
+                            node_index,
+                            variant_key,
+                            node_id=node_id,
+                            node_label=label,
+                            match_type="organisation_variant",
+                        )
             for alias_text in aliases:
                 _add_match_candidate(
                     node_index,
@@ -878,6 +901,17 @@ def build_low_confidence_overlay(
                     node_label=label or alias_text,
                     match_type="exact_alias",
                 )
+                if str(node.get("kind") or "") == "organisation":
+                    for variant_key in _organisation_match_keys(alias_text):
+                        if variant_key == normalize_mapping_label(alias_text):
+                            continue
+                        _add_match_candidate(
+                            node_index,
+                            variant_key,
+                            node_id=node_id,
+                            node_label=label or alias_text,
+                            match_type="organisation_variant",
+                        )
         person_like = bool(node.get("lane") in {1, 4} or str(node.get("kind") or "") in {"person", "seed_alias"})
         if person_like:
             for text in [label, *aliases]:
@@ -1263,6 +1297,19 @@ def _person_variant_texts(value: str) -> list[str]:
     except Exception:
         pass
     return list(dict.fromkeys(item for item in variants if str(item or "").strip()))
+
+
+def _organisation_match_keys(value: str) -> list[str]:
+    normalized = normalize_mapping_label(value)
+    if not normalized:
+        return []
+    keys = [normalized]
+    tokens = normalized.split()
+    while tokens and tokens[-1] in _ORGANISATION_SUFFIX_TOKENS:
+        tokens = tokens[:-1]
+        if tokens:
+            keys.append(" ".join(tokens))
+    return list(dict.fromkeys(key for key in keys if key))
 
 
 def _promote_person_match_to_seed(

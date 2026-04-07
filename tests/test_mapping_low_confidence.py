@@ -368,6 +368,81 @@ class MappingLowConfidenceTests(unittest.TestCase):
             self.assertEqual(document_node["mapping_entity_type"], "other organisation")
             self.assertEqual(len(overlay["edges"]), 2)
 
+    def test_build_low_confidence_overlay_matches_organisation_suffix_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            database_path = root / "mapping.sqlite"
+            store = MappingStore(database_path)
+            store.init_db()
+            import_id = store.create_import(root)
+            store.insert_entity(
+                import_id=import_id,
+                workbook_name="sample.xlsx",
+                sheet_name="Entities",
+                row_number=1,
+                label="Islam Expo",
+                entity_type="organisation",
+                description="Organisation from signatory sheet",
+                raw_row=["Islam Expo", "organisation"],
+            )
+            link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name="sample.xlsx",
+                sheet_name="Connections",
+                row_number=1,
+                from_label="Person One",
+                to_label="Islam Expo",
+                link_type="affiliate",
+                description="Matched affiliate row",
+                raw_row=["Person One", "Islam Expo", "affiliate"],
+            )
+            store.insert_evidence(
+                mapping_link_id=link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/source",
+                snippet="Matched affiliate row",
+                document_summary="Affiliate row with shortened organisation name.",
+            )
+
+            overlay = build_low_confidence_overlay(
+                main_data={
+                    "nodes": [
+                        {
+                            "id": "person:1",
+                            "label": "Person One",
+                            "kind": "person",
+                            "lane": 4,
+                            "aliases": [],
+                        },
+                        {
+                            "id": "org:145",
+                            "label": "ISLAM EXPO LTD",
+                            "kind": "organisation",
+                            "lane": 2,
+                            "registry_type": "company",
+                            "aliases": [],
+                        },
+                    ],
+                    "edges": [],
+                },
+                database_path=database_path,
+                run_key="run-1",
+            )
+
+            self.assertEqual(overlay["nodes"], [])
+            self.assertEqual(len(overlay["edges"]), 1)
+            self.assertEqual(overlay["edges"][0]["source"], "person:1")
+            self.assertEqual(overlay["edges"][0]["target"], "org:145")
+
+            matches = store.list_matches("run-1")
+            self.assertEqual(len(matches), 2)
+            self.assertEqual({match["endpoint"] for match in matches}, {"from", "to"})
+            matched_to = next(match for match in matches if match["endpoint"] == "to")
+            self.assertEqual(matched_to["matched_node_id"], "org:145")
+            self.assertEqual(matched_to["match_type"], "organisation_variant")
+
     def test_build_low_confidence_overlay_resolves_person_via_seed_name_variants(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
