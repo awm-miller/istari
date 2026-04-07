@@ -286,8 +286,9 @@ def step4_ofac_screening(
     repository: Repository,
     settings: Settings,
     ranking: list[dict[str, Any]],
+    enable_remote_sources: bool = True,
 ) -> dict[str, Any]:
-    screener = OFACScreener(enable_remote_sources=True)
+    screener = OFACScreener(enable_remote_sources=enable_remote_sources)
     data_dir = settings.project_root / "data"
     try:
         screener.ensure_local_sources(data_dir)

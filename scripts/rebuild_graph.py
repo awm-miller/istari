@@ -1,4 +1,5 @@
 """Rebuild graph HTML from graph modules, then copy to netlify."""
+from dataclasses import asdict
 import json
 import pathlib
 import sys
@@ -13,6 +14,8 @@ from src.graph.address_coordinates import (
 from src.graph.build import consolidate_multi_run
 from src.graph.render import render_html
 from src.mapping_low_confidence import build_low_confidence_overlay, default_mapping_db_path
+from src.ranking import rank_people
+from src.services.mvp_pipeline import step4_ofac_screening
 from src.storage.repository import Repository
 
 settings = load_settings()
@@ -22,9 +25,40 @@ repository = Repository(
 )
 repository.init_db()
 
+
+def refresh_sanctions_for_runs(run_ids: list[int], *, ranking_limit: int = 5000) -> None:
+    print(f"Refreshing sanctions for runs {run_ids}...", flush=True)
+    total_hits = 0
+    total_screened = 0
+    for run_id in run_ids:
+        ranking = [asdict(entry) for entry in rank_people(repository, limit=ranking_limit, run_id=run_id)]
+        if not ranking:
+            continue
+        result = step4_ofac_screening(
+            repository=repository,
+            settings=settings,
+            ranking=ranking,
+            enable_remote_sources=False,
+        )
+        hit_count = len(result.get("sanctions_hits") or {})
+        screened_count = int(result.get("screened_count") or 0)
+        total_hits += hit_count
+        total_screened += screened_count
+        print(
+            f"  run {run_id}: screened {screened_count} people, {hit_count} sanction hit(s)",
+            flush=True,
+        )
+    print(
+        f"Sanctions refresh complete: screened {total_screened} people across {len(run_ids)} runs, "
+        f"found {total_hits} hit(s)",
+        flush=True,
+    )
+
 run_ids = repository.get_latest_unique_run_ids()
 if not run_ids:
     raise SystemExit("No runs found.")
+
+refresh_sanctions_for_runs(run_ids)
 
 print(f"Consolidating runs {run_ids}...", flush=True)
 data = consolidate_multi_run(run_ids)
