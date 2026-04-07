@@ -108,6 +108,21 @@
       .replaceAll("'", "&#39;");
   }
 
+  function summarizeLabelList(values, maxItems = 3) {
+    const labels = [...new Set((Array.isArray(values) ? values : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .map((value) => value.toLowerCase()))]
+      .map((lowered) => (Array.isArray(values) ? values : []).find((value) => String(value || "").trim().toLowerCase() === lowered))
+      .filter(Boolean);
+    if (!labels.length) return "";
+    if (labels.length === 1) return labels[0];
+    if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+    const visible = labels.slice(0, maxItems);
+    if (labels.length > maxItems) return `${visible.slice(0, -1).join(", ")}, ${visible[visible.length - 1]}, and ${labels.length - maxItems} others`;
+    return `${visible.slice(0, -1).join(", ")}, and ${visible[visible.length - 1]}`;
+  }
+
   function isComparableNode(node) {
     return !!node && node.kind !== "seed";
   }
@@ -452,7 +467,9 @@
       edgesByNodeId.get(edge.target).push(edge);
     });
     directEdgePairs = new Set(
-      allEdges.map((edge) => [edge.source, edge.target].sort().join("||")),
+      allEdges
+        .filter((edge) => !edge.is_low_confidence && edge.kind !== "hidden_connection")
+        .map((edge) => [edge.source, edge.target].sort().join("||")),
     );
     orgLinkIds = new Map();
     allEdges.filter((edge) => edge.kind === "org_link").forEach((edge) => {
@@ -623,6 +640,10 @@
     return `${source?.label || edge.source} is linked to ${target?.label || edge.target}`;
   }
 
+  function isBridgeTraversableEdge(edge) {
+    return !!edge && edge.kind !== "hidden_connection" && !edge.is_low_confidence;
+  }
+
   function hiddenConnectionTooltipLines(sourceId, targetId, hiddenNodeIds, pathEdges = []) {
     const source = nodeById.get(sourceId);
     const target = nodeById.get(targetId);
@@ -643,7 +664,7 @@
 
   function edgeBetweenNodes(leftId, rightId) {
     return (edgesByNodeId.get(leftId) || []).find((edge) => (
-      edge.kind !== "hidden_connection"
+      isBridgeTraversableEdge(edge)
       && ((edge.source === leftId && edge.target === rightId) || (edge.source === rightId && edge.target === leftId))
     )) || null;
   }
@@ -665,6 +686,7 @@
     const hiddenQueue = [];
     const visited = new Set([startId]);
     (edgesByNodeId.get(startId) || []).forEach((edge) => {
+      if (!isBridgeTraversableEdge(edge)) return;
       const nextId = edge.source === startId ? edge.target : edge.source;
       if (visited.has(nextId)) return;
       visited.add(nextId);
@@ -689,6 +711,7 @@
     while (hiddenQueue.length) {
       const current = hiddenQueue.shift();
       (edgesByNodeId.get(current.id) || []).forEach((edge) => {
+        if (!isBridgeTraversableEdge(edge)) return;
         const nextId = edge.source === current.id ? edge.target : edge.source;
         if (visited.has(nextId)) return;
         visited.add(nextId);
@@ -869,7 +892,7 @@
       (indirectIdentityIdsByOrg.get(orgId) || new Set()).forEach((identityId) => visibleIds.add(identityId));
     });
     const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), qualifyingOrgIds, { keepDisconnectedIdentities: true });
-    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && !edge.is_low_confidence);
     return { rootIds: qualifyingOrgIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
   }
 
@@ -1193,9 +1216,17 @@
     const baseType = rawType.replace(/\s*\([^)]*\)\s*$/, "").toLowerCase();
     const titleMatch = rawType.match(/\(([^)]+)\)\s*$/);
     const title = String(titleMatch?.[1] || "").trim();
+    const representedOrganisations = Array.isArray(edge?.represented_organisation_labels) ? edge.represented_organisation_labels : [];
+    const representedSigners = Array.isArray(edge?.represented_signer_labels) ? edge.represented_signer_labels : [];
     const subject = title && !sourceLabel.toLowerCase().startsWith(`${title.toLowerCase()} `)
       ? `${title} ${sourceLabel}`
       : sourceLabel;
+    if (baseType.includes("signatory") && representedOrganisations.length) {
+      return [`${escapeHtml(subject)} signed ${escapeHtml(targetLabel)} representing ${escapeHtml(summarizeLabelList(representedOrganisations))}.`];
+    }
+    if (edge?.kind === "mapping_document_affiliation" && representedSigners.length) {
+      return [`${escapeHtml(summarizeLabelList(representedSigners))} signed ${escapeHtml(sourceLabel)} representing ${escapeHtml(targetLabel)}.`];
+    }
     if (baseType.includes("signatory")) return [`${escapeHtml(subject)} is listed as a signatory for ${escapeHtml(targetLabel)}.`];
     if (baseType.includes("affiliate")) return [`${escapeHtml(subject)} is affiliated with ${escapeHtml(targetLabel)}.`];
     if (baseType.includes("partner")) return [`${escapeHtml(subject)} is a partner of ${escapeHtml(targetLabel)}.`];

@@ -103,10 +103,10 @@
   <text x="72" y="680" font-size="12" fill="#475569">Persist accepted low-confidence org resolutions into mapping_matches during rebuilds.</text>
 
   <circle cx="58" cy="699" r="3" fill="#D97706"/>
-  <text x="72" y="702" font-size="12" fill="#475569">Viewer shape: identity &#x2192; open letter &#x2192; organisation, shown as yellow dashed inclusions.</text>
+  <text x="72" y="702" font-size="12" fill="#475569">Viewer shape: identity &#x2192; open letter &#x2192; organisation, with text that says who signed representing the org.</text>
 
   <circle cx="58" cy="721" r="3" fill="#D97706"/>
-  <text x="72" y="724" font-size="12" fill="#475569">Low-confidence data stays in a separate overlay JSON so reviewers can toggle it on and off.</text>
+  <text x="72" y="724" font-size="12" fill="#475569">Low-confidence data stays in a separate overlay JSON so reviewers can toggle it on and off; grey indirect paths stay main-graph only.</text>
 
   <!-- Chain diagram: Seed ’ Open Letter ’ Organisation -->
   <rect x="220" y="748" width="80" height="26" rx="6"

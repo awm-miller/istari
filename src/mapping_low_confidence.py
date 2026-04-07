@@ -340,6 +340,55 @@ def summarize_mapping_text(value: str, *, max_chars: int = 220) -> str:
     return f"{shortened or text[: max_chars - 3].strip()}..."
 
 
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        label = str(value or "").strip()
+        if not label:
+            continue
+        key = label.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(label)
+    return ordered
+
+
+def _format_mapping_label_list(values: list[str], *, max_items: int = 3) -> str:
+    labels = _dedupe_preserve_order(values)
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    visible = labels[:max_items]
+    if len(labels) > max_items:
+        return f"{', '.join(visible[:-1])}, {visible[-1]}, and {len(labels) - max_items} others"
+    return f"{', '.join(visible[:-1])}, and {visible[-1]}"
+
+
+def _signatory_representation_text(signer_label: str, document_label: str, organisation_labels: list[str]) -> str:
+    signer = str(signer_label or "").strip() or "This signatory"
+    document = str(document_label or "").strip() or "this document"
+    organisations = _format_mapping_label_list(organisation_labels)
+    if organisations:
+        return f"{signer} signed {document} representing {organisations}"
+    return f"{signer} signed {document}"
+
+
+def _document_representation_text(document_label: str, organisation_label: str, signer_labels: list[str]) -> str:
+    document = str(document_label or "").strip() or "This document"
+    organisation = str(organisation_label or "").strip() or "this organisation"
+    signers = _dedupe_preserve_order(signer_labels)
+    if len(signers) == 1:
+        return f"{signers[0]} signed {document} representing {organisation}"
+    if len(signers) > 1:
+        return f"{_format_mapping_label_list(signers)} signed {document} representing {organisation}"
+    return f"{document} includes signatories representing {organisation}"
+
+
 def extract_evidence_links(text: str) -> list[dict[str, str]]:
     raw_text = str(text or "")
     found: list[dict[str, str]] = []
@@ -1171,6 +1220,13 @@ def build_low_confidence_overlay(
                         {
                             "sheet_name": sheet_name,
                             "signer_id": signer_id,
+                            "signer_label": str(
+                                source_node.get("label")
+                                if signer_id == source_id and source_node
+                                else target_node.get("label")
+                                if target_node
+                                else ""
+                            ),
                             "organisation_id": organisation_id,
                             "source_id": source_id,
                             "target_id": target_id,
@@ -1208,6 +1264,8 @@ def build_low_confidence_overlay(
             matched_link_count += 1
 
     seen_derived_edge_keys: set[tuple[str, str, str]] = set()
+    represented_orgs_by_signer_doc: dict[tuple[str, str], list[str]] = {}
+    document_affiliation_edges_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
     for affiliation in generated_affiliations:
         doc_ids = generated_doc_nodes_by_signer.get(affiliation["sheet_name"], {}).get(affiliation["signer_id"], set())
         if not doc_ids:
@@ -1237,36 +1295,124 @@ def build_low_confidence_overlay(
             )
             continue
         for document_id in doc_ids:
+            signer_doc_key = (affiliation["signer_id"], document_id)
+            represented_orgs_by_signer_doc.setdefault(signer_doc_key, []).append(affiliation["organisation_label"])
+            document_node = overlay_nodes.get(document_id)
+            document_label = str(document_node.get("label") or document_id) if document_node else document_id
             derived_key = (document_id, affiliation["organisation_id"], "represented_organisation")
-            if derived_key in seen_derived_edge_keys:
+            existing_edge = document_affiliation_edges_by_key.get(derived_key)
+            if existing_edge:
+                existing_edge["represented_signer_ids"] = _dedupe_preserve_order([
+                    *existing_edge.get("represented_signer_ids", []),
+                    affiliation["signer_id"],
+                ])
+                existing_edge["represented_signer_labels"] = _dedupe_preserve_order([
+                    *existing_edge.get("represented_signer_labels", []),
+                    affiliation["signer_label"],
+                ])
+                existing_edge["tooltip"] = _document_representation_text(
+                    document_label,
+                    affiliation["organisation_label"],
+                    existing_edge.get("represented_signer_labels", []),
+                )
+                existing_edge["tooltip_lines"] = [
+                    existing_edge["tooltip"],
+                    *[
+                        line
+                        for line in existing_edge.get("tooltip_lines", [])[1:]
+                        if line
+                    ],
+                ]
                 continue
             seen_derived_edge_keys.add(derived_key)
-            overlay_edges.append(
-                {
-                    "id": f"mapping-doc-link:{slugify_mapping_label(document_id)}:{slugify_mapping_label(affiliation['organisation_id'])}",
-                    "source": document_id,
-                    "target": affiliation["organisation_id"],
-                    "kind": "mapping_document_affiliation",
-                    "phrase": "includes signatories representing",
-                    "role_type": "represented_organisation",
-                    "role_label": "represented organisation",
-                    "source_provider": "mapping_import",
-                    "confidence": "low",
-                    "weight": 0.2,
-                    "tooltip": affiliation["tooltip_description"] or f"{document_id} includes signatories representing {affiliation['organisation_label']}",
-                    "tooltip_lines": [
-                        "includes signatories representing",
-                        *[
-                            line
-                            for line in affiliation["tooltip_lines"][1:]
-                            if line and not line.startswith("Imported from ")
-                        ],
+            edge = {
+                "id": f"mapping-doc-link:{slugify_mapping_label(document_id)}:{slugify_mapping_label(affiliation['organisation_id'])}",
+                "source": document_id,
+                "target": affiliation["organisation_id"],
+                "kind": "mapping_document_affiliation",
+                "phrase": "includes signatories representing",
+                "role_type": "represented_organisation",
+                "role_label": "represented organisation",
+                "source_provider": "mapping_import",
+                "confidence": "low",
+                "weight": 0.2,
+                "tooltip": _document_representation_text(
+                    document_label,
+                    affiliation["organisation_label"],
+                    [affiliation["signer_label"]],
+                ),
+                "tooltip_lines": [
+                    _document_representation_text(
+                        document_label,
+                        affiliation["organisation_label"],
+                        [affiliation["signer_label"]],
+                    ),
+                    *[
+                        line
+                        for line in affiliation["tooltip_lines"][1:]
+                        if line and not line.startswith("Imported from ")
                     ],
-                    "is_low_confidence": True,
-                    "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
-                    "evidence_items": affiliation["evidence_items"],
-                }
-            )
+                ],
+                "represented_signer_ids": [affiliation["signer_id"]],
+                "represented_signer_labels": _dedupe_preserve_order([affiliation["signer_label"]]),
+                "is_low_confidence": True,
+                "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
+                "evidence_items": affiliation["evidence_items"],
+            }
+            overlay_edges.append(edge)
+            document_affiliation_edges_by_key[derived_key] = edge
+
+    for edge in overlay_edges:
+        role_type = canonicalize_link_type(str(edge.get("role_type") or ""))
+        if "signatory" not in role_type:
+            continue
+        source_id = str(edge.get("source") or "")
+        target_id = str(edge.get("target") or "")
+        source_node = overlay_nodes.get(source_id) or next(
+            (node for node in main_data.get("nodes") or [] if str(node.get("id")) == source_id),
+            None,
+        )
+        target_node = overlay_nodes.get(target_id) or next(
+            (node for node in main_data.get("nodes") or [] if str(node.get("id")) == target_id),
+            None,
+        )
+        signer_id = ""
+        document_id = ""
+        signer_label = ""
+        document_label = ""
+        if source_node and _is_person_anchor_node(source_node) and target_node and bool(target_node.get("low_confidence_expandable")):
+            signer_id = source_id
+            document_id = target_id
+            signer_label = str(source_node.get("label") or "")
+            document_label = str(target_node.get("label") or target_id)
+        elif target_node and _is_person_anchor_node(target_node) and source_node and bool(source_node.get("low_confidence_expandable")):
+            signer_id = target_id
+            document_id = source_id
+            signer_label = str(target_node.get("label") or "")
+            document_label = str(source_node.get("label") or source_id)
+        if not signer_id or not document_id:
+            continue
+        organisation_labels = _dedupe_preserve_order(represented_orgs_by_signer_doc.get((signer_id, document_id), []))
+        if not organisation_labels:
+            continue
+        edge["represented_organisation_labels"] = organisation_labels
+        edge["tooltip"] = _signatory_representation_text(
+            signer_label,
+            document_label,
+            organisation_labels,
+        )
+        edge["tooltip_lines"] = [
+            _signatory_representation_text(
+                signer_label,
+                document_label,
+                organisation_labels,
+            ),
+            *[
+                line
+                for line in edge.get("tooltip_lines", [])[1:]
+                if line
+            ],
+        ]
 
     return {
         "nodes": list(overlay_nodes.values()),

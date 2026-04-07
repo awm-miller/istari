@@ -646,6 +646,29 @@ class MappingLowConfidenceTests(unittest.TestCase):
                 and edge["role_type"] == "represented_organisation"
                 for edge in overlay["edges"]
             ))
+            represented_edge = next(
+                edge
+                for edge in overlay["edges"]
+                if edge["source"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
+                and edge["target"] == "mapping-node:islam_expo"
+                and edge["role_type"] == "represented_organisation"
+            )
+            self.assertIn("KOZBAR, Mohamad Abdul Karim", represented_edge.get("represented_signer_labels", []))
+            self.assertEqual(
+                represented_edge["tooltip"],
+                "KOZBAR, Mohamad Abdul Karim signed Statement of support for Moazzam Begg (February 2014) representing Islam Expo",
+            )
+            signatory_edge = next(
+                edge
+                for edge in overlay["edges"]
+                if edge["source"] == "identity:14:person:365"
+                and edge["target"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
+            )
+            self.assertEqual(signatory_edge.get("represented_organisation_labels"), ["Islam Expo"])
+            self.assertEqual(
+                signatory_edge["tooltip"],
+                "KOZBAR, Mohamad Abdul Karim signed Statement of support for Moazzam Begg (February 2014) representing Islam Expo",
+            )
             self.assertFalse(any(
                 edge["source"] == "identity:14:person:365" and edge["target"] == "mapping-node:islam_expo"
                 for edge in overlay["edges"]
