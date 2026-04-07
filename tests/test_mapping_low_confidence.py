@@ -405,6 +405,26 @@ class MappingLowConfidenceTests(unittest.TestCase):
                 snippet="Matched signatory row",
                 document_summary="Support statement with signatories and affiliations.",
             )
+            affiliate_link_id = store.insert_link(
+                import_id=import_id,
+                workbook_name=_GENERATED_WORKBOOK_NAME,
+                sheet_name="doc-1",
+                row_number=2,
+                from_label="Mohammed Kozbar",
+                to_label="Islam Expo",
+                link_type="affiliate",
+                description="Matched affiliate row",
+                raw_row=["Mohammed Kozbar", "Islam Expo", "affiliate"],
+            )
+            store.insert_evidence(
+                mapping_link_id=affiliate_link_id,
+                ordinal=1,
+                evidence_kind="plain_url",
+                title="source",
+                url="https://example.test/cage",
+                snippet="Matched affiliate row",
+                document_summary="Support statement with signatories and affiliations.",
+            )
 
             overlay = build_low_confidence_overlay(
                 main_data={
@@ -440,6 +460,20 @@ class MappingLowConfidenceTests(unittest.TestCase):
 
             self.assertTrue(any(
                 edge["source"] == "seed:14" or edge["target"] == "seed:14"
+                for edge in overlay["edges"]
+            ))
+            self.assertTrue(any(
+                edge["source"] == "seed:14" and edge["target"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
+                for edge in overlay["edges"]
+            ))
+            self.assertTrue(any(
+                edge["source"] == "mapping-node:statement_of_support_for_moazzam_begg_february_2014"
+                and edge["target"] == "mapping-node:islam_expo"
+                and edge["role_type"] == "represented_organisation"
+                for edge in overlay["edges"]
+            ))
+            self.assertFalse(any(
+                edge["source"] == "seed:14" and edge["target"] == "mapping-node:islam_expo"
                 for edge in overlay["edges"]
             ))
 

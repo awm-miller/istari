@@ -288,6 +288,10 @@
       && overlayNode.kind === "organisation";
   }
 
+  function isMainGraphNodeId(nodeId) {
+    return baseNodeById.has(nodeId);
+  }
+
   function lowConfidenceNodeLookup(nodeId) {
     return baseNodeById.get(nodeId) || lowConfidenceNodeById.get(nodeId) || nodeById.get(nodeId) || null;
   }
@@ -363,7 +367,7 @@
           if (isLowConfidenceDocumentNode(otherNode)) queue.push({ id: otherId, depth: 1 });
           return;
         }
-        if (current.depth === 1 && otherNode.kind === "organisation") {
+        if (current.depth === 1 && otherNode.kind === "organisation" && isMainGraphNodeId(otherId)) {
           visibleIds.add(otherId);
           visited.add(otherId);
         }
@@ -515,19 +519,6 @@
       cluster.edgeIds.forEach((edgeId) => activeLowEdgeIds.add(edgeId));
       cluster.nodeIds.forEach((visibleNodeId) => {
         if (!mainNodeIds.has(visibleNodeId)) activeLowNodeIds.add(visibleNodeId);
-      });
-    });
-    const matchedLowSearchIds = new Set(
-      lowConfidenceNodes.filter((node) => nodeMatchesQuery(node, viewerState.searchQuery)).map((node) => node.id),
-    );
-    matchedLowSearchIds.forEach((nodeId) => {
-      activeLowNodeIds.add(nodeId);
-      (lowConfidenceEdgesByNodeId.get(nodeId) || []).forEach((edge) => {
-        activeLowEdgeIds.add(edge.id);
-        if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
-        if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
-        if (baseNodeById.get(edge.source)?.kind === "seed") activeSeedIds.add(edge.source);
-        if (baseNodeById.get(edge.target)?.kind === "seed") activeSeedIds.add(edge.target);
       });
     });
     allNodes = baseNodes

@@ -1076,6 +1076,10 @@ def build_low_confidence_overlay(
                             "sheet_name": sheet_name,
                             "signer_id": signer_id,
                             "organisation_id": organisation_id,
+                            "source_id": source_id,
+                            "target_id": target_id,
+                            "phrase": phrase,
+                            "link_type": link_type,
                             "organisation_label": str(target_node.get("label") if organisation_id == target_id else source_node.get("label") if source_node else ""),
                             "tooltip_description": tooltip_description,
                             "evidence_items": evidence_items,
@@ -1083,8 +1087,7 @@ def build_low_confidence_overlay(
                             "link_row_id": int(link_row["id"]),
                         }
                     )
-                    if generated_doc_nodes_by_signer.get(sheet_name, {}).get(signer_id):
-                        continue
+                    continue
         overlay_edges.append(
             {
                 "id": f"mapping-link:{int(link_row['id'])}",
@@ -1112,6 +1115,30 @@ def build_low_confidence_overlay(
     for affiliation in generated_affiliations:
         doc_ids = generated_doc_nodes_by_signer.get(affiliation["sheet_name"], {}).get(affiliation["signer_id"], set())
         if not doc_ids:
+            direct_key = (affiliation["source_id"], affiliation["target_id"], affiliation["link_type"])
+            if direct_key in seen_derived_edge_keys:
+                continue
+            seen_derived_edge_keys.add(direct_key)
+            overlay_edges.append(
+                {
+                    "id": f"mapping-link:{affiliation['link_row_id']}",
+                    "source": affiliation["source_id"],
+                    "target": affiliation["target_id"],
+                    "kind": "mapping_link",
+                    "phrase": affiliation["phrase"],
+                    "role_type": affiliation["link_type"] or "mapping_link",
+                    "role_label": affiliation["link_type"] or "mapping_link",
+                    "source_provider": "mapping_import",
+                    "confidence": "low",
+                    "weight": 0.2,
+                    "tooltip": affiliation["tooltip_description"]
+                    or f"{affiliation['source_id']} {affiliation['phrase']} {affiliation['organisation_label']}",
+                    "tooltip_lines": affiliation["tooltip_lines"],
+                    "is_low_confidence": True,
+                    "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
+                    "evidence_items": affiliation["evidence_items"],
+                }
+            )
             continue
         for document_id in doc_ids:
             derived_key = (document_id, affiliation["organisation_id"], "represented_organisation")
