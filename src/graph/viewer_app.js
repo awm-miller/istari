@@ -173,6 +173,14 @@
       && !!node.low_confidence_expandable;
   }
 
+  function isIdentityNode(node) {
+    return !!node && (node.kind === "seed_alias" || node.lane === 1);
+  }
+
+  function isPersonAnchorNode(node) {
+    return !!node && (node.kind === "person" || isIdentityNode(node) || node.kind === "seed");
+  }
+
   function normalizeNodeKind(node) {
     if (!node) return "";
     if (node.kind === "organisation" && String(node.registry_type || "").toLowerCase() === "charity") return "charity";
@@ -306,10 +314,10 @@
     (lowConfidenceEdgesByNodeId.get(rootNodeId) || []).forEach((edge) => {
       const otherId = edge.source === rootNodeId ? edge.target : edge.source;
       const otherNode = lowConfidenceNodeLookup(otherId);
-      if (!otherNode || (otherNode.kind !== "person" && otherNode.kind !== "organisation")) return;
+      if (!otherNode || (!isPersonAnchorNode(otherNode) && otherNode.kind !== "organisation")) return;
       visibleNodeIds.add(otherId);
       visibleEdgeIds.add(edge.id);
-      if (otherNode.kind === "person") connectedPersonIds.add(otherId);
+      if (isPersonAnchorNode(otherNode)) connectedPersonIds.add(otherId);
     });
 
     connectedPersonIds.forEach((personId) => {
@@ -734,6 +742,16 @@
         return !viewerState.hiddenTypes.has(typeKey);
       }),
     );
+    [...filteredIds].forEach((id) => {
+      const node = nodeById.get(id);
+      if (!node || node.kind !== "seed") return;
+      const linkedIdentityVisible = (edgesByNodeId.get(id) || []).some((edge) => {
+        if (edge.kind !== "alias") return false;
+        const otherId = edge.source === id ? edge.target : edge.source;
+        return filteredIds.has(otherId) && isIdentityNode(nodeById.get(otherId));
+      });
+      if (linkedIdentityVisible) filteredIds.delete(id);
+    });
     if (!rootIds.size || viewerState.showIndirectOnly) return filteredIds;
     let changed = true;
     while (changed) {
