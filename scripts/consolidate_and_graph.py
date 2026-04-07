@@ -430,9 +430,10 @@ def _sanction_warning(sanction: dict[str, object]) -> str:
 
 def _tag_sanctioned_nodes(nodes: list[dict], sanctions_by_person_id: dict[int, dict[str, object]]) -> None:
     for node in nodes:
-        if node.get("kind") != "person":
+        person_ids_raw = node.get("person_ids") or []
+        if not person_ids_raw:
             continue
-        person_ids = [int(person_id) for person_id in (node.get("person_ids") or [])]
+        person_ids = [int(person_id) for person_id in person_ids_raw]
         matched = [
             sanctions_by_person_id[person_id]
             for person_id in person_ids
@@ -445,6 +446,30 @@ def _tag_sanctioned_nodes(nodes: list[dict], sanctions_by_person_id: dict[int, d
         tooltip_lines = list(node.get("tooltip_lines") or [])
         if not tooltip_lines or tooltip_lines[0] != warning:
             node["tooltip_lines"] = [warning, *tooltip_lines]
+
+
+def _address_edge_evidence(row) -> dict[str, object] | None:
+    registry_type = str(row["registry_type"] or "").strip().lower()
+    registry_number = str(row["registry_number"] or "").strip()
+    if not registry_type or not registry_number:
+        return None
+    if registry_type == "company":
+        return {
+            "title": "Companies House company profile",
+            "document_url": (
+                "https://find-and-update.company-information.service.gov.uk/company/"
+                f"{registry_number}"
+            ),
+        }
+    if registry_type == "charity":
+        return {
+            "title": "Charity Commission charity page",
+            "document_url": (
+                "https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/"
+                f"{registry_number}"
+            ),
+        }
+    return None
 
 
 def consolidate_run(run_id: int) -> dict:
@@ -793,6 +818,7 @@ def consolidate_run(run_id: int) -> dict:
             "kind": "seed_alias",
             "lane": 1,
             "aliases": entry["aliases"],
+            "person_ids": entry.get("person_ids", []),
             "identity_keys": entry.get("identity_keys", []),
             "org_count": entry["org_count"],
             "role_count": entry["role_count"],
@@ -857,6 +883,7 @@ def consolidate_run(run_id: int) -> dict:
             "kind": "person",
             "lane": 4,
             "aliases": entry.get("aliases", []),
+            "person_ids": entry.get("person_ids", []),
             "identity_keys": entry.get("identity_keys", []),
             "org_count": entry["org_count"],
             "role_count": entry["role_count"],
@@ -913,6 +940,7 @@ def consolidate_run(run_id: int) -> dict:
                     f"{str(row['relationship_phrase'] or 'is registered at')} "
                     f"{str(row['address_label'] or '')}"
                 ).replace("  ", " "),
+                "evidence": _address_edge_evidence(row),
             }
         )
 
@@ -1596,7 +1624,6 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         [
             int(person_id)
             for node in nodes
-            if node.get("kind") == "person"
             for person_id in (node.get("person_ids") or [])
         ]
     )

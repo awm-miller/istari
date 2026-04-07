@@ -30,6 +30,11 @@
   const scorePanelEl = document.getElementById("score-panel");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
+  const detailsModalEl = document.getElementById("details-modal");
+  const detailsModalTitleEl = document.getElementById("details-modal-title");
+  const detailsModalStatusEl = document.getElementById("details-modal-status");
+  const detailsModalBodyEl = document.getElementById("details-modal-body");
+  const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
 
   let showIdentitiesInput;
@@ -67,7 +72,7 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
-  let mergeOverrides = { address: [], person: [], identity: [] };
+  let mergeOverrides = { address: [], name: [] };
   let mergeOverridesLoadingPromise = null;
 
   const viewerState = {
@@ -78,7 +83,7 @@
     showIndirectOnly: false,
     showSanctionedOnly: false,
     analysisNodeIds: [],
-    mergeNodeIds: [],
+    pendingMergeNodeId: "",
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
@@ -676,21 +681,25 @@
     return xs.reduce((sum, value) => sum + value, 0) / xs.length;
   }
 
+  function nodeConnectionOrderScore(node) {
+    return (Number(node.degree || 0) * 1000)
+      + (Number(node.org_count || 0) * 10)
+      + Number(node.role_count || 0);
+  }
+
   function layoutVisibleNodes(rootIds) {
     const width = container.clientWidth || window.innerWidth;
     const visibleEdgeSet = new Set(visibleEdges);
     let curY = 72;
     [1, 2, 3, 4].forEach((lane) => {
       const laneNodes = visibleNodes.filter((node) => Number(node.lane || 0) === lane);
-      if (lane === 1 || lane === 4) {
-        laneNodes.sort((left, right) => {
-          const scoreDiff = nodeRankScore(right) - nodeRankScore(left);
-          if (scoreDiff !== 0) return scoreDiff;
-          return avgNeighborX(left, visibleEdgeSet) - avgNeighborX(right, visibleEdgeSet);
-        });
-      } else {
-        laneNodes.sort((left, right) => avgNeighborX(left, visibleEdgeSet) - avgNeighborX(right, visibleEdgeSet));
-      }
+      laneNodes.sort((left, right) => {
+        const connectionDiff = nodeConnectionOrderScore(right) - nodeConnectionOrderScore(left);
+        if (connectionDiff !== 0) return connectionDiff;
+        const neighborDiff = avgNeighborX(left, visibleEdgeSet) - avgNeighborX(right, visibleEdgeSet);
+        if (neighborDiff !== 0) return neighborDiff;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      });
       const spacing = 16;
       const rowGap = 18;
       const pad = 18;
@@ -715,8 +724,7 @@
       if (currentRow.length) rows.push(currentRow);
       const rowStep = rows.length ? Math.max(...rows.flat().map((node) => pillHeight(node))) + rowGap : 0;
       rows.forEach((row, rowIndex) => {
-        const rowW = row.reduce((sum, node) => sum + pillWidth(node), 0) + spacing * (row.length - 1);
-        let cx = usableMin + Math.max(0, (maxRowW - rowW) / 2);
+        let cx = usableMin;
         const rowY = curY + (rowIndex * rowStep);
         row.forEach((node) => {
           const widthForNode = pillWidth(node);
@@ -965,8 +973,7 @@
   function mergeKindForNode(node) {
     if (!node || node.is_low_confidence) return null;
     if (node.kind === "address") return "address";
-    if (node.kind === "person") return "person";
-    if (node.kind === "seed_alias" || node.lane === 1) return "identity";
+    if (node.kind === "person" || node.kind === "seed_alias" || node.lane === 1) return "name";
     return null;
   }
 
@@ -984,16 +991,12 @@
           .map((value) => `address:${value}`)),
       );
     }
-    if (kind === "person") {
-      const personIds = Array.isArray(node.person_ids) ? node.person_ids : [];
-      const keys = personIds.map((value) => `person:${String(value)}`);
-      if (keys.length) return uniqueValues(keys);
-      if (node.individual_key) return [`person-key:${String(node.individual_key)}`];
-      return [`person-id:${String(node.id)}`];
-    }
     return uniqueValues([
-      `identity-id:${String(node.id)}`,
-      node.individual_key ? `identity-key:${String(node.individual_key)}` : "",
+      `node-id:${String(node.id)}`,
+      ...(Array.isArray(node.person_ids) ? node.person_ids.map((value) => `person:${String(value)}`) : []),
+      ...(Array.isArray(node.identity_keys) ? node.identity_keys.map((value) => `identity:${String(value || "").trim()}`) : []),
+      node.individual_key ? `individual:${String(node.individual_key)}` : "",
+      String(node.label || "").trim() ? `label:${String(node.label).trim().toLowerCase()}` : "",
     ]);
   }
 
@@ -1092,7 +1095,7 @@
     const nextEdges = edges.map((edge) => ({ ...edge }));
     const nodeByMergeId = new Map(nextNodes.map((node) => [node.id, node]));
     const stableLookupByKind = new Map();
-    ["address", "person", "identity"].forEach((kind) => {
+    ["address", "name"].forEach((kind) => {
       const lookup = new Map();
       nextNodes.forEach((node) => {
         if (mergeKindForNode(node) !== kind) return;
@@ -1104,7 +1107,7 @@
     });
 
     const redirects = new Map();
-    ["address", "person", "identity"].forEach((kind) => {
+    ["address", "name"].forEach((kind) => {
       const lookup = stableLookupByKind.get(kind) || new Map();
       (Array.isArray(overrides?.[kind]) ? overrides[kind] : []).forEach((row) => {
         const sourceNodeId = lookup.get(String(row?.sourceId || ""));
@@ -1199,10 +1202,25 @@
     `;
   }
 
+  function openDetailsModal({ title, status = "", bodyHtml = "" }) {
+    detailsModalTitleEl.textContent = title || "Details";
+    detailsModalStatusEl.textContent = status || "";
+    detailsModalBodyEl.innerHTML = bodyHtml || '<div class="analysis-empty">No details available.</div>';
+    detailsModalEl.classList.add("open");
+    detailsModalEl.setAttribute("aria-hidden", "false");
+  }
+
+  function closeDetailsModal() {
+    detailsModalEl.classList.remove("open");
+    detailsModalEl.setAttribute("aria-hidden", "true");
+  }
+
   function openNodeAttributionView(node) {
-    scorePanelEl.innerHTML = renderNodeAttributionHtml(node);
-    setSidebarTab("ranked");
-    toggleSidebar(true);
+    openDetailsModal({
+      title: node?.label || "Details",
+      status: "Claims and attribution",
+      bodyHtml: renderNodeAttributionHtml(node),
+    });
   }
 
   async function ensureMergeOverridesLoaded() {
@@ -1216,15 +1234,14 @@
         const overrides = payload?.overrides || {};
         mergeOverrides = {
           address: Array.isArray(overrides.address) ? overrides.address : [],
-          person: Array.isArray(overrides.person) ? overrides.person : [],
-          identity: Array.isArray(overrides.identity) ? overrides.identity : [],
+          name: Array.isArray(overrides.name) ? overrides.name : [],
         };
         rebuildBaseGraph();
         return true;
       })
       .catch((error) => {
         console.warn(error);
-        mergeOverrides = { address: [], person: [], identity: [] };
+        mergeOverrides = { address: [], name: [] };
         rebuildBaseGraph();
         return false;
       })
@@ -1251,10 +1268,9 @@
     const overrides = payload?.overrides || {};
     mergeOverrides = {
       address: Array.isArray(overrides.address) ? overrides.address : [],
-      person: Array.isArray(overrides.person) ? overrides.person : [],
-      identity: Array.isArray(overrides.identity) ? overrides.identity : [],
+      name: Array.isArray(overrides.name) ? overrides.name : [],
     };
-    viewerState.mergeNodeIds = [];
+    viewerState.pendingMergeNodeId = "";
     rebuildBaseGraph();
     await applyViewerState();
   }
@@ -1286,36 +1302,34 @@
     hideTooltip();
     const mergeKind = mergeKindForNode(node);
     const mergePrimaryKey = nodeMergePrimaryKey(node);
-    const selectedMergeNodes = viewerState.mergeNodeIds
-      .map((nodeId) => nodeById.get(nodeId))
-      .filter(Boolean);
-    const compatibleMergeNode = selectedMergeNodes.find(
-      (candidate) => candidate.id !== node.id && mergeKindForNode(candidate) === mergeKind && nodeMergePrimaryKey(candidate),
-    );
+    const pendingMergeNode = nodeById.get(viewerState.pendingMergeNodeId) || null;
+    const compatiblePendingMergeNode = pendingMergeNode
+      && pendingMergeNode.id !== node.id
+      && mergeKind
+      && mergeKindForNode(pendingMergeNode) === mergeKind
+      && nodeMergePrimaryKey(pendingMergeNode)
+      ? pendingMergeNode
+      : null;
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
       registryActionForNode(node),
-      mergeKind && mergePrimaryKey && compatibleMergeNode
+      mergeKind && mergePrimaryKey && compatiblePendingMergeNode
         ? {
-            label: `Persist merge with ${compatibleMergeNode.label}`,
+            label: `Merge ${compatiblePendingMergeNode.label} into this node`,
             type: "merge_persist",
             kind: mergeKind,
-            sourceKey: nodeMergePrimaryKey(compatibleMergeNode),
+            sourceLabel: compatiblePendingMergeNode.label,
+            targetLabel: node.label,
+            sourceKey: nodeMergePrimaryKey(compatiblePendingMergeNode),
             targetKey: mergePrimaryKey,
           }
         : null,
-      mergeKind && mergePrimaryKey && viewerState.mergeNodeIds.includes(node.id)
-        ? { label: "Remove from merge selection", type: "merge_remove", nodeId: node.id }
+      mergeKind && mergePrimaryKey && viewerState.pendingMergeNodeId === node.id
+        ? { label: "Cancel merge", type: "merge_cancel" }
         : mergeKind && mergePrimaryKey
-          ? { label: "Add to merge selection", type: "merge_add", nodeId: node.id, kind: mergeKind }
+          ? { label: "Start merge", type: "merge_start", nodeId: node.id }
           : null,
-      viewerState.mergeNodeIds.length ? { label: "Clear merge selection", type: "merge_clear" } : null,
       viewerState.focusedNodeIds.has(node.id) ? { label: "Clear focus", type: "focus_clear" } : null,
-      viewerState.analysisNodeIds.includes(node.id)
-        ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
-        : (viewerState.analysisNodeIds.length < 2 ? { label: "Add to connection analysis", type: "analysis_add", nodeId: node.id } : null),
-      viewerState.analysisNodeIds.length === 2 ? { label: "Analyze connection", type: "analysis_run" } : null,
-      viewerState.analysisNodeIds.length === 2 ? { label: "Clear analysis selection", type: "analysis_clear" } : null,
     ].filter(Boolean);
     contextMenuEl.innerHTML = `
       <div class="context-menu-title">${escapeHtml(node.label || node.id || "Node actions")}</div>
@@ -1599,6 +1613,10 @@
       applyViewerState();
     });
     toggleSidebarButton.addEventListener("click", () => toggleSidebar());
+    detailsModalCloseEl.addEventListener("click", closeDetailsModal);
+    detailsModalEl.addEventListener("click", (event) => {
+      if (event.target === detailsModalEl) closeDetailsModal();
+    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
@@ -1619,16 +1637,13 @@
       } else if (action.type === "node_claims") {
         const node = nodeById.get(action.nodeId);
         if (node) openNodeAttributionView(node);
-      } else if (action.type === "merge_add") {
-        const current = viewerState.mergeNodeIds
-          .filter((nodeId) => nodeId !== action.nodeId)
-          .filter((nodeId) => mergeKindForNode(nodeById.get(nodeId)) === action.kind);
-        viewerState.mergeNodeIds = [...current, action.nodeId].slice(-2);
-      } else if (action.type === "merge_remove") {
-        viewerState.mergeNodeIds = viewerState.mergeNodeIds.filter((nodeId) => nodeId !== action.nodeId);
-      } else if (action.type === "merge_clear") {
-        viewerState.mergeNodeIds = [];
+      } else if (action.type === "merge_start") {
+        viewerState.pendingMergeNodeId = action.nodeId;
+      } else if (action.type === "merge_cancel") {
+        viewerState.pendingMergeNodeId = "";
       } else if (action.type === "merge_persist") {
+        const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}"? This will persist across graph rebuilds.`);
+        if (!confirmed) return;
         try {
           await persistMergeOverride(action);
         } catch (error) {
@@ -1652,6 +1667,11 @@
     });
     document.addEventListener("click", closeContextMenu);
     window.addEventListener("blur", closeContextMenu);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && detailsModalEl.classList.contains("open")) {
+        closeDetailsModal();
+      }
+    });
   }
 
   async function boot() {
