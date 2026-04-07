@@ -961,6 +961,31 @@
     return xs.reduce((sum, value) => sum + value, 0) / xs.length;
   }
 
+  function lowConfidenceLaneAnchorX(node, edgeAdjacency, nodeLookup) {
+    if (!node || Number(node.lane || 0) !== 2) return null;
+    const xs = [];
+    const addAnchor = (anchorNode) => {
+      if (anchorNode && anchorNode._visible && anchorNode.x != null) xs.push(anchorNode.x);
+    };
+    (edgeAdjacency.get(node.id) || []).forEach((edge) => {
+      if (!edge?.is_low_confidence) return;
+      const other = nodeLookup.get(edge.source === node.id ? edge.target : edge.source);
+      if (!other) return;
+      if (isPersonAnchorNode(other)) {
+        addAnchor(other);
+        return;
+      }
+      if (!isLowConfidenceDocumentNode(other)) return;
+      (edgeAdjacency.get(other.id) || []).forEach((docEdge) => {
+        if (!docEdge?.is_low_confidence) return;
+        const docOther = nodeLookup.get(docEdge.source === other.id ? docEdge.target : docEdge.source);
+        if (isPersonAnchorNode(docOther)) addAnchor(docOther);
+      });
+    });
+    if (!xs.length) return null;
+    return xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  }
+
   function nodeConnectionOrderScore(node) {
     return (Number(node.degree || 0) * 1000)
       + (Number(node.org_count || 0) * 10)
@@ -975,6 +1000,16 @@
     [1, 2, 3, 4].forEach((lane) => {
       const laneNodes = nodes.filter((node) => Number(node.lane || 0) === lane);
       laneNodes.sort((left, right) => {
+        if (lane === 2) {
+          const leftAnchor = lowConfidenceLaneAnchorX(left, edgeAdjacency, nodeLookup);
+          const rightAnchor = lowConfidenceLaneAnchorX(right, edgeAdjacency, nodeLookup);
+          if (leftAnchor != null || rightAnchor != null) {
+            if (leftAnchor == null) return 1;
+            if (rightAnchor == null) return -1;
+            const anchorDiff = leftAnchor - rightAnchor;
+            if (anchorDiff !== 0) return anchorDiff;
+          }
+        }
         const connectionDiff = nodeConnectionOrderScore(right) - nodeConnectionOrderScore(left);
         if (connectionDiff !== 0) return connectionDiff;
         const neighborDiff = avgNeighborX(left, edgeAdjacency, nodeLookup, fallbackCenter) - avgNeighborX(right, edgeAdjacency, nodeLookup, fallbackCenter);
