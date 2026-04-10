@@ -441,11 +441,13 @@
   function nodeRankScore(node) {
     const seedFlag = node.kind === "seed_alias" ? 2.8 : node.kind === "person" ? 1.4 : 0;
     const sanctionedFlag = node.sanctioned ? 3.5 : 0;
+    const adverseMediaFlag = node.adverse_media_hit ? 2.8 : 0;
     return (Number(node.score || 0) * 4.5)
       + (Number(node.role_count || 0) * 0.8)
       + (Number(node.org_count || 0) * 0.45)
       + seedFlag
-      + sanctionedFlag;
+      + sanctionedFlag
+      + adverseMediaFlag;
   }
 
   function edgeColorValue(edge) {
@@ -1712,19 +1714,70 @@
   }
 
   function summaryLinesForNodeAttribution(node, edges = []) {
-    const lines = tooltipLinesForNode(node).map((line) => plainText(line)).filter(Boolean);
+    const lines = tooltipLinesForNode(node)
+      .filter((line) => !(node?.kind === "person" && /^\s{2}/.test(String(line || "")) && String(line || "").includes("<em>")))
+      .map((line) => plainText(line))
+      .filter(Boolean);
     if (!edges.length) return lines;
-    return lines.filter((line) => !String(line).startsWith("  "));
+    return lines;
+  }
+
+  function adverseMediaCategoryLabel(category) {
+    if (category === "explicit_mb_connection") return "Explicit MB connection";
+    if (category === "writes_for_mb_outlet") return "Writes for MB outlet";
+    if (category === "other_mb_alignment") return "Other MB alignment";
+    return "Adverse media";
+  }
+
+  function renderAdverseMediaHtml(node) {
+    const claims = Array.isArray(node?.adverse_media_claims) ? node.adverse_media_claims : [];
+    if (!claims.length) return "";
+    return `
+      <div class="analysis-section">
+        <div class="analysis-section-title">Adverse media</div>
+        <div class="analysis-claims">
+          ${claims.map((claim, index) => {
+            const title = String(claim?.title || "").trim();
+            const category = adverseMediaCategoryLabel(String(claim?.category || "").trim());
+            const confidence = Number(claim?.confidence || 0);
+            const rationale = String(claim?.short_rationale || "").trim();
+            const quote = String(claim?.evidence_quote || "").trim();
+            const url = String(claim?.url || "").trim();
+            const confidenceText = Number.isFinite(confidence) && confidence > 0 ? `Confidence ${confidence.toFixed(2)}` : "";
+            const metaBits = [category, confidenceText].filter(Boolean).join(" · ");
+            return `
+              <div class="analysis-claim adverse-media-claim">
+                <div class="analysis-claim-header">
+                  <div class="analysis-claim-index">${index + 1}</div>
+                  <div class="analysis-claim-text">${escapeHtml(title || category)}</div>
+                </div>
+                ${metaBits ? `<div class="analysis-claim-meta">${escapeHtml(metaBits)}</div>` : ""}
+                ${rationale ? `<div class="analysis-claim-note">${escapeHtml(rationale)}</div>` : ""}
+                ${quote ? `<div class="analysis-claim-quote">${escapeHtml(quote)}</div>` : ""}
+                <div class="analysis-claim-evidence">
+                  <span class="analysis-claim-evidence-label">Article</span>
+                  ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(title || "Open article")}</a>` : '<span class="dim">No linked article.</span>'}
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
   }
 
   function renderNodeAttributionHtml(node) {
     const edges = nodeAttributionEdges(node);
     const summary = summaryLinesForNodeAttribution(node, edges);
+    const adverseMediaHtml = renderAdverseMediaHtml(node);
     return `
       <div class="analysis-viewer">
         <div class="analysis-selection">${escapeHtml(node.label || node.id || "Node")}</div>
         ${summary.length ? `<div class="analysis-text">${summary.map((line) => escapeHtml(line)).join("<br>")}</div>` : ""}
-        <div class="analysis-claims">
+        ${adverseMediaHtml}
+        <div class="analysis-section">
+          ${edges.length ? '<div class="analysis-section-title">Graph claims</div>' : ""}
+          <div class="analysis-claims">
           ${edges.length ? edges.map((edge, index) => {
             const links = evidenceActionsForEdge(edge)
               .map((action) => `<a href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)}</a>`)
@@ -1741,7 +1794,8 @@
                 </div>
               </div>
             `;
-          }).join("") : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>'}
+          }).join("") : (adverseMediaHtml ? '<div class="analysis-empty">No direct graph claims are attached to this node.</div>' : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>')}
+          </div>
         </div>
       </div>
     `;

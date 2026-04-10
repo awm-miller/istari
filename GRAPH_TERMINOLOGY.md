@@ -34,6 +34,10 @@ The normal development/build path is:
    `netlify_graph_viewer/graph-data.json`
    `netlify_graph_viewer/graph-data-low-confidence.json`
 
+When adding a new rebuild step, prefer adding it as a small dedicated helper/module and plugging it into `scripts/rebuild_graph.py`.
+Do not grow the merge engine blindly just because it is already large.
+`scripts/rebuild_graph.py` should stay the orchestration entrypoint, while feature-specific logic should live in separate modules that can be tested in isolation.
+
 `src/graph/render.py` is now just a thin entry point.
 `render_context.py` prepares the JSON payloads, `render_page.py` assembles the page shell, and the browser runtime lives in the split viewer asset files.
 

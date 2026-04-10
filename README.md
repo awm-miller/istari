@@ -77,6 +77,8 @@ python -m src.cli web-ui
 python scripts/rebuild_graph.py
 ```
 
+Graph rebuild convention: new rebuild stages should normally be implemented as small dedicated modules/helpers and then plugged into `scripts/rebuild_graph.py`, rather than expanding the merge engine directly.
+
 ## CLI reference
 
 | Command | Description |
