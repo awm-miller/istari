@@ -154,6 +154,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to output JSON payload.",
     )
 
+    nn_parser = subparsers.add_parser(
+        "negative-news",
+        help="Pilot: Serper + full-page article text + Gemini MB-related classification for named people.",
+    )
+    nn_parser.add_argument("names", nargs="+", help="Person names to screen (e.g. Stage 3 names).")
+    nn_parser.add_argument("--pages", type=int, default=10, help="Serper result pages per query (default 10).")
+    nn_parser.add_argument("--num", type=int, default=10, help="Results per page (default 10).")
+    nn_parser.add_argument(
+        "--max-extract-chars",
+        type=int,
+        default=500_000,
+        help="Max characters stored from each article HTML/PDF (default 500000).",
+    )
+    nn_parser.add_argument(
+        "--max-articles",
+        type=int,
+        default=40,
+        help="Max unique URLs to fetch/classify per person (default 40). Use 0 for no limit.",
+    )
+    nn_parser.add_argument(
+        "--no-classify",
+        action="store_true",
+        help="Fetch and extract only; skip Gemini classification.",
+    )
+    nn_parser.add_argument(
+        "--context-term",
+        dest="context_terms",
+        action="append",
+        default=[],
+        help='Optional org/context phrase(s) added as quoted terms with the quoted name query, e.g. --context-term "Development and Training Academy". Repeatable.',
+    )
+    nn_parser.add_argument(
+        "--name-alias",
+        dest="name_aliases",
+        action="append",
+        default=[],
+        help='Optional additional name form to query for the same person, e.g. --name-alias "Bilal Khalil Hasan Yasin". Repeatable.',
+    )
+    nn_parser.add_argument(
+        "--out",
+        default="",
+        help="Optional path to write JSON report; otherwise print to stdout.",
+    )
+
+    nn_x_parser = subparsers.add_parser(
+        "negative-news-extract-test",
+        help="Fetch one URL and report extraction stats (whole-page text QA).",
+    )
+    nn_x_parser.add_argument("url", help="Article or PDF URL to fetch.")
+    nn_x_parser.add_argument(
+        "--max-extract-chars",
+        type=int,
+        default=500_000,
+        help="Max characters to keep from extracted text (default 500000).",
+    )
+    nn_x_parser.add_argument(
+        "--include-text",
+        action="store_true",
+        help="Include full extracted text in JSON (can be very large).",
+    )
+
     return parser
 
 
@@ -340,6 +401,46 @@ def main() -> None:
                 indent=2,
             )
         )
+        return
+
+    if args.command == "negative-news":
+        from src.negative_news import run_negative_news_pilot
+
+        max_art = int(args.max_articles)
+        result = run_negative_news_pilot(
+            settings,
+            names=list(args.names),
+            context_terms=list(args.context_terms or []),
+            name_aliases=list(args.name_aliases or []),
+            pages=int(args.pages),
+            num_per_page=int(args.num),
+            max_extract_chars=int(args.max_extract_chars),
+            max_articles_per_person=None if max_art <= 0 else max_art,
+            classify=not bool(args.no_classify),
+        )
+        out_json = json.dumps(result, indent=2, ensure_ascii=False, default=str)
+        out_path = str(getattr(args, "out", "") or "").strip()
+        if out_path:
+            p = Path(out_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(out_json, encoding="utf-8")
+            print(json.dumps({"ok": True, "output_path": str(p)}, indent=2))
+        else:
+            print(out_json)
+        return
+
+    if args.command == "negative-news-extract-test":
+        from src.negative_news import extraction_report_summary, fetch_and_extract_article
+
+        fetch_dir = Path(settings.cache_dir) / "negative_news" / "fetch"
+        report = fetch_and_extract_article(
+            settings,
+            str(args.url),
+            cache_dir=fetch_dir,
+            max_extract_chars=int(args.max_extract_chars),
+        )
+        summary = extraction_report_summary(report, include_full_text=bool(args.include_text))
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
         return
 
     parser.error(f"Unknown command: {args.command}")

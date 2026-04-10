@@ -67,6 +67,9 @@ python -m src.cli run-name "Jane Smith"
 # Or run multiple seeds with overlap analysis
 python -m src.cli run-seeds "Jane Smith" "John Doe"
 
+# Pilot adverse-media search for one or more people
+python -m src.cli negative-news --pages 2 --num 10 "Jane Smith"
+
 # Launch the web UI
 python -m src.cli web-ui
 
@@ -87,6 +90,26 @@ python scripts/rebuild_graph.py
 | `step3-people RUN_ID` | People expansion only |
 | `step4-ofac RUN_ID` | Sanctions screening only |
 | `rank` | Rank people by connections |
+| `negative-news NAME [NAME ...]` | Serper + extraction + Gemini adverse-media pilot |
+| `negative-news-extract-test URL` | Fetch one article and inspect extraction QA |
 | `export-network --run-id ID` | Export graph as JSON |
 | `web-ui` | Launch the Flask web UI |
 | `healthcheck` | Check API keys and tooling |
+
+## Negative-news pilot
+
+`negative-news` is a standalone adverse-media pass that:
+
+1. Searches Serper for quoted English and generated Arabic name variants.
+2. Fetches the linked page and extracts whole-page text for review.
+3. Uses Gemini to classify strict Muslim Brotherhood and broader Islamist connectedness signals.
+
+Useful flags:
+
+- `--context-term "ORG NAME"` adds quoted org phrases to the quoted name queries.
+- When a quoted org term is used, results are only kept if that exact org phrase appears in the search title, snippet, or extracted page text.
+- `--max-articles` caps fetch/classification volume per person.
+- `--no-classify` runs discovery and extraction only.
+- `--out PATH` writes the JSON report to disk.
+
+Use `negative-news-extract-test` when you want to QA a single URL's extraction output before spending Gemini calls on larger runs.
