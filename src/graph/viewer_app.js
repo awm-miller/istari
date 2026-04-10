@@ -400,6 +400,35 @@
     }
   }
 
+  function walkUpstreamFromNode(nodeId, visibleIds, visited) {
+    if (visited.has(nodeId)) return;
+    visited.add(nodeId);
+    const node = nodeById.get(nodeId);
+    if (!node || node.kind === "seed") return;
+    visibleIds.add(nodeId);
+    const nodeLane = node.lane ?? 0;
+    (edgesByNodeId.get(nodeId) || []).forEach((edge) => {
+      const otherId = edge.source === nodeId ? edge.target : edge.source;
+      const otherNode = nodeById.get(otherId);
+      if (!otherNode || otherNode.kind === "seed") return;
+      const otherLane = otherNode.lane ?? 0;
+      if (otherLane < nodeLane) walkUpstreamFromNode(otherId, visibleIds, visited);
+    });
+  }
+
+  function expandOpenLetterUpstreamContext(visibleIds, upstreamVisited) {
+    [...visibleIds].forEach((nodeId) => {
+      const docNode = lowConfidenceNodeById.get(nodeId) || null;
+      if (!isLowConfidenceDocumentNode(docNode)) return;
+      const cluster = collectExpandedLowConfidenceCluster(nodeId);
+      cluster.nodeIds.forEach((connectedNodeId) => {
+        const connectedNode = nodeById.get(connectedNodeId);
+        if (!connectedNode || connectedNode.kind !== "organisation") return;
+        walkUpstreamFromNode(connectedNodeId, visibleIds, upstreamVisited);
+      });
+    });
+  }
+
   function nodeColorValue(node) {
     const kind = normalizeNodeKind(node);
     if (node.sanctioned) return COLORS.red;
@@ -897,6 +926,7 @@
     const downstreamVisited = new Set();
     matchedIds.forEach((id) => walkLane(id, downstreamVisited, (other, self) => other > self));
     expandLowConfidenceSearchContext(matchedIds, visibleIds, { includeLowConfidence });
+    expandOpenLetterUpstreamContext(visibleIds, upstreamVisited);
     [...visibleIds]
       .map((id) => nodeById.get(id))
       .filter((node) => node?.kind === "organisation")
@@ -983,11 +1013,13 @@
         new Set(),
         { includeLowConfidence },
       );
+      expandOpenLetterUpstreamContext(visibleIds, new Set());
       const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
       return { projectionType: "focused", includeLowConfidence, rootIds: [], visibleIds, edgeIds };
     }
     const subgraph = collectConnectedSubgraph(rootIds);
     const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(subgraph.reachableIds)), rootIds, { includeLowConfidence });
+    expandOpenLetterUpstreamContext(visibleIds, new Set());
     const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
     return { projectionType: "focused", includeLowConfidence, rootIds: [...rootIds], visibleIds, edgeIds };
   }
