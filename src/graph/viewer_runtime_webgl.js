@@ -347,6 +347,9 @@
           drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
         } else {
           nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned ? 1 : 0.7) });
+          if (node._lowConfidenceOnlyVisible) {
+            drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
+          }
         }
         if (node.sanctioned) {
           overlayLayer.roundRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8, (bounds.height + 8) / 2);

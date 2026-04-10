@@ -55,6 +55,7 @@
   let baseNodes = rawMainNodes.slice();
   let baseEdges = rawMainEdges.slice();
   let baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
+  let baseEdgesByNodeId = new Map();
   let allNodes = baseNodes.slice();
   let allEdges = baseEdges.slice();
   let visibleNodes = [];
@@ -357,8 +358,9 @@
     viewerState.expandedLowConfidenceNodeIds = nextIds;
   }
 
-  function expandLowConfidenceSearchContext(seedIds, visibleIds) {
-    if (!viewerState.showLowConfidence) return;
+  function expandLowConfidenceSearchContext(seedIds, visibleIds, options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    if (!includeLowConfidence) return;
     const queue = [];
     const visited = new Set();
     seedIds.forEach((id) => {
@@ -528,6 +530,7 @@
         .filter((node) => node.kind === "seed" && viewerState.searchQuery && nodeMatchesQuery(node, viewerState.searchQuery))
         .map((node) => node.id),
     );
+    const activeAnchorIds = new Set();
     const activeLowNodeIds = new Set();
     const activeLowEdgeIds = new Set();
     lowConfidenceEdges.forEach((edge) => {
@@ -535,6 +538,8 @@
         activeLowEdgeIds.add(edge.id);
         if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
         if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
+        if (mainNodeIds.has(edge.source)) activeAnchorIds.add(edge.source);
+        if (mainNodeIds.has(edge.target)) activeAnchorIds.add(edge.target);
         if (baseNodeById.get(edge.source)?.kind === "seed") activeSeedIds.add(edge.source);
         if (baseNodeById.get(edge.target)?.kind === "seed") activeSeedIds.add(edge.target);
       }
@@ -544,6 +549,16 @@
       cluster.edgeIds.forEach((edgeId) => activeLowEdgeIds.add(edgeId));
       cluster.nodeIds.forEach((visibleNodeId) => {
         if (!mainNodeIds.has(visibleNodeId)) activeLowNodeIds.add(visibleNodeId);
+        else activeAnchorIds.add(visibleNodeId);
+      });
+    });
+    [...activeAnchorIds].forEach((nodeId) => {
+      const node = baseNodeById.get(nodeId);
+      if (!isPersonAnchorNode(node) || node?.kind === "seed") return;
+      (baseEdgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        if (edge.kind !== "alias") return;
+        const otherId = edge.source === nodeId ? edge.target : edge.source;
+        if (baseNodeById.get(otherId)?.kind === "seed") activeSeedIds.add(otherId);
       });
     });
     allNodes = baseNodes
@@ -753,13 +768,14 @@
   }
 
   function applyTypeFilters(visibleIds, rootIds, options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     if (!visibleIds.size) return new Set();
     const filteredIds = new Set(
       [...visibleIds].filter((id) => {
         const node = nodeById.get(id);
         if (!node) return false;
-        if (node.kind === "seed" && !viewerState.showLowConfidence && !rootIds.has(id)) return false;
-        if (node.is_low_confidence && !viewerState.showLowConfidence) return false;
+        if (node.kind === "seed" && !includeLowConfidence && !rootIds.has(id)) return false;
+        if (node.is_low_confidence && !includeLowConfidence) return false;
         const typeKey = nodeTypeKey(node);
         if (!isFilterableType(typeKey)) return true;
         return !viewerState.hiddenTypes.has(typeKey);
@@ -782,6 +798,7 @@
       const degree = new Map();
       filteredIds.forEach((id) => degree.set(id, 0));
       allEdges.forEach((edge) => {
+        if (!includeLowConfidence && edge.is_low_confidence) return;
         if (!filteredIds.has(edge.source) || !filteredIds.has(edge.target)) return;
         degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
         degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
@@ -808,7 +825,8 @@
     return expandedIds;
   }
 
-  function buildSearchProjection(matchedIds) {
+  function buildSearchProjection(matchedIds, options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     const visibleIds = new Set();
     matchedIds.forEach((id) => visibleIds.add(id));
     function walkLane(nodeId, visited, directionFn) {
@@ -858,7 +876,7 @@
     });
     const downstreamVisited = new Set();
     matchedIds.forEach((id) => walkLane(id, downstreamVisited, (other, self) => other > self));
-    expandLowConfidenceSearchContext(matchedIds, visibleIds);
+    expandLowConfidenceSearchContext(matchedIds, visibleIds, { includeLowConfidence });
     [...visibleIds]
       .map((id) => nodeById.get(id))
       .filter((node) => node?.kind === "organisation")
@@ -872,12 +890,20 @@
           if (nodeById.get(otherId)?.kind === "address") visibleIds.add(otherId);
         });
       });
-    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), matchedIds, { keepDisconnectedIdentities: true });
-    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
-    return { rootIds: matchedIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), matchedIds, { keepDisconnectedIdentities: true, includeLowConfidence });
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+    return {
+      projectionType: "search",
+      includeLowConfidence,
+      seedIds: [...matchedIds],
+      rootIds: [...matchedIds],
+      visibleIds: filteredVisibleIds,
+      edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)),
+    };
   }
 
-  function buildIndirectOrgProjection() {
+  function buildIndirectOrgProjection(options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     const qualifyingOrgIds = new Set();
     indirectIdentityIdsByOrg.forEach((identityIds, orgId) => {
       if (identityIds.size >= 2) qualifyingOrgIds.add(orgId);
@@ -891,12 +917,19 @@
       });
       (indirectIdentityIdsByOrg.get(orgId) || new Set()).forEach((identityId) => visibleIds.add(identityId));
     });
-    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), qualifyingOrgIds, { keepDisconnectedIdentities: true });
-    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && !edge.is_low_confidence);
-    return { rootIds: qualifyingOrgIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), qualifyingOrgIds, { keepDisconnectedIdentities: true, includeLowConfidence });
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+    return {
+      projectionType: "indirect",
+      includeLowConfidence,
+      rootIds: [...qualifyingOrgIds],
+      visibleIds: filteredVisibleIds,
+      edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)),
+    };
   }
 
-  function buildSanctionedProjection() {
+  function buildSanctionedProjection(options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     const sanctionedIds = new Set(
       allNodes
         .filter((node) => node.kind !== "seed" && node.sanctioned)
@@ -911,21 +944,53 @@
         visibleIds.add(otherId);
       });
     });
-    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), sanctionedIds, { keepDisconnectedIdentities: true });
-    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
-    return { rootIds: sanctionedIds, visibleIds: filteredVisibleIds, edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)) };
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), sanctionedIds, { keepDisconnectedIdentities: true, includeLowConfidence });
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+    return {
+      projectionType: "sanctioned",
+      includeLowConfidence,
+      rootIds: [...sanctionedIds],
+      visibleIds: filteredVisibleIds,
+      edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)),
+    };
   }
 
-  function buildFocusedProjection(rootIds) {
+  function buildFocusedProjection(rootIds, options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     if (!rootIds.size) {
-      const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id))), new Set());
-      const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
-      return { rootIds, visibleIds, edgeIds };
+      const visibleIds = applyTypeFilters(
+        expandRelatedAddresses(new Set(allNodes.filter((node) => node.kind !== "seed").map((node) => node.id))),
+        new Set(),
+        { includeLowConfidence },
+      );
+      const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+      return { projectionType: "focused", includeLowConfidence, rootIds: [], visibleIds, edgeIds };
     }
     const subgraph = collectConnectedSubgraph(rootIds);
-    const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(subgraph.reachableIds)), rootIds);
-    const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (viewerState.showLowConfidence || !edge.is_low_confidence));
-    return { rootIds, visibleIds, edgeIds };
+    const visibleIds = applyTypeFilters(expandRelatedAddresses(new Set(subgraph.reachableIds)), rootIds, { includeLowConfidence });
+    const edgeIds = allEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+    return { projectionType: "focused", includeLowConfidence, rootIds: [...rootIds], visibleIds, edgeIds };
+  }
+
+  function lowConfidenceOnlyVisibleNodeIdsForProjection(projection) {
+    if (!projection?.includeLowConfidence) return new Set();
+    let baseline = null;
+    if (projection.projectionType === "search") {
+      baseline = buildSearchProjection(new Set(projection.seedIds || []), { includeLowConfidence: false });
+    } else if (projection.projectionType === "indirect") {
+      baseline = buildIndirectOrgProjection({ includeLowConfidence: false });
+    } else if (projection.projectionType === "sanctioned") {
+      baseline = buildSanctionedProjection({ includeLowConfidence: false });
+    } else {
+      baseline = buildFocusedProjection(new Set(projection.rootIds || []), { includeLowConfidence: false });
+    }
+    return new Set(
+      [...projection.visibleIds].filter((nodeId) => {
+        if (baseline.visibleIds.has(nodeId)) return false;
+        const node = nodeById.get(nodeId);
+        return !!node && !node.is_low_confidence && (node.kind === "person" || node.kind === "organisation");
+      }),
+    );
   }
 
   function projectVisibleGraph() {
@@ -1105,9 +1170,10 @@
 
   function buildSceneForProjection(projection, bounds) {
     const rootIds = new Set(projection.rootIds || []);
+    const lowConfidenceOnlyIds = lowConfidenceOnlyVisibleNodeIdsForProjection(projection);
     const sceneNodes = allNodes
       .filter((node) => projection.visibleIds.has(node.id))
-      .map((node) => ({ ...node, _visible: true }));
+      .map((node) => ({ ...node, _visible: true, _lowConfidenceOnlyVisible: lowConfidenceOnlyIds.has(node.id) }));
     const sceneEdges = projection.edgeIds
       .filter((edge) => projection.visibleIds.has(edge.source) && projection.visibleIds.has(edge.target))
       .map((edge) => ({ ...edge }));
@@ -1567,6 +1633,13 @@
     baseNodes = merged.nodes.slice();
     baseEdges = merged.edges.slice();
     baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
+    baseEdgesByNodeId = new Map();
+    baseEdges.forEach((edge) => {
+      if (!baseEdgesByNodeId.has(edge.source)) baseEdgesByNodeId.set(edge.source, []);
+      if (!baseEdgesByNodeId.has(edge.target)) baseEdgesByNodeId.set(edge.target, []);
+      baseEdgesByNodeId.get(edge.source).push(edge);
+      baseEdgesByNodeId.get(edge.target).push(edge);
+    });
   }
 
   function evidenceLabelForEdge(edge) {
@@ -1603,9 +1676,15 @@
               .join(" · ");
             return `
               <div class="analysis-claim">
-                <div class="analysis-claim-text">${index + 1}. ${escapeHtml(plainText(tooltipLinesForEdge(edge)[0] || ""))}</div>
-                <div class="analysis-path-item">${escapeHtml(sourceNode?.label || edge.source)} -> ${escapeHtml(targetNode?.label || edge.target)} · ${escapeHtml(edgeSubtitle(edge) || "link")}</div>
-                <div class="analysis-claim-evidence">${links || '<span class="dim">No linked evidence.</span>'}</div>
+                <div class="analysis-claim-header">
+                  <div class="analysis-claim-index">${index + 1}</div>
+                  <div class="analysis-claim-text">${escapeHtml(plainText(tooltipLinesForEdge(edge)[0] || ""))}</div>
+                </div>
+                <div class="analysis-claim-route">${escapeHtml(sourceNode?.label || edge.source)} -> ${escapeHtml(targetNode?.label || edge.target)} · ${escapeHtml(edgeSubtitle(edge) || "link")}</div>
+                <div class="analysis-claim-evidence">
+                  <span class="analysis-claim-evidence-label">Evidence</span>
+                  ${links || '<span class="dim">No linked evidence.</span>'}
+                </div>
               </div>
             `;
           }).join("") : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>'}
@@ -1875,8 +1954,14 @@
               .join(" · ");
             return `
               <div class="analysis-claim">
-                <div class="analysis-claim-text">${index + 1}. ${escapeHtml(claim.text || "")}</div>
-                <div class="analysis-claim-evidence">${links}</div>
+                <div class="analysis-claim-header">
+                  <div class="analysis-claim-index">${index + 1}</div>
+                  <div class="analysis-claim-text">${escapeHtml(claim.text || "")}</div>
+                </div>
+                <div class="analysis-claim-evidence">
+                  <span class="analysis-claim-evidence-label">Evidence</span>
+                  ${links || '<span class="dim">No linked evidence.</span>'}
+                </div>
               </div>
             `;
           }).join("")}</div>`
