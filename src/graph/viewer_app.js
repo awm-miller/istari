@@ -530,7 +530,6 @@
         .filter((node) => node.kind === "seed" && viewerState.searchQuery && nodeMatchesQuery(node, viewerState.searchQuery))
         .map((node) => node.id),
     );
-    const activeAnchorIds = new Set();
     const activeLowNodeIds = new Set();
     const activeLowEdgeIds = new Set();
     lowConfidenceEdges.forEach((edge) => {
@@ -538,8 +537,6 @@
         activeLowEdgeIds.add(edge.id);
         if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
         if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
-        if (mainNodeIds.has(edge.source)) activeAnchorIds.add(edge.source);
-        if (mainNodeIds.has(edge.target)) activeAnchorIds.add(edge.target);
         if (baseNodeById.get(edge.source)?.kind === "seed") activeSeedIds.add(edge.source);
         if (baseNodeById.get(edge.target)?.kind === "seed") activeSeedIds.add(edge.target);
       }
@@ -549,18 +546,9 @@
       cluster.edgeIds.forEach((edgeId) => activeLowEdgeIds.add(edgeId));
       cluster.nodeIds.forEach((visibleNodeId) => {
         if (!mainNodeIds.has(visibleNodeId)) activeLowNodeIds.add(visibleNodeId);
-        else activeAnchorIds.add(visibleNodeId);
       });
     });
-    [...activeAnchorIds].forEach((nodeId) => {
-      const node = baseNodeById.get(nodeId);
-      if (!isPersonAnchorNode(node) || node?.kind === "seed") return;
-      (baseEdgesByNodeId.get(nodeId) || []).forEach((edge) => {
-        if (edge.kind !== "alias") return;
-        const otherId = edge.source === nodeId ? edge.target : edge.source;
-        if (baseNodeById.get(otherId)?.kind === "seed") activeSeedIds.add(otherId);
-      });
-    });
+    activateOpenLetterUpstreamSeeds(activeLowNodeIds, activeSeedIds);
     allNodes = baseNodes
       .filter((node) => node.kind !== "seed" || activeSeedIds.has(node.id))
       .map((node) => ({ ...node }));
@@ -577,6 +565,38 @@
       if (!lowConfidenceEdgesByNodeId.has(edge.target)) lowConfidenceEdgesByNodeId.set(edge.target, []);
       lowConfidenceEdgesByNodeId.get(edge.source).push(edge);
       lowConfidenceEdgesByNodeId.get(edge.target).push(edge);
+    });
+  }
+
+  function activateSeedRootsForAnchorNode(nodeId, activeSeedIds) {
+    const queue = [nodeId];
+    const visited = new Set();
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+      (baseEdgesByNodeId.get(currentId) || []).forEach((edge) => {
+        if (edge.kind !== "alias") return;
+        const otherId = edge.source === currentId ? edge.target : edge.source;
+        if (visited.has(otherId)) return;
+        const otherNode = baseNodeById.get(otherId);
+        if (!otherNode || !isPersonAnchorNode(otherNode)) return;
+        if (otherNode.kind === "seed") activeSeedIds.add(otherId);
+        queue.push(otherId);
+      });
+    }
+  }
+
+  function activateOpenLetterUpstreamSeeds(activeLowNodeIds, activeSeedIds) {
+    [...activeLowNodeIds].forEach((nodeId) => {
+      const docNode = lowConfidenceNodeById.get(nodeId) || null;
+      if (!isLowConfidenceDocumentNode(docNode)) return;
+      const cluster = collectExpandedLowConfidenceCluster(nodeId);
+      cluster.nodeIds.forEach((connectedNodeId) => {
+        const anchorNode = baseNodeById.get(connectedNodeId) || null;
+        if (!anchorNode || !isPersonAnchorNode(anchorNode) || anchorNode.kind === "seed") return;
+        activateSeedRootsForAnchorNode(connectedNodeId, activeSeedIds);
+      });
     });
   }
 
