@@ -158,17 +158,10 @@ def _looks_like_pdf(url: str) -> bool:
     return bool(re.search(r"\.pdf($|[?#])", str(url or ""), flags=re.IGNORECASE))
 
 
-def _extract_pdf_text(data: bytes) -> str:
-    import fitz  # PyMuPDF
+def _extract_pdf_text(pdf_path: Path) -> str:
+    from src.services.pdf_enrichment import _ocr_pdf
 
-    doc = fitz.open(stream=data, filetype="pdf")
-    parts: list[str] = []
-    try:
-        for page in doc:
-            parts.append(page.get_text())
-    finally:
-        doc.close()
-    return "\n\n".join(p for p in parts if p and str(p).strip())
+    return _ocr_pdf(pdf_path)
 
 
 @dataclass(slots=True)
@@ -342,7 +335,7 @@ def fetch_and_extract_article(
     if is_pdf:
         pdf_cache.write_bytes(body)
         try:
-            plain = _extract_pdf_text(body)
+            plain = _extract_pdf_text(pdf_cache)
         except Exception as exc:
             return ExtractionReport(
                 url=url,

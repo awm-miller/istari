@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from src.config import Settings
+from src.gemini_api import GeminiClient, extract_gemini_text
 
 
 _CATEGORY_PRIORITY = {
@@ -15,6 +16,7 @@ _CATEGORY_PRIORITY = {
     "writes_for_mb_outlet": 1,
     "other_mb_alignment": 2,
 }
+_ARABIC_SCRIPT_RE = re.compile(r"[\u0600-\u06FF]")
 
 
 def resolve_negative_news_db_path(settings: Settings) -> Path:
@@ -55,6 +57,23 @@ def _extract_claims_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     return claims
 
 
+def _needs_title_translation(title: str) -> bool:
+    return bool(_ARABIC_SCRIPT_RE.search(title or ""))
+
+
+def _translate_title_to_english(*, gemini: GeminiClient, title: str) -> str:
+    prompt = f"""Translate this news headline into concise natural English.
+
+Return only the English headline text, with no quotes and no explanation.
+If it is already in English, return it unchanged.
+
+Headline:
+{title}
+"""
+    response = gemini.generate(model="gemini-2.0-flash", prompt=prompt, temperature=0.0)
+    return extract_gemini_text(response).strip()
+
+
 def _latest_cluster_claims(database_path: Path) -> dict[str, list[dict[str, Any]]]:
     if not database_path.exists():
         return {}
@@ -93,25 +112,46 @@ def _latest_cluster_claims(database_path: Path) -> dict[str, list[dict[str, Any]
     return claims_by_cluster
 
 
-def _adverse_media_warning(claims: list[dict[str, Any]]) -> str:
-    counts = Counter(str(claim.get("category") or "").strip() for claim in claims)
-    parts = []
-    for category in ("explicit_mb_connection", "writes_for_mb_outlet", "other_mb_alignment"):
-        count = counts.get(category, 0)
-        if count:
-            parts.append(f"{count} {category.replace('_', ' ')}")
-    suffix = f": {', '.join(parts)}" if parts else ""
-    return f"\u26a0\ufe0f <strong>ADVERSE MEDIA</strong>{suffix}"
-
+def _translate_claim_titles(
+    claims_by_cluster: dict[str, list[dict[str, Any]]],
+    *,
+    settings: Settings,
+) -> dict[str, list[dict[str, Any]]]:
+    if not settings.gemini_api_key:
+        return claims_by_cluster
+    gemini = GeminiClient(
+        api_key=settings.gemini_api_key,
+        cache_dir=settings.cache_dir / "negative_news" / "title_translate",
+        timeout_seconds=20.0,
+        attempts=2,
+    )
+    translated: dict[str, list[dict[str, Any]]] = {}
+    for cluster_id, claims in claims_by_cluster.items():
+        next_claims: list[dict[str, Any]] = []
+        for claim in claims:
+            next_claim = dict(claim)
+            title = str(claim.get("title") or "").strip()
+            if title and _needs_title_translation(title):
+                try:
+                    translated_title = _translate_title_to_english(gemini=gemini, title=title)
+                except Exception:
+                    translated_title = ""
+                if translated_title:
+                    next_claim["translated_title"] = translated_title
+            next_claims.append(next_claim)
+        translated[cluster_id] = next_claims
+    return translated
 
 def annotate_graph_with_adverse_media(
     data: dict[str, Any],
     *,
+    settings: Settings,
     database_path: Path,
 ) -> dict[str, Any]:
     claims_by_cluster = _latest_cluster_claims(database_path)
     if not claims_by_cluster:
         return data
+    claims_by_cluster = _translate_claim_titles(claims_by_cluster, settings=settings)
 
     for node in data.get("nodes", []):
         if not isinstance(node, dict):
@@ -123,8 +163,4 @@ def annotate_graph_with_adverse_media(
         node["adverse_media_hit"] = True
         node["adverse_media_count"] = len(claims)
         node["adverse_media_claims"] = claims
-        tooltip_lines = list(node.get("tooltip_lines") or [])
-        warning = _adverse_media_warning(claims)
-        if not tooltip_lines or tooltip_lines[0] != warning:
-            node["tooltip_lines"] = [warning, *tooltip_lines]
     return data

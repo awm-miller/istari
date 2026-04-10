@@ -360,8 +360,8 @@
           overlayLayer.stroke({ color: 0xff8a8a, width: isHovered ? 3.4 : 2.8, alpha: 1 });
         } else if (node.adverse_media_hit) {
           overlayLayer.roundRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8, (bounds.height + 8) / 2);
-          overlayLayer.fill({ color: 0xf59e0b, alpha: 0.10 });
-          overlayLayer.stroke({ color: 0xfbbf24, width: isHovered ? 3.2 : 2.6, alpha: 1 });
+          overlayLayer.fill({ color: 0xf97316, alpha: 0.14 });
+          overlayLayer.stroke({ color: 0xff6a00, width: isHovered ? 3.3 : 2.7, alpha: 1 });
         }
 
       });

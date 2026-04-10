@@ -80,7 +80,7 @@ refresh_sanctions_for_runs(run_ids)
 print(f"Consolidating runs {run_ids}...", flush=True)
 data = consolidate_multi_run(run_ids)
 negative_news_db_path = resolve_negative_news_db_path(settings)
-data = annotate_graph_with_adverse_media(data, database_path=negative_news_db_path)
+data = annotate_graph_with_adverse_media(data, settings=settings, database_path=negative_news_db_path)
 print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 
 low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data.get("run_id", ""))}}

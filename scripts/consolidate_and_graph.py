@@ -1618,10 +1618,6 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         tooltip.append(f"{node['org_count']} orgs, {node['role_count']} roles, score {node['score']}")
         if len(merged_person_seeds.get(merged_id, set())) > 1 and not identity_refs:
             tooltip.append(f"Appears under: {', '.join(sorted(merged_person_seeds[merged_id]))}")
-        if identity_refs:
-            tooltip.append("Appears under identities:")
-            for row in identity_refs[:10]:
-                tooltip.append(f"  {row['seed']}: {row['identity']}")
         seen_lines: set[tuple[str, str]] = set()
         for row in merged_person_roles.get(merged_id, []):
             key = (str(row["phrase"]), str(row["org"]))

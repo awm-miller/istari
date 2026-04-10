@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run negative-news cluster chunks sequentially with resume support.",
     )
     parser.add_argument("--start-offset", type=int, default=0, help="First cluster offset to process.")
-    parser.add_argument("--chunk-size", type=int, default=50, help="Clusters per chunk.")
+    parser.add_argument("--chunk-size", type=int, default=50, help="Retained for compatibility; processing now isolates one cluster per subprocess.")
     parser.add_argument("--stop-offset", type=int, default=-1, help="Optional exclusive upper offset limit.")
     parser.add_argument("--broad-pages", type=int, default=10, help="Broad search pages per alias.")
     parser.add_argument("--org-pages", type=int, default=2, help="Org-qualified search pages per alias.")
@@ -56,6 +56,39 @@ def _chunk_config(
     }
 
 
+def _append_skip_log(
+    path: Path,
+    *,
+    offset: int,
+    returncode: int,
+    attempts: int,
+    label: str = "",
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "offset": int(offset),
+                    "label": str(label),
+                    "returncode": int(returncode),
+                    "attempts": int(attempts),
+                    "skipped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+
+def _cluster_label(repository: Repository, *, offset: int) -> str:
+    source = load_negative_news_clusters(repository, offset=offset, limit=1)
+    clusters = list(source.get("clusters") or [])
+    if not clusters:
+        return ""
+    return str(clusters[0].get("label") or "")
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -74,16 +107,16 @@ def main() -> None:
         return
 
     stop_offset = total_available if int(args.stop_offset) < 0 else min(int(args.stop_offset), total_available)
-    chunk_size = max(1, int(args.chunk_size))
 
     store = NegativeNewsStore(
         _negative_news_db_path(settings),
         settings.project_root / "src" / "storage" / "negative_news_schema.sql",
     )
     store.init_db()
+    skip_log_path = settings.project_root / "data" / "negative_news_skipped_clusters.jsonl"
 
-    for offset in range(max(0, int(args.start_offset)), stop_offset, chunk_size):
-        limit = min(chunk_size, stop_offset - offset)
+    for offset in range(max(0, int(args.start_offset)), stop_offset):
+        limit = 1
         config = _chunk_config(
             offset=offset,
             limit=limit,
@@ -94,6 +127,7 @@ def main() -> None:
             run_ids=run_ids,
         )
         output_path = settings.project_root / "data" / f"negative_news_clusters_offset{offset}_limit{limit}.json"
+        final_returncode = 0
         for attempt in range(1, int(args.max_passes) + 1):
             cmd = [
                 sys.executable,
@@ -130,12 +164,30 @@ def main() -> None:
             proc = subprocess.run(cmd, check=False)
             row = store.get_batch_run_by_config(config)
             if row is None:
-                if proc.returncode != 0:
-                    raise SystemExit(proc.returncode)
-                raise RuntimeError(f"Missing negative-news batch row for offset={offset} limit={limit}")
+                final_returncode = int(proc.returncode or 0)
+                print(
+                    json.dumps(
+                        {
+                            "chunk_offset": offset,
+                            "chunk_limit": limit,
+                            "attempt": attempt,
+                            "returncode": proc.returncode,
+                            "status": "missing_batch_row",
+                            "completed_clusters": 0,
+                            "total_clusters": 1,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if attempt < int(args.max_passes):
+                    time.sleep(min(60.0, 2.0 ** attempt))
+                    continue
+                break
             completed = int(row["completed_clusters"] or 0)
             total_clusters = int(row["total_clusters"] or 0)
             status = str(row["status"] or "")
+            final_returncode = int(proc.returncode or 0)
             print(
                 json.dumps(
                     {
@@ -153,11 +205,39 @@ def main() -> None:
             )
             if status == "completed" and completed >= total_clusters:
                 break
-            if attempt >= int(args.max_passes):
-                raise RuntimeError(
-                    f"Chunk offset={offset} limit={limit} did not complete after {attempt} passes."
-                )
-            time.sleep(2.0)
+            if attempt < int(args.max_passes):
+                time.sleep(min(60.0, 2.0 ** attempt))
+        else:
+            final_returncode = 1
+
+        row = store.get_batch_run_by_config(config)
+        completed = int(row["completed_clusters"] or 0) if row is not None else 0
+        total_clusters = int(row["total_clusters"] or 1) if row is not None else 1
+        status = str(row["status"] or "") if row is not None else ""
+        if status == "completed" and completed >= total_clusters:
+            continue
+
+        label = _cluster_label(repository, offset=offset)
+        _append_skip_log(
+            skip_log_path,
+            offset=offset,
+            returncode=final_returncode,
+            attempts=int(args.max_passes),
+            label=label,
+        )
+        print(
+            json.dumps(
+                {
+                    "chunk_offset": offset,
+                    "chunk_limit": limit,
+                    "status": "skipped",
+                    "label": label,
+                    "returncode": final_returncode,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

@@ -340,8 +340,8 @@ body {{
   text-shadow: 0 0 12px rgba(255, 99, 99, 0.45);
 }
 .graph-node-label.adverse-media {{
-  color: #ffe7c2;
-  text-shadow: 0 0 12px rgba(251, 191, 36, 0.42);
+  color: #ffd1ad;
+  text-shadow: 0 0 12px rgba(249, 115, 22, 0.55);
 }
 .graph-node-label.hovered {
   color: var(--text-bright);
@@ -636,27 +636,27 @@ body {{
 .analysis-claim-quote {{
   font-size: 12px;
   line-height: 1.6;
-  color: #ffdca8;
-  border-left: 2px solid rgba(251, 191, 36, 0.45);
+  color: #ffd1ad;
+  border-left: 2px solid rgba(249, 115, 22, 0.55);
   padding-left: 10px;
 }}
 .adverse-media-claim {{
-  border-color: rgba(251, 191, 36, 0.22);
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.10), rgba(255,255,255,0.03));
+  border-color: rgba(249, 115, 22, 0.28);
+  background: linear-gradient(180deg, rgba(249, 115, 22, 0.14), rgba(255,255,255,0.03));
 }}
 .adverse-media-claim .analysis-claim-index {{
-  background: rgba(245, 158, 11, 0.16);
-  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(249, 115, 22, 0.2);
+  border-color: rgba(249, 115, 22, 0.42);
 }}
 .adverse-media-claim .analysis-claim-evidence a {{
-  border-color: rgba(251, 191, 36, 0.28);
-  background: rgba(245, 158, 11, 0.12);
-  color: #ffd08a;
+  border-color: rgba(249, 115, 22, 0.34);
+  background: rgba(249, 115, 22, 0.16);
+  color: #ffc18c;
 }}
 .adverse-media-claim .analysis-claim-evidence a:hover {{
   color: var(--text-bright);
-  border-color: rgba(251, 191, 36, 0.42);
-  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(249, 115, 22, 0.5);
+  background: rgba(249, 115, 22, 0.24);
 }}
 .analysis-claim-evidence {{
   display: flex;

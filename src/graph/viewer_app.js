@@ -1737,7 +1737,7 @@
         <div class="analysis-section-title">Adverse media</div>
         <div class="analysis-claims">
           ${claims.map((claim, index) => {
-            const title = String(claim?.title || "").trim();
+            const title = String(claim?.translated_title || claim?.title || "").trim();
             const category = adverseMediaCategoryLabel(String(claim?.category || "").trim());
             const confidence = Number(claim?.confidence || 0);
             const rationale = String(claim?.short_rationale || "").trim();
