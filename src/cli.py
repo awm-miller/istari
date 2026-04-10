@@ -220,6 +220,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Batch adverse-media screening for top merged person clusters from the combined graph.",
     )
     nn_clusters_parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Skip this many merged clusters before screening (default 0).",
+    )
+    nn_clusters_parser.add_argument(
         "--limit",
         type=int,
         default=50,
@@ -501,6 +507,7 @@ def main() -> None:
         result = run_negative_news_cluster_batch(
             settings,
             repository,
+            offset=int(args.offset),
             limit=int(args.limit),
             broad_pages=int(args.broad_pages),
             org_pages=int(args.org_pages),

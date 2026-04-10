@@ -18,6 +18,7 @@ class GeminiClient:
     cache_dir: Path
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     timeout_seconds: float = 60.0
+    attempts: int = 3
 
     def __post_init__(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -60,10 +61,9 @@ class GeminiClient:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        attempts = 3
         backoff_seconds = (1.0, 2.0, 4.0)
         last_error: RuntimeError | None = None
-        for attempt in range(attempts):
+        for attempt in range(self.attempts):
             try:
                 with request.urlopen(req, timeout=self.timeout_seconds) as resp:
                     result = json.loads(resp.read().decode("utf-8"))
@@ -71,27 +71,27 @@ class GeminiClient:
             except error.HTTPError as exc:
                 body = exc.read().decode("utf-8", errors="replace")
                 last_error = RuntimeError(f"Gemini request failed: {exc.code} {body}")
-                if exc.code in {429, 500, 502, 503, 504} and attempt < attempts - 1:
+                if exc.code in {429, 500, 502, 503, 504} and attempt < self.attempts - 1:
                     wait = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
                     log.warning(
                         "Gemini transient error %s, retrying in %.1fs (attempt %d/%d)",
                         exc.code,
                         wait,
                         attempt + 1,
-                        attempts,
+                        self.attempts,
                     )
                     time.sleep(wait)
                     continue
                 raise last_error from exc
             except Exception as exc:
                 last_error = RuntimeError(f"Gemini request failed: {exc}")
-                if attempt < attempts - 1:
+                if attempt < self.attempts - 1:
                     wait = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
                     log.warning(
                         "Gemini request error, retrying in %.1fs (attempt %d/%d): %s",
                         wait,
                         attempt + 1,
-                        attempts,
+                        self.attempts,
                         exc,
                     )
                     time.sleep(wait)

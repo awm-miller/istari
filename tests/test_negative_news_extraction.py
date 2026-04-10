@@ -5,6 +5,7 @@ from __future__ import annotations
 import scripts.consolidate_and_graph as consolidate_and_graph
 
 from src.negative_news import _collect_search_hits
+from src.negative_news import _collect_cluster_search_hits
 from src.negative_news import _required_term_match_locations
 from src.negative_news import _should_skip_result_url
 from src.negative_news import build_cluster_query_specs
@@ -137,7 +138,41 @@ def test_collect_search_hits_dedupes_urls_across_cluster_alias_queries() -> None
     assert hits[0]["query"] == '"Bilal Yasin"'
 
 
-def test_load_negative_news_clusters_uses_combined_merged_people(monkeypatch: object) -> None:
+def test_collect_cluster_search_hits_reserves_capacity_for_org_queries() -> None:
+    specs = build_cluster_query_specs(
+        ["Bilal Yasin", "Bilal Khalil Hasan Yasin"],
+        ["بلال ياسين"],
+        context_terms=["Development and Training Academy"],
+        broad_pages=1,
+        org_pages=1,
+    )
+
+    def fake_search(_settings: object, *, query: str, page: int, num: int, cache_dir: object) -> list[dict[str, str]]:
+        return [
+            {
+                "title": query,
+                "link": f"https://example.com/{abs(hash(query))}",
+                "snippet": query,
+            }
+        ]
+
+    hits = _collect_cluster_search_hits(
+        settings=object(),  # type: ignore[arg-type]
+        query_specs=specs,
+        num_per_page=10,
+        cache_dir="cache",  # type: ignore[arg-type]
+        max_articles=4,
+        search_func=fake_search,
+    )
+    assert len(hits) == 4
+    assert any(hit["bucket"] == "broad" for hit in hits)
+    assert any(hit["bucket"] == "org" for hit in hits)
+
+
+def test_load_negative_news_clusters_uses_combined_merged_people_and_suppresses_stdout(
+    monkeypatch: object,
+    capsys: object,
+) -> None:
     class FakeRepository:
         def get_latest_unique_run_ids(self) -> list[int]:
             return [11, 22]
@@ -148,6 +183,7 @@ def test_load_negative_news_clusters_uses_combined_merged_people(monkeypatch: ob
 
     def fake_consolidate_multi_run(run_ids: list[int]) -> dict[str, object]:
         assert run_ids == [11, 22]
+        print("noisy consolidate output")
         return {
             "nodes": [
                 {
@@ -180,8 +216,11 @@ def test_load_negative_news_clusters_uses_combined_merged_people(monkeypatch: ob
 
     monkeypatch.setattr(consolidate_and_graph, "consolidate_multi_run", fake_consolidate_multi_run)
     result = load_negative_news_clusters(FakeRepository(), limit=1)  # type: ignore[arg-type]
+    captured = capsys.readouterr()
+    assert captured.out == ""
     assert result == {
         "run_ids": [11, 22],
+        "total_available": 2,
         "clusters": [
             {
                 "cluster_id": "merged_person:2",
@@ -221,6 +260,11 @@ def test_required_term_match_locations_returns_empty_when_org_phrase_absent() ->
 
 
 def test_skip_result_url_filters_social_domains() -> None:
+    assert _should_skip_result_url("https://open.endole.co.uk/insight/company/1-example") is True
+    assert _should_skip_result_url("https://www.checkfree.co.uk/Company/03502114/example") is True
+    assert _should_skip_result_url("https://www.northdata.com/Haj,+Mohamed+Sheikhadam,+London/nim") is True
+    assert _should_skip_result_url("https://www.northdata.de/El-Zayat,Ibrahim/17m3") is True
+    assert _should_skip_result_url("https://www.northdata.fr/El-Zayat,Ibrahim/e62") is True
     assert _should_skip_result_url("https://www.facebook.com/foo") is True
     assert _should_skip_result_url("https://www.instagram.com/foo") is True
     assert _should_skip_result_url("https://www.youtube.com/watch?v=1") is True

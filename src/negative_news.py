@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import re
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,7 @@ from src.html_plain_text import extract_title_from_html, html_to_plain_text
 from src.openai_api import extract_json_document
 from src.search.queries import generate_name_variants
 from src.storage.repository import Repository
+from src.storage.negative_news_store import NegativeNewsStore
 
 log = logging.getLogger("istari.negative_news")
 
@@ -27,10 +30,13 @@ DEFAULT_NUM_PER_PAGE = 10
 _FETCH_TIMEOUT = 60
 _SKIP_RESULT_DOMAINS = {
     "charitycommission.gov.uk",
+    "checkfree.co.uk",
+    "endole.co.uk",
     "facebook.com",
     "find-and-update.company-information.service.gov.uk",
     "instagram.com",
     "linkedin.com",
+    "northdata.com",
     "register-of-charities.charitycommission.gov.uk",
     "company-information.service.gov.uk",
     "youtube.com",
@@ -38,6 +44,9 @@ _SKIP_RESULT_DOMAINS = {
     "twitter.com",
     "x.com",
     "tiktok.com",
+}
+_SKIP_RESULT_HOST_FAMILIES = {
+    "northdata.",
 }
 
 
@@ -59,7 +68,9 @@ def _normalize_domain(url: str) -> str:
 
 def _should_skip_result_url(url: str) -> bool:
     host = _normalize_domain(url)
-    return any(host == blocked or host.endswith(f".{blocked}") for blocked in _SKIP_RESULT_DOMAINS)
+    if any(host == blocked or host.endswith(f".{blocked}") for blocked in _SKIP_RESULT_DOMAINS):
+        return True
+    return any(host.startswith(prefix) or f".{prefix}" in host for prefix in _SKIP_RESULT_HOST_FAMILIES)
 
 
 def _normalize_match_text(value: str) -> str:
@@ -244,6 +255,10 @@ def _append_query_spec(unique_specs: list[QuerySpec], spec: QuerySpec) -> None:
     unique_specs.append(spec)
 
 
+def _negative_news_db_path(settings: Settings) -> Path:
+    return settings.project_root / "data" / "negative_news.sqlite"
+
+
 def fetch_and_extract_article(
     settings: Settings,
     url: str,
@@ -413,7 +428,12 @@ def _build_gemini_client(settings: Settings) -> GeminiClient | None:
     if not settings.gemini_api_key:
         return None
     base = Path(settings.cache_dir) / "negative_news"
-    return GeminiClient(api_key=settings.gemini_api_key, cache_dir=base / "gemini")
+    return GeminiClient(
+        api_key=settings.gemini_api_key,
+        cache_dir=base / "gemini",
+        timeout_seconds=20.0,
+        attempts=2,
+    )
 
 
 def _generate_arabic_query_names(
@@ -535,9 +555,10 @@ def _collect_search_hits(
     num_per_page: int,
     cache_dir: Path,
     max_articles: int | None,
+    excluded_urls: set[str] | None = None,
     search_func: Any = serper_search,
 ) -> list[dict[str, Any]]:
-    seen_urls: set[str] = set()
+    seen_urls: set[str] = set(excluded_urls or set())
     search_hits: list[dict[str, Any]] = []
     for spec in query_specs:
         for page_idx in range(1, spec.pages + 1):
@@ -576,6 +597,71 @@ def _collect_search_hits(
                 if max_articles is not None and len(search_hits) >= max_articles:
                     return search_hits
     return search_hits
+
+
+def _collect_cluster_search_hits(
+    settings: Settings,
+    *,
+    query_specs: list[QuerySpec],
+    num_per_page: int,
+    cache_dir: Path,
+    max_articles: int | None,
+    search_func: Any = serper_search,
+) -> list[dict[str, Any]]:
+    broad_specs = [spec for spec in query_specs if spec.bucket == "broad"]
+    org_specs = [spec for spec in query_specs if spec.bucket == "org"]
+    if max_articles is None or not broad_specs or not org_specs:
+        return _collect_search_hits(
+            settings,
+            query_specs=query_specs,
+            num_per_page=num_per_page,
+            cache_dir=cache_dir,
+            max_articles=max_articles,
+            search_func=search_func,
+        )
+
+    broad_budget = max(1, max_articles // 2)
+    org_budget = max(1, max_articles - broad_budget)
+    if broad_budget + org_budget > max_articles:
+        broad_budget = max(0, max_articles - org_budget)
+
+    broad_hits = _collect_search_hits(
+        settings,
+        query_specs=broad_specs,
+        num_per_page=num_per_page,
+        cache_dir=cache_dir,
+        max_articles=broad_budget,
+        search_func=search_func,
+    )
+    seen_urls = {str(hit.get("url") or "").strip() for hit in broad_hits if str(hit.get("url") or "").strip()}
+    org_hits = _collect_search_hits(
+        settings,
+        query_specs=org_specs,
+        num_per_page=num_per_page,
+        cache_dir=cache_dir,
+        max_articles=org_budget,
+        excluded_urls=seen_urls,
+        search_func=search_func,
+    )
+    collected = [*broad_hits, *org_hits]
+    remaining = max_articles - len(collected)
+    if remaining <= 0:
+        return collected
+
+    extra_hits = _collect_search_hits(
+        settings,
+        query_specs=query_specs,
+        num_per_page=num_per_page,
+        cache_dir=cache_dir,
+        max_articles=remaining,
+        excluded_urls={
+            str(hit.get("url") or "").strip()
+            for hit in collected
+            if str(hit.get("url") or "").strip()
+        },
+        search_func=search_func,
+    )
+    return [*collected, *extra_hits]
 
 
 def classify_article_mb(
@@ -637,6 +723,7 @@ Article text:
 def load_negative_news_clusters(
     repository: Repository,
     *,
+    offset: int = 0,
     limit: int = 50,
 ) -> dict[str, Any]:
     run_ids = repository.get_latest_unique_run_ids()
@@ -644,7 +731,8 @@ def load_negative_news_clusters(
         return {"run_ids": [], "clusters": []}
     from scripts.consolidate_and_graph import consolidate_multi_run
 
-    graph = consolidate_multi_run(run_ids)
+    with io.StringIO() as buffer, redirect_stdout(buffer):
+        graph = consolidate_multi_run(run_ids)
     nodes = [
         node for node in graph.get("nodes", [])
         if str(node.get("kind") or "") == "person"
@@ -658,7 +746,9 @@ def load_negative_news_clusters(
         )
     )
     clusters: list[dict[str, Any]] = []
-    for node in nodes[:limit]:
+    start = max(0, int(offset))
+    end = start + max(0, int(limit))
+    for node in nodes[start:end]:
         person_ids = sorted({int(person_id) for person_id in (node.get("person_ids") or [])})
         aliases = _unique_nonempty([str(node.get("label") or ""), *(node.get("aliases") or [])])
         clusters.append(
@@ -673,13 +763,14 @@ def load_negative_news_clusters(
                 "context_terms": repository.get_organisation_names_for_person_ids(person_ids),
             }
         )
-    return {"run_ids": run_ids, "clusters": clusters}
+    return {"run_ids": run_ids, "clusters": clusters, "total_available": len(nodes)}
 
 
 def run_negative_news_cluster_batch(
     settings: Settings,
     repository: Repository,
     *,
+    offset: int = 0,
     limit: int = 50,
     broad_pages: int = DEFAULT_PAGES,
     org_pages: int = 2,
@@ -698,13 +789,79 @@ def run_negative_news_cluster_batch(
     fetch_dir = base / "fetch"
     model = settings.gemini_resolution_model
     gemini = _build_gemini_client(settings)
+    store = NegativeNewsStore(
+        _negative_news_db_path(settings),
+        settings.project_root / "src" / "storage" / "negative_news_schema.sql",
+    )
+    store.init_db()
 
-    cluster_source = load_negative_news_clusters(repository, limit=limit)
+    cluster_source = load_negative_news_clusters(repository, offset=offset, limit=limit)
+    output_path = (
+        settings.project_root
+        / "data"
+        / f"negative_news_clusters_offset{int(offset)}_limit{int(limit)}.json"
+    )
+    run_config = {
+        "mode": "cluster_batch",
+        "offset": int(offset),
+        "limit": int(limit),
+        "broad_pages": int(broad_pages),
+        "org_pages": int(org_pages),
+        "num_per_page": int(num_per_page),
+        "max_extract_chars": int(max_extract_chars),
+        "max_articles_per_cluster": None if max_articles_per_cluster is None else int(max_articles_per_cluster),
+        "classify": bool(classify),
+        "run_ids": cluster_source["run_ids"],
+    }
+    batch_run_id = store.get_or_create_batch_run(
+        config=run_config,
+        offset_value=int(offset),
+        limit_value=int(limit),
+        total_clusters=len(cluster_source["clusters"]),
+        output_path=str(output_path),
+    )
+    completed_cluster_ids = store.get_completed_cluster_ids(batch_run_id)
     out_clusters: list[dict[str, Any]] = []
     category_counts: dict[str, int] = {}
     interesting: list[dict[str, Any]] = []
+    for row in store.get_cluster_results(batch_run_id):
+        try:
+            result = json.loads(str(row["result_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(result, dict) and result:
+            out_clusters.append(result)
+        try:
+            counts = json.loads(str(row["category_counts_json"] or "{}"))
+        except json.JSONDecodeError:
+            counts = {}
+        if isinstance(counts, dict):
+            for key, value in counts.items():
+                category_counts[str(key)] = category_counts.get(str(key), 0) + int(value or 0)
+        if not isinstance(result, dict):
+            continue
+        for article in result.get("articles", []):
+            classification = article.get("classification") or {}
+            category = str(classification.get("category") or "").strip()
+            if not category or category == "reject":
+                continue
+            interesting.append(
+                {
+                    "cluster_id": result.get("cluster_id"),
+                    "cluster_label": result.get("label"),
+                    "category": category,
+                    "confidence": classification.get("confidence"),
+                    "short_rationale": classification.get("short_rationale"),
+                    "evidence_quote": classification.get("evidence_quote"),
+                    "url": article.get("search", {}).get("url"),
+                    "title": article.get("search", {}).get("title"),
+                    "required_term_matches": article.get("required_term_matches", {}),
+                }
+            )
 
-    for cluster in cluster_source["clusters"]:
+    for cluster_rank, cluster in enumerate(cluster_source["clusters"], start=max(0, int(offset)) + 1):
+        if cluster["cluster_id"] in completed_cluster_ids:
+            continue
         english_aliases = _unique_nonempty(cluster.get("aliases") or [cluster.get("label") or ""])
         arabic_aliases = _generate_arabic_query_names(
             gemini,
@@ -719,7 +876,7 @@ def run_negative_news_cluster_batch(
             broad_pages=broad_pages,
             org_pages=org_pages,
         )
-        search_hits = _collect_search_hits(
+        search_hits = _collect_cluster_search_hits(
             settings,
             query_specs=query_specs,
             num_per_page=num_per_page,
@@ -727,50 +884,54 @@ def run_negative_news_cluster_batch(
             max_articles=max_articles_per_cluster,
         )
         articles_out: list[dict[str, Any]] = []
-        for hit in search_hits:
-            url = hit["url"]
-            ex = fetch_and_extract_article(
-                settings,
-                url,
-                cache_dir=fetch_dir,
-                max_extract_chars=max_extract_chars,
-            )
-            entry: dict[str, Any] = {
-                "search": hit,
-                "extraction": extraction_report_summary(ex),
-            }
-            required_matches = _required_term_match_locations(
-                hit.get("required_terms"),
-                title=str(hit.get("title") or ""),
-                snippet=str(hit.get("snippet") or ""),
-                extracted_text=ex.text,
-            )
-            entry["required_term_matches"] = required_matches
-            if hit.get("required_terms") and not required_matches:
-                entry["classification"] = None
-                entry["filtered_out"] = "required_org_term_absent"
-                continue
-            if ex.error or not ex.text.strip():
-                entry["classification"] = None
-                articles_out.append(entry)
-                continue
+        cluster_error = ""
+        try:
+            for hit in search_hits:
+                url = hit["url"]
+                ex = fetch_and_extract_article(
+                    settings,
+                    url,
+                    cache_dir=fetch_dir,
+                    max_extract_chars=max_extract_chars,
+                )
+                entry: dict[str, Any] = {
+                    "search": hit,
+                    "extraction": extraction_report_summary(ex),
+                }
+                required_matches = _required_term_match_locations(
+                    hit.get("required_terms"),
+                    title=str(hit.get("title") or ""),
+                    snippet=str(hit.get("snippet") or ""),
+                    extracted_text=ex.text,
+                )
+                entry["required_term_matches"] = required_matches
+                if hit.get("required_terms") and not required_matches:
+                    entry["classification"] = None
+                    entry["filtered_out"] = "required_org_term_absent"
+                    continue
+                if ex.error or not ex.text.strip():
+                    entry["classification"] = None
+                    articles_out.append(entry)
+                    continue
 
-            if classify and gemini:
-                try:
-                    cls = classify_article_mb(
-                        gemini=gemini,
-                        model=model,
-                        person_name=str(cluster.get("label") or ""),
-                        article_title=ex.title or str(hit.get("title") or ""),
-                        article_url=ex.final_url,
-                        article_text=ex.text,
-                    )
-                    entry["classification"] = cls
-                except Exception as exc:
-                    entry["classification"] = {"error": str(exc)}
-            else:
-                entry["classification"] = None
-            articles_out.append(entry)
+                if classify and gemini:
+                    try:
+                        cls = classify_article_mb(
+                            gemini=gemini,
+                            model=model,
+                            person_name=str(cluster.get("label") or ""),
+                            article_title=ex.title or str(hit.get("title") or ""),
+                            article_url=ex.final_url,
+                            article_text=ex.text,
+                        )
+                        entry["classification"] = cls
+                    except Exception as exc:
+                        entry["classification"] = {"error": str(exc)}
+                else:
+                    entry["classification"] = None
+                articles_out.append(entry)
+        except Exception as exc:
+            cluster_error = str(exc)
 
         for article in articles_out:
             classification = article.get("classification") or {}
@@ -792,28 +953,50 @@ def run_negative_news_cluster_batch(
                 }
             )
 
-        out_clusters.append(
-            {
-                "cluster_id": cluster["cluster_id"],
-                "label": cluster["label"],
-                "aliases": english_aliases,
-                "arabic_aliases": arabic_aliases,
-                "person_ids": cluster["person_ids"],
-                "context_terms": context_terms,
-                "org_count": cluster["org_count"],
-                "role_count": cluster["role_count"],
-                "score": cluster["score"],
-                "broad_queries": [spec.query for spec in query_specs if spec.bucket == "broad"],
-                "org_queries": [spec.query for spec in query_specs if spec.bucket == "org"],
-                "articles": articles_out,
-            }
+        cluster_result = {
+            "cluster_id": cluster["cluster_id"],
+            "label": cluster["label"],
+            "aliases": english_aliases,
+            "arabic_aliases": arabic_aliases,
+            "person_ids": cluster["person_ids"],
+            "context_terms": context_terms,
+            "org_count": cluster["org_count"],
+            "role_count": cluster["role_count"],
+            "score": cluster["score"],
+            "broad_queries": [spec.query for spec in query_specs if spec.bucket == "broad"],
+            "org_queries": [spec.query for spec in query_specs if spec.bucket == "org"],
+            "articles": articles_out,
+        }
+        out_clusters.append(cluster_result)
+        local_category_counts: dict[str, int] = {}
+        for article in articles_out:
+            category = str((article.get("classification") or {}).get("category") or "").strip()
+            if not category or category == "reject":
+                continue
+            local_category_counts[category] = local_category_counts.get(category, 0) + 1
+        store.upsert_cluster_result(
+            batch_run_id=batch_run_id,
+            cluster_rank=cluster_rank,
+            cluster_id=str(cluster["cluster_id"]),
+            label=str(cluster["label"]),
+            status="completed" if not cluster_error else "failed",
+            interesting_count=sum(local_category_counts.values()),
+            category_counts=local_category_counts,
+            result=cluster_result,
+            error_text=cluster_error,
         )
 
+    store.mark_batch_completed(batch_run_id)
+    out_clusters.sort(key=lambda item: (-float(item.get("score") or 0.0), -int(item.get("org_count") or 0), str(item.get("label") or "")))
     return {
         "meta": {
             "mode": "cluster_batch",
+            "offset": int(offset),
             "cluster_limit": limit,
             "run_ids": cluster_source["run_ids"],
+            "total_available": cluster_source["total_available"],
+            "negative_news_db_path": str(_negative_news_db_path(settings)),
+            "batch_run_id": batch_run_id,
             "broad_pages": broad_pages,
             "org_pages": org_pages,
             "num_per_page": num_per_page,
