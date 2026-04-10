@@ -1711,18 +1711,21 @@
       });
   }
 
+  function summaryLinesForNodeAttribution(node, edges = []) {
+    const lines = tooltipLinesForNode(node).map((line) => plainText(line)).filter(Boolean);
+    if (!edges.length) return lines;
+    return lines.filter((line) => !String(line).startsWith("  "));
+  }
+
   function renderNodeAttributionHtml(node) {
-    const tooltipLines = tooltipLinesForNode(node);
-    const summary = tooltipLines.map((line) => plainText(line)).filter(Boolean);
     const edges = nodeAttributionEdges(node);
+    const summary = summaryLinesForNodeAttribution(node, edges);
     return `
       <div class="analysis-viewer">
         <div class="analysis-selection">${escapeHtml(node.label || node.id || "Node")}</div>
         ${summary.length ? `<div class="analysis-text">${summary.map((line) => escapeHtml(line)).join("<br>")}</div>` : ""}
         <div class="analysis-claims">
           ${edges.length ? edges.map((edge, index) => {
-            const sourceNode = nodeById.get(edge.source);
-            const targetNode = nodeById.get(edge.target);
             const links = evidenceActionsForEdge(edge)
               .map((action) => `<a href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)}</a>`)
               .join(" · ");
@@ -1732,7 +1735,6 @@
                   <div class="analysis-claim-index">${index + 1}</div>
                   <div class="analysis-claim-text">${escapeHtml(plainText(tooltipLinesForEdge(edge)[0] || ""))}</div>
                 </div>
-                <div class="analysis-claim-route">${escapeHtml(sourceNode?.label || edge.source)} -> ${escapeHtml(targetNode?.label || edge.target)} · ${escapeHtml(edgeSubtitle(edge) || "link")}</div>
                 <div class="analysis-claim-evidence">
                   <span class="analysis-claim-evidence-label">Evidence</span>
                   ${links || '<span class="dim">No linked evidence.</span>'}

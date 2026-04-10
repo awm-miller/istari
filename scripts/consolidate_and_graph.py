@@ -380,8 +380,43 @@ def _companies_house_role_evidence(edge) -> dict[str, object] | None:
     }
 
 
+def _charity_commission_role_evidence(edge) -> dict[str, object] | None:
+    source = _row_str(edge, "source").strip().lower()
+    registry_type = _row_str(edge, "registry_type").strip().lower()
+    registry_number = _row_str(edge, "registry_number").strip()
+    if not source.startswith("charity_commission") or registry_type != "charity" or not registry_number:
+        return None
+
+    provenance = _json_dict(edge["provenance_json"])
+    notes_bits = [
+        _row_str(edge, "role_label") or _row_str(edge, "role_type"),
+        str(provenance.get("Role") or provenance.get("role") or "").strip(),
+    ]
+    start_date = str(provenance.get("StartDate") or provenance.get("start_date") or "").strip()
+    end_date = str(provenance.get("EndDate") or provenance.get("end_date") or "").strip()
+    if start_date:
+        notes_bits.append(f"Appointed: {start_date}")
+    if end_date:
+        notes_bits.append(f"Resigned: {end_date}")
+    notes = "; ".join(bit for bit in notes_bits if bit)
+    return {
+        "title": "Charity Commission charity page",
+        "document_url": (
+            "https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/"
+            f"{registry_number}"
+        ),
+        "page_hint": "",
+        "page_number": None,
+        "notes": notes,
+    }
+
+
 def _edge_evidence(edge) -> dict[str, object] | None:
-    return _pdf_role_evidence(edge) or _companies_house_role_evidence(edge)
+    return (
+        _pdf_role_evidence(edge)
+        or _companies_house_role_evidence(edge)
+        or _charity_commission_role_evidence(edge)
+    )
 
 
 def _canonical_role_phrase(text: str) -> str:

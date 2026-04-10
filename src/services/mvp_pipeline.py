@@ -36,6 +36,52 @@ STEP1_STAGE = "step1_seed_match"
 STEP2_STAGE = "step2_connected_org"
 
 
+def hydrate_cached_sanctions(
+    repository: Repository,
+    ranking: list[dict[str, Any]],
+) -> dict[str, Any]:
+    person_ids = [int(entry.get("person_id") or 0) for entry in ranking if int(entry.get("person_id") or 0) > 0]
+    cached_rows = repository.get_person_sanctions(person_ids)
+    pending: list[dict[str, Any]] = []
+    cached_count = 0
+    cached_hit_count = 0
+
+    for entry in ranking:
+        person_id = int(entry.get("person_id") or 0)
+        cached = cached_rows.get(person_id)
+        name = str(entry.get("canonical_name", ""))
+        birth_month, birth_year = extract_identity_key_birth_month_year(
+            str(entry.get("identity_key", ""))
+        )
+        if (
+            not cached
+            or str(cached.get("screened_name") or "") != name
+            or cached.get("screened_birth_month") != birth_month
+            or cached.get("screened_birth_year") != birth_year
+        ):
+            pending.append(entry)
+            continue
+
+        hits = list(cached.get("matches") or [])
+        entry["sanctions_hit"] = bool(cached.get("is_sanctioned"))
+        entry["sanctions_matches"] = hits
+        entry["ofac_hit"] = bool(cached.get("is_sanctioned"))
+        entry["ofac_matches"] = hits
+        entry["sanctions_birth_month"] = birth_month
+        entry["sanctions_birth_year"] = birth_year
+        entry["ofac_birth_month"] = birth_month
+        entry["ofac_birth_year"] = birth_year
+        cached_count += 1
+        if hits:
+            cached_hit_count += 1
+
+    return {
+        "pending_ranking": pending,
+        "cached_count": cached_count,
+        "cached_hit_count": cached_hit_count,
+    }
+
+
 def step1_expand_seed(
     *,
     repository: Repository,

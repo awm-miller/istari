@@ -18,7 +18,7 @@ from src.mapping_low_confidence import (
     rebuild_overlay_mapping_db,
 )
 from src.ranking import rank_people
-from src.services.mvp_pipeline import step4_ofac_screening
+from src.services.mvp_pipeline import hydrate_cached_sanctions, step4_ofac_screening
 from src.storage.repository import Repository
 
 settings = load_settings()
@@ -32,27 +32,37 @@ repository.init_db()
 def refresh_sanctions_for_runs(run_ids: list[int], *, ranking_limit: int = 5000) -> None:
     print(f"Refreshing sanctions for runs {run_ids}...", flush=True)
     total_hits = 0
-    total_screened = 0
+    total_refreshed = 0
+    total_cached = 0
     for run_id in run_ids:
         ranking = [asdict(entry) for entry in rank_people(repository, limit=ranking_limit, run_id=run_id)]
         if not ranking:
             continue
-        result = step4_ofac_screening(
-            repository=repository,
-            settings=settings,
-            ranking=ranking,
-            enable_remote_sources=False,
-        )
-        hit_count = len(result.get("sanctions_hits") or {})
-        screened_count = int(result.get("screened_count") or 0)
+        cache_result = hydrate_cached_sanctions(repository, ranking)
+        pending_ranking = list(cache_result.get("pending_ranking") or [])
+        cached_count = int(cache_result.get("cached_count") or 0)
+        cached_hit_count = int(cache_result.get("cached_hit_count") or 0)
+        refreshed_count = 0
+        refreshed_hit_count = 0
+        if pending_ranking:
+            result = step4_ofac_screening(
+                repository=repository,
+                settings=settings,
+                ranking=pending_ranking,
+                enable_remote_sources=False,
+            )
+            refreshed_count = int(result.get("screened_count") or 0)
+            refreshed_hit_count = len(result.get("sanctions_hits") or {})
+        hit_count = cached_hit_count + refreshed_hit_count
         total_hits += hit_count
-        total_screened += screened_count
+        total_refreshed += refreshed_count
+        total_cached += cached_count
         print(
-            f"  run {run_id}: screened {screened_count} people, {hit_count} sanction hit(s)",
+            f"  run {run_id}: reused {cached_count}, screened {refreshed_count}, {hit_count} sanction hit(s)",
             flush=True,
         )
     print(
-        f"Sanctions refresh complete: screened {total_screened} people across {len(run_ids)} runs, "
+        f"Sanctions refresh complete: reused {total_cached}, screened {total_refreshed} across {len(run_ids)} runs, "
         f"found {total_hits} hit(s)",
         flush=True,
     )
