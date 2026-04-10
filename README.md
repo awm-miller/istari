@@ -91,6 +91,7 @@ python scripts/rebuild_graph.py
 | `step4-ofac RUN_ID` | Sanctions screening only |
 | `rank` | Rank people by connections |
 | `negative-news NAME [NAME ...]` | Serper + extraction + Gemini adverse-media pilot |
+| `negative-news-clusters` | Batch adverse-media screening for top merged person clusters |
 | `negative-news-extract-test URL` | Fetch one article and inspect extraction QA |
 | `export-network --run-id ID` | Export graph as JSON |
 | `web-ui` | Launch the Flask web UI |
@@ -113,3 +114,10 @@ Useful flags:
 - `--out PATH` writes the JSON report to disk.
 
 Use `negative-news-extract-test` when you want to QA a single URL's extraction output before spending Gemini calls on larger runs.
+
+`negative-news-clusters` runs the same screening flow over the top merged people from the combined graph:
+
+- It uses the latest saved run for each seed, merges expanded people into cross-run clusters, and ranks those merged clusters by cumulative link score.
+- It searches every English alias in the cluster for 10 pages, generates one most-plausible Arabic alias from the lead cluster name and searches that for 10 pages, then runs a shorter 2-page quoted-name plus quoted-organisation pass across all linked organisations in the cluster.
+- Org-qualified hits are only retained when the quoted organisation phrase appears in the title, snippet, or extracted page text.
+- `--max-articles` caps how many unique URLs are fetched and classified per merged cluster after URL dedupe.

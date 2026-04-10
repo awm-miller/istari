@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import scripts.consolidate_and_graph as consolidate_and_graph
+
+from src.negative_news import _collect_search_hits
 from src.negative_news import _required_term_match_locations
 from src.negative_news import _should_skip_result_url
+from src.negative_news import build_cluster_query_specs
 from src.negative_news import build_mb_queries
 from src.negative_news import ExtractionReport
 from src.negative_news import extraction_report_summary
+from src.negative_news import load_negative_news_clusters
 
 
 def test_extraction_report_summary_flags() -> None:
@@ -66,6 +71,130 @@ def test_build_mb_queries_with_context_term() -> None:
         '"بلال ياسين"',
         '"بلال ياسين" "Development and Training Academy"',
     ]
+
+
+def test_build_cluster_query_specs_uses_broad_and_org_page_limits() -> None:
+    specs = build_cluster_query_specs(
+        ["Bilal Yasin", "Bilal Khalil Hasan Yasin"],
+        ["بلال ياسين", "بلال خليل حسن ياسين"],
+        context_terms=["Development and Training Academy"],
+        broad_pages=10,
+        org_pages=2,
+    )
+    assert [(spec.query, spec.pages, spec.bucket, spec.language, spec.required_terms) for spec in specs] == [
+        ('"Bilal Yasin"', 10, "broad", "english", []),
+        ('"Bilal Yasin" "Development and Training Academy"', 2, "org", "english", ["Development and Training Academy"]),
+        ('"Bilal Khalil Hasan Yasin"', 10, "broad", "english", []),
+        (
+            '"Bilal Khalil Hasan Yasin" "Development and Training Academy"',
+            2,
+            "org",
+            "english",
+            ["Development and Training Academy"],
+        ),
+        ('"بلال ياسين"', 10, "broad", "arabic", []),
+        ('"بلال ياسين" "Development and Training Academy"', 2, "org", "arabic", ["Development and Training Academy"]),
+        ('"بلال خليل حسن ياسين"', 10, "broad", "arabic", []),
+        (
+            '"بلال خليل حسن ياسين" "Development and Training Academy"',
+            2,
+            "org",
+            "arabic",
+            ["Development and Training Academy"],
+        ),
+    ]
+
+
+def test_collect_search_hits_dedupes_urls_across_cluster_alias_queries() -> None:
+    specs = build_cluster_query_specs(
+        ["Bilal Yasin", "Bilal Khalil Hasan Yasin"],
+        [],
+        context_terms=[],
+        broad_pages=1,
+        org_pages=1,
+    )
+
+    def fake_search(_settings: object, *, query: str, page: int, num: int, cache_dir: object) -> list[dict[str, str]]:
+        assert page == 1
+        assert num == 10
+        assert cache_dir == "cache"
+        if query == '"Bilal Yasin"':
+            return [{"title": "One", "link": "https://example.com/shared", "snippet": "a"}]
+        if query == '"Bilal Khalil Hasan Yasin"':
+            return [{"title": "Two", "link": "https://example.com/shared", "snippet": "b"}]
+        return []
+
+    hits = _collect_search_hits(
+        settings=object(),  # type: ignore[arg-type]
+        query_specs=specs,
+        num_per_page=10,
+        cache_dir="cache",  # type: ignore[arg-type]
+        max_articles=None,
+        search_func=fake_search,
+    )
+    assert len(hits) == 1
+    assert hits[0]["url"] == "https://example.com/shared"
+    assert hits[0]["query"] == '"Bilal Yasin"'
+
+
+def test_load_negative_news_clusters_uses_combined_merged_people(monkeypatch: object) -> None:
+    class FakeRepository:
+        def get_latest_unique_run_ids(self) -> list[int]:
+            return [11, 22]
+
+        def get_organisation_names_for_person_ids(self, person_ids: list[int]) -> list[str]:
+            assert person_ids in ([1, 2], [9])
+            return ["Org A", "Org B"] if person_ids == [1, 2] else ["Org Z"]
+
+    def fake_consolidate_multi_run(run_ids: list[int]) -> dict[str, object]:
+        assert run_ids == [11, 22]
+        return {
+            "nodes": [
+                {
+                    "id": "merged_person:2",
+                    "kind": "person",
+                    "label": "Bilal Yasin",
+                    "aliases": ["Bilal Khalil Hasan Yasin"],
+                    "person_ids": [1, 2],
+                    "org_count": 4,
+                    "role_count": 8,
+                    "score": 12.5,
+                },
+                {
+                    "id": "merged_person:3",
+                    "kind": "person",
+                    "label": "Other Person",
+                    "aliases": [],
+                    "person_ids": [9],
+                    "org_count": 1,
+                    "role_count": 2,
+                    "score": 3.0,
+                },
+                {
+                    "id": "identity_cluster:1",
+                    "kind": "seed_alias",
+                    "label": "Ignore Me",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(consolidate_and_graph, "consolidate_multi_run", fake_consolidate_multi_run)
+    result = load_negative_news_clusters(FakeRepository(), limit=1)  # type: ignore[arg-type]
+    assert result == {
+        "run_ids": [11, 22],
+        "clusters": [
+            {
+                "cluster_id": "merged_person:2",
+                "label": "Bilal Yasin",
+                "aliases": ["Bilal Yasin", "Bilal Khalil Hasan Yasin"],
+                "person_ids": [1, 2],
+                "org_count": 4,
+                "role_count": 8,
+                "score": 12.5,
+                "context_terms": ["Org A", "Org B"],
+            }
+        ],
+    }
 
 
 def test_required_term_match_locations_checks_title_snippet_and_text() -> None:

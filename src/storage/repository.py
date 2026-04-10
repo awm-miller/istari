@@ -572,6 +572,28 @@ class Repository:
             ).fetchall()
             return [int(row["id"]) for row in rows]
 
+    def get_organisation_names_for_person_ids(self, person_ids: list[int]) -> list[str]:
+        cleaned_ids = sorted({int(person_id) for person_id in person_ids if int(person_id) > 0})
+        if not cleaned_ids:
+            return []
+        placeholders = ",".join("?" for _ in cleaned_ids)
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    organisations.name AS organisation_name,
+                    MAX(person_org_roles.edge_weight) AS max_edge_weight
+                FROM person_org_roles
+                JOIN organisations
+                    ON organisations.id = person_org_roles.organisation_id
+                WHERE person_org_roles.person_id IN ({placeholders})
+                GROUP BY organisations.id, organisations.name
+                ORDER BY max_edge_weight DESC, organisations.name ASC
+                """,
+                cleaned_ids,
+            ).fetchall()
+        return [str(row["organisation_name"] or "").strip() for row in rows if str(row["organisation_name"] or "").strip()]
+
     def get_run_variant_names(self, run_id: int) -> list[str]:
         with self.connect() as connection:
             rows = connection.execute(

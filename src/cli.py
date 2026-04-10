@@ -215,6 +215,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include full extracted text in JSON (can be very large).",
     )
 
+    nn_clusters_parser = subparsers.add_parser(
+        "negative-news-clusters",
+        help="Batch adverse-media screening for top merged person clusters from the combined graph.",
+    )
+    nn_clusters_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="How many merged person clusters to screen (default 50).",
+    )
+    nn_clusters_parser.add_argument(
+        "--broad-pages",
+        type=int,
+        default=10,
+        help="Pages for alias-only English/Arabic discovery queries (default 10).",
+    )
+    nn_clusters_parser.add_argument(
+        "--org-pages",
+        type=int,
+        default=2,
+        help="Pages for alias-plus-org queries (default 2).",
+    )
+    nn_clusters_parser.add_argument(
+        "--num",
+        type=int,
+        default=10,
+        help="Results per Serper page (default 10).",
+    )
+    nn_clusters_parser.add_argument(
+        "--max-extract-chars",
+        type=int,
+        default=500_000,
+        help="Max characters stored from each article HTML/PDF (default 500000).",
+    )
+    nn_clusters_parser.add_argument(
+        "--max-articles",
+        type=int,
+        default=100,
+        help="Max unique URLs to fetch/classify per cluster (default 100). Use 0 for no limit.",
+    )
+    nn_clusters_parser.add_argument(
+        "--no-classify",
+        action="store_true",
+        help="Fetch and extract only; skip Gemini classification.",
+    )
+    nn_clusters_parser.add_argument(
+        "--out",
+        default="",
+        help="Optional path to write JSON report; otherwise print to stdout.",
+    )
+
     return parser
 
 
@@ -441,6 +492,32 @@ def main() -> None:
         )
         summary = extraction_report_summary(report, include_full_text=bool(args.include_text))
         print(json.dumps(summary, indent=2, ensure_ascii=False))
+        return
+
+    if args.command == "negative-news-clusters":
+        from src.negative_news import run_negative_news_cluster_batch
+
+        max_art = int(args.max_articles)
+        result = run_negative_news_cluster_batch(
+            settings,
+            repository,
+            limit=int(args.limit),
+            broad_pages=int(args.broad_pages),
+            org_pages=int(args.org_pages),
+            num_per_page=int(args.num),
+            max_extract_chars=int(args.max_extract_chars),
+            max_articles_per_cluster=None if max_art <= 0 else max_art,
+            classify=not bool(args.no_classify),
+        )
+        out_json = json.dumps(result, indent=2, ensure_ascii=False, default=str)
+        out_path = str(getattr(args, "out", "") or "").strip()
+        if out_path:
+            p = Path(out_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(out_json, encoding="utf-8")
+            print(json.dumps({"ok": True, "output_path": str(p)}, indent=2))
+        else:
+            print(out_json)
         return
 
     parser.error(f"Unknown command: {args.command}")

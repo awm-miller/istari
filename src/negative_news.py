@@ -17,6 +17,7 @@ from src.gemini_api import GeminiClient, extract_gemini_text
 from src.html_plain_text import extract_title_from_html, html_to_plain_text
 from src.openai_api import extract_json_document
 from src.search.queries import generate_name_variants
+from src.storage.repository import Repository
 
 log = logging.getLogger("istari.negative_news")
 
@@ -177,6 +178,15 @@ class ExtractionReport:
     error: str | None = None
 
 
+@dataclass(slots=True)
+class QuerySpec:
+    query: str
+    pages: int
+    bucket: str
+    language: str
+    required_terms: list[str]
+
+
 def extraction_report_summary(
     ex: ExtractionReport,
     *,
@@ -205,6 +215,33 @@ def extraction_report_summary(
     if include_full_text:
         body["full_text"] = ex.text
     return body
+
+
+def _unique_nonempty(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        clean = " ".join(str(value).split()).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+    return out
+
+
+def _append_query_spec(unique_specs: list[QuerySpec], spec: QuerySpec) -> None:
+    key = spec.query.strip()
+    if not key:
+        return
+    for existing in unique_specs:
+        if existing.query != key:
+            continue
+        existing.pages = max(existing.pages, spec.pages)
+        for term in spec.required_terms:
+            if term not in existing.required_terms:
+                existing.required_terms.append(term)
+        return
+    unique_specs.append(spec)
 
 
 def fetch_and_extract_article(
@@ -345,10 +382,10 @@ def generate_arabic_name_variants(
 Given this Latin-script name: "{english_name}"
 
 Return JSON only with this exact shape:
-{{"arabic_names": ["...", "..."]}}
+{{"arabic_names": ["..."]}}
 
 Rules:
-- Provide 1 to 4 plausible Arabic spellings as used in Arabic news bylines and headlines.
+- Provide exactly 1 Arabic spelling: the single most plausible form used in Arabic news bylines and headlines.
 - Use Arabic script only in the strings.
 - Do not add commentary outside JSON.
 """
@@ -365,7 +402,40 @@ Rules:
         s = str(item).strip()
         if s and s not in out:
             out.append(s)
-    return out[:6]
+    return out[:1]
+
+
+def _build_english_query_names(primary_name: str, name_aliases: list[str] | None = None) -> list[str]:
+    return _unique_nonempty([primary_name, *(name_aliases or [])])
+
+
+def _build_gemini_client(settings: Settings) -> GeminiClient | None:
+    if not settings.gemini_api_key:
+        return None
+    base = Path(settings.cache_dir) / "negative_news"
+    return GeminiClient(api_key=settings.gemini_api_key, cache_dir=base / "gemini")
+
+
+def _generate_arabic_query_names(
+    gemini: GeminiClient | None,
+    *,
+    model: str,
+    english_query_names: list[str],
+) -> list[str]:
+    if not gemini:
+        return []
+    lead_name = _unique_nonempty(english_query_names[:1])
+    if not lead_name:
+        return []
+    try:
+        return generate_arabic_name_variants(
+            gemini=gemini,
+            model=model,
+            english_name=lead_name[0],
+        )
+    except Exception as exc:
+        log.warning("Arabic name generation failed for %s: %s", lead_name[0], exc)
+        return []
 
 
 def build_mb_queries(
@@ -397,6 +467,115 @@ def build_mb_queries(
             seen.add(key)
             unique.append(key)
     return unique
+
+
+def build_cluster_query_specs(
+    english_aliases: list[str],
+    arabic_aliases: list[str],
+    *,
+    context_terms: list[str] | None = None,
+    broad_pages: int = DEFAULT_PAGES,
+    org_pages: int = 2,
+) -> list[QuerySpec]:
+    specs: list[QuerySpec] = []
+    cleaned_terms = _unique_nonempty(context_terms)
+    for alias in _unique_nonempty(english_aliases):
+        query = f'"{alias}"'
+        _append_query_spec(
+            specs,
+            QuerySpec(
+                query=query,
+                pages=int(broad_pages),
+                bucket="broad",
+                language="english",
+                required_terms=[],
+            ),
+        )
+        for term in cleaned_terms:
+            _append_query_spec(
+                specs,
+                QuerySpec(
+                    query=f'{query} "{term}"',
+                    pages=int(org_pages),
+                    bucket="org",
+                    language="english",
+                    required_terms=[term],
+                ),
+            )
+    for alias in _unique_nonempty(arabic_aliases):
+        query = f'"{alias}"'
+        _append_query_spec(
+            specs,
+            QuerySpec(
+                query=query,
+                pages=int(broad_pages),
+                bucket="broad",
+                language="arabic",
+                required_terms=[],
+            ),
+        )
+        for term in cleaned_terms:
+            _append_query_spec(
+                specs,
+                QuerySpec(
+                    query=f'{query} "{term}"',
+                    pages=int(org_pages),
+                    bucket="org",
+                    language="arabic",
+                    required_terms=[term],
+                ),
+            )
+    return specs
+
+
+def _collect_search_hits(
+    settings: Settings,
+    *,
+    query_specs: list[QuerySpec],
+    num_per_page: int,
+    cache_dir: Path,
+    max_articles: int | None,
+    search_func: Any = serper_search,
+) -> list[dict[str, Any]]:
+    seen_urls: set[str] = set()
+    search_hits: list[dict[str, Any]] = []
+    for spec in query_specs:
+        for page_idx in range(1, spec.pages + 1):
+            try:
+                rows = search_func(
+                    settings,
+                    query=spec.query,
+                    page=page_idx,
+                    num=num_per_page,
+                    cache_dir=cache_dir,
+                )
+            except Exception as exc:
+                log.warning("Serper failed q=%s page=%s: %s", spec.query[:80], page_idx, exc)
+                break
+            if not rows:
+                break
+            for row in rows:
+                link = str(row.get("link") or "").strip()
+                if not link or link in seen_urls:
+                    continue
+                if _should_skip_result_url(link):
+                    continue
+                seen_urls.add(link)
+                search_hits.append(
+                    {
+                        "query": spec.query,
+                        "page": page_idx,
+                        "bucket": spec.bucket,
+                        "language": spec.language,
+                        "required_terms": list(spec.required_terms),
+                        "title": row.get("title", ""),
+                        "url": link,
+                        "snippet": row.get("snippet", ""),
+                    }
+                )
+                if max_articles is not None and len(search_hits) >= max_articles:
+                    return search_hits
+    return search_hits
 
 
 def classify_article_mb(
@@ -455,6 +634,197 @@ Article text:
     return extract_json_document(raw)  # type: ignore[return-value]
 
 
+def load_negative_news_clusters(
+    repository: Repository,
+    *,
+    limit: int = 50,
+) -> dict[str, Any]:
+    run_ids = repository.get_latest_unique_run_ids()
+    if not run_ids:
+        return {"run_ids": [], "clusters": []}
+    from scripts.consolidate_and_graph import consolidate_multi_run
+
+    graph = consolidate_multi_run(run_ids)
+    nodes = [
+        node for node in graph.get("nodes", [])
+        if str(node.get("kind") or "") == "person"
+        and str(node.get("id") or "").startswith("merged_person:")
+    ]
+    nodes.sort(
+        key=lambda node: (
+            -float(node.get("score") or 0.0),
+            -int(node.get("org_count") or 0),
+            str(node.get("label") or ""),
+        )
+    )
+    clusters: list[dict[str, Any]] = []
+    for node in nodes[:limit]:
+        person_ids = sorted({int(person_id) for person_id in (node.get("person_ids") or [])})
+        aliases = _unique_nonempty([str(node.get("label") or ""), *(node.get("aliases") or [])])
+        clusters.append(
+            {
+                "cluster_id": str(node.get("id") or ""),
+                "label": str(node.get("label") or ""),
+                "aliases": aliases,
+                "person_ids": person_ids,
+                "org_count": int(node.get("org_count") or 0),
+                "role_count": int(node.get("role_count") or 0),
+                "score": float(node.get("score") or 0.0),
+                "context_terms": repository.get_organisation_names_for_person_ids(person_ids),
+            }
+        )
+    return {"run_ids": run_ids, "clusters": clusters}
+
+
+def run_negative_news_cluster_batch(
+    settings: Settings,
+    repository: Repository,
+    *,
+    limit: int = 50,
+    broad_pages: int = DEFAULT_PAGES,
+    org_pages: int = 2,
+    num_per_page: int = DEFAULT_NUM_PER_PAGE,
+    max_extract_chars: int = DEFAULT_MAX_EXTRACT_CHARS,
+    max_articles_per_cluster: int | None = 100,
+    classify: bool = True,
+) -> dict[str, Any]:
+    if not settings.serper_api_key:
+        raise RuntimeError("SERPER_API_KEY is required")
+    if classify and not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is required when classification is enabled")
+
+    base = Path(settings.cache_dir) / "negative_news"
+    serper_dir = base / "serper"
+    fetch_dir = base / "fetch"
+    model = settings.gemini_resolution_model
+    gemini = _build_gemini_client(settings)
+
+    cluster_source = load_negative_news_clusters(repository, limit=limit)
+    out_clusters: list[dict[str, Any]] = []
+    category_counts: dict[str, int] = {}
+    interesting: list[dict[str, Any]] = []
+
+    for cluster in cluster_source["clusters"]:
+        english_aliases = _unique_nonempty(cluster.get("aliases") or [cluster.get("label") or ""])
+        arabic_aliases = _generate_arabic_query_names(
+            gemini,
+            model=model,
+            english_query_names=english_aliases,
+        )
+        context_terms = _unique_nonempty(cluster.get("context_terms") or [])
+        query_specs = build_cluster_query_specs(
+            english_aliases,
+            arabic_aliases,
+            context_terms=context_terms,
+            broad_pages=broad_pages,
+            org_pages=org_pages,
+        )
+        search_hits = _collect_search_hits(
+            settings,
+            query_specs=query_specs,
+            num_per_page=num_per_page,
+            cache_dir=serper_dir,
+            max_articles=max_articles_per_cluster,
+        )
+        articles_out: list[dict[str, Any]] = []
+        for hit in search_hits:
+            url = hit["url"]
+            ex = fetch_and_extract_article(
+                settings,
+                url,
+                cache_dir=fetch_dir,
+                max_extract_chars=max_extract_chars,
+            )
+            entry: dict[str, Any] = {
+                "search": hit,
+                "extraction": extraction_report_summary(ex),
+            }
+            required_matches = _required_term_match_locations(
+                hit.get("required_terms"),
+                title=str(hit.get("title") or ""),
+                snippet=str(hit.get("snippet") or ""),
+                extracted_text=ex.text,
+            )
+            entry["required_term_matches"] = required_matches
+            if hit.get("required_terms") and not required_matches:
+                entry["classification"] = None
+                entry["filtered_out"] = "required_org_term_absent"
+                continue
+            if ex.error or not ex.text.strip():
+                entry["classification"] = None
+                articles_out.append(entry)
+                continue
+
+            if classify and gemini:
+                try:
+                    cls = classify_article_mb(
+                        gemini=gemini,
+                        model=model,
+                        person_name=str(cluster.get("label") or ""),
+                        article_title=ex.title or str(hit.get("title") or ""),
+                        article_url=ex.final_url,
+                        article_text=ex.text,
+                    )
+                    entry["classification"] = cls
+                except Exception as exc:
+                    entry["classification"] = {"error": str(exc)}
+            else:
+                entry["classification"] = None
+            articles_out.append(entry)
+
+        for article in articles_out:
+            classification = article.get("classification") or {}
+            category = str(classification.get("category") or "").strip()
+            if not category or category == "reject":
+                continue
+            category_counts[category] = category_counts.get(category, 0) + 1
+            interesting.append(
+                {
+                    "cluster_id": cluster["cluster_id"],
+                    "cluster_label": cluster["label"],
+                    "category": category,
+                    "confidence": classification.get("confidence"),
+                    "short_rationale": classification.get("short_rationale"),
+                    "evidence_quote": classification.get("evidence_quote"),
+                    "url": article.get("search", {}).get("url"),
+                    "title": article.get("search", {}).get("title"),
+                    "required_term_matches": article.get("required_term_matches", {}),
+                }
+            )
+
+        out_clusters.append(
+            {
+                "cluster_id": cluster["cluster_id"],
+                "label": cluster["label"],
+                "aliases": english_aliases,
+                "arabic_aliases": arabic_aliases,
+                "person_ids": cluster["person_ids"],
+                "context_terms": context_terms,
+                "org_count": cluster["org_count"],
+                "role_count": cluster["role_count"],
+                "score": cluster["score"],
+                "broad_queries": [spec.query for spec in query_specs if spec.bucket == "broad"],
+                "org_queries": [spec.query for spec in query_specs if spec.bucket == "org"],
+                "articles": articles_out,
+            }
+        )
+
+    return {
+        "meta": {
+            "mode": "cluster_batch",
+            "cluster_limit": limit,
+            "run_ids": cluster_source["run_ids"],
+            "broad_pages": broad_pages,
+            "org_pages": org_pages,
+            "num_per_page": num_per_page,
+            "max_articles_per_cluster": max_articles_per_cluster,
+        },
+        "clusters": out_clusters,
+        "category_counts": category_counts,
+        "interesting": interesting,
+    }
+
+
 def run_negative_news_pilot(
     settings: Settings,
     *,
@@ -476,10 +846,8 @@ def run_negative_news_pilot(
     serper_dir = base / "serper"
     fetch_dir = base / "fetch"
 
-    gemini: GeminiClient | None = None
     model = settings.gemini_resolution_model
-    if classify and settings.gemini_api_key:
-        gemini = GeminiClient(api_key=settings.gemini_api_key, cache_dir=base / "gemini")
+    gemini = _build_gemini_client(settings)
 
     out_people: list[dict[str, Any]] = []
 
@@ -489,26 +857,12 @@ def run_negative_news_pilot(
             continue
         variants = generate_name_variants(name, creativity_level="balanced")
         primary_en = variants[0].name if variants else name
-        english_query_names: list[str] = []
-        for candidate in [primary_en, *(name_aliases or [])]:
-            clean = " ".join(str(candidate).split()).strip()
-            if clean and clean not in english_query_names:
-                english_query_names.append(clean)
-        arabic: list[str] = []
-        if gemini:
-            try:
-                for english_query_name in english_query_names:
-                    generated = generate_arabic_name_variants(
-                        gemini=gemini,
-                        model=model,
-                        english_name=english_query_name,
-                    )
-                    for item in generated:
-                        if item not in arabic:
-                            arabic.append(item)
-            except Exception as exc:
-                log.warning("Arabic name generation failed for %s: %s", name, exc)
-                arabic = []
+        english_query_names = _build_english_query_names(primary_en, name_aliases)
+        arabic = _generate_arabic_query_names(
+            gemini,
+            model=model,
+            english_query_names=english_query_names,
+        )
 
         queries: list[str] = []
         for english_query_name in english_query_names:
@@ -519,48 +873,23 @@ def run_negative_news_pilot(
             ):
                 if query not in queries:
                     queries.append(query)
-        seen_urls: set[str] = set()
-        search_hits: list[dict[str, Any]] = []
-
-        for query in queries:
-            for page_idx in range(1, pages + 1):
-                try:
-                    rows = serper_search(
-                        settings,
-                        query=query,
-                        page=page_idx,
-                        num=num_per_page,
-                        cache_dir=serper_dir,
-                    )
-                except Exception as exc:
-                    log.warning("Serper failed q=%s page=%s: %s", query[:80], page_idx, exc)
-                    break
-                if not rows:
-                    break
-                for row in rows:
-                    link = str(row.get("link") or "").strip()
-                    if not link or link in seen_urls:
-                        continue
-                    if _should_skip_result_url(link):
-                        continue
-                    required_terms = [term for term in (context_terms or []) if f'"{term}"' in query]
-                    seen_urls.add(link)
-                    search_hits.append(
-                        {
-                            "query": query,
-                            "page": page_idx,
-                            "required_terms": required_terms,
-                            "title": row.get("title", ""),
-                            "url": link,
-                            "snippet": row.get("snippet", ""),
-                        }
-                    )
-                    if max_articles_per_person is not None and len(search_hits) >= max_articles_per_person:
-                        break
-                if max_articles_per_person is not None and len(search_hits) >= max_articles_per_person:
-                    break
-            if max_articles_per_person is not None and len(search_hits) >= max_articles_per_person:
-                break
+        query_specs = [
+            QuerySpec(
+                query=query,
+                pages=pages,
+                bucket="mixed",
+                language="mixed",
+                required_terms=[term for term in (context_terms or []) if f'"{term}"' in query],
+            )
+            for query in queries
+        ]
+        search_hits = _collect_search_hits(
+            settings,
+            query_specs=query_specs,
+            num_per_page=num_per_page,
+            cache_dir=serper_dir,
+            max_articles=max_articles_per_person,
+        )
 
         articles_out: list[dict[str, Any]] = []
         for hit in search_hits:
