@@ -420,8 +420,8 @@
     [...visibleIds].forEach((nodeId) => {
       const docNode = lowConfidenceNodeById.get(nodeId) || null;
       if (!isLowConfidenceDocumentNode(docNode)) return;
-      const cluster = collectExpandedLowConfidenceCluster(nodeId);
-      cluster.nodeIds.forEach((connectedNodeId) => {
+      (lowConfidenceEdgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        const connectedNodeId = edge.source === nodeId ? edge.target : edge.source;
         const connectedNode = nodeById.get(connectedNodeId);
         if (!connectedNode || connectedNode.kind !== "organisation") return;
         walkUpstreamFromNode(connectedNodeId, visibleIds, upstreamVisited);
@@ -620,8 +620,8 @@
     [...activeLowNodeIds].forEach((nodeId) => {
       const docNode = lowConfidenceNodeById.get(nodeId) || null;
       if (!isLowConfidenceDocumentNode(docNode)) return;
-      const cluster = collectExpandedLowConfidenceCluster(nodeId);
-      cluster.nodeIds.forEach((connectedNodeId) => {
+      (lowConfidenceEdgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        const connectedNodeId = edge.source === nodeId ? edge.target : edge.source;
         const anchorNode = baseNodeById.get(connectedNodeId) || null;
         if (!anchorNode || !isPersonAnchorNode(anchorNode) || anchorNode.kind === "seed") return;
         activateSeedRootsForAnchorNode(connectedNodeId, activeSeedIds);
