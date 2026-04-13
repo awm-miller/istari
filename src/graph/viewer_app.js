@@ -81,7 +81,7 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
-  let mergeOverrides = { address: [], name: [] };
+  let mergeOverrides = { address: [], name: [], hidden: [] };
   let mergeOverridesLoadingPromise = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
 
@@ -1524,6 +1524,19 @@
     });
   }
 
+  function normalizeHiddenOverrideRows(rows) {
+    const seen = new Set();
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      nodeId: String(row?.nodeId || ""),
+      label: String(row?.label || ""),
+    })).filter((row) => {
+      if (!row.nodeId) return false;
+      if (seen.has(row.nodeId)) return false;
+      seen.add(row.nodeId);
+      return true;
+    });
+  }
+
   function mergeKindForNode(node) {
     if (!node || node.is_low_confidence) return null;
     if (node.kind === "address") return "address";
@@ -1556,6 +1569,47 @@
 
   function nodeMergePrimaryKey(node) {
     return nodeMergeStableKeys(node)[0] || "";
+  }
+
+  function nodeHideStableKeys(node) {
+    if (!node || node.is_low_confidence || node.kind === "seed") return [];
+    if (node.kind === "address") {
+      return uniqueValues(
+        [
+          ...(Array.isArray(node.normalized_keys) ? node.normalized_keys : []),
+          node.normalized_key,
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .map((value) => `address:${value}`),
+      );
+    }
+    if (node.kind === "organisation") {
+      const registryType = String(node.registry_type || "").trim().toLowerCase();
+      const registryNumber = String(node.registry_number || "").trim();
+      const suffix = Number(node.suffix || 0);
+      return uniqueValues([
+        registryType && registryNumber ? `org:${registryType}:${registryNumber}:${suffix}` : "",
+        registryType && registryNumber ? `org:${registryType}:${registryNumber}` : "",
+        `node-id:${String(node.id || "")}`,
+        String(node.label || "").trim() ? `label:${String(node.label).trim().toLowerCase()}` : "",
+      ]);
+    }
+    return uniqueValues([
+      ...(Array.isArray(node.person_ids) ? node.person_ids.map((value) => `person:${String(value)}`) : []),
+      ...(Array.isArray(node.identity_keys) ? node.identity_keys.map((value) => `identity:${String(value || "").trim()}`) : []),
+      node.individual_key ? `individual:${String(node.individual_key)}` : "",
+      `node-id:${String(node.id || "")}`,
+      String(node.label || "").trim() ? `label:${String(node.label).trim().toLowerCase()}` : "",
+    ]);
+  }
+
+  function nodeHidePrimaryKey(node) {
+    return nodeHideStableKeys(node)[0] || "";
+  }
+
+  function nodeIsPersistentlyHidden(node, hiddenKeySet) {
+    return nodeHideStableKeys(node).some((key) => hiddenKeySet.has(key));
   }
 
   function cloneNodeForMerge(node) {
@@ -1764,10 +1818,28 @@
     };
   }
 
+  function applyHiddenOverrides(nodes, edges, overrides) {
+    const hiddenRows = normalizeHiddenOverrideRows(overrides?.hidden);
+    if (!hiddenRows.length) {
+      return {
+        nodes: nodes.slice(),
+        edges: edges.slice(),
+      };
+    }
+    const hiddenKeySet = new Set(hiddenRows.map((row) => row.nodeId));
+    const keptNodes = nodes.filter((node) => !nodeIsPersistentlyHidden(node, hiddenKeySet));
+    const keptIds = new Set(keptNodes.map((node) => node.id));
+    return {
+      nodes: keptNodes,
+      edges: edges.filter((edge) => keptIds.has(edge.source) && keptIds.has(edge.target)),
+    };
+  }
+
   function rebuildBaseGraph() {
     const merged = applyMergeOverrides(rawMainNodes, rawMainEdges, mergeOverrides);
-    baseNodes = merged.nodes.slice();
-    baseEdges = merged.edges.slice();
+    const filtered = applyHiddenOverrides(merged.nodes, merged.edges, mergeOverrides);
+    baseNodes = filtered.nodes.slice();
+    baseEdges = filtered.edges.slice();
     baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
     baseEdgesByNodeId = new Map();
     baseEdges.forEach((edge) => {
@@ -1957,13 +2029,14 @@
         mergeOverrides = {
           address: normalizeMergeOverrideRows(overrides.address),
           name: normalizeMergeOverrideRows(overrides.name),
+          hidden: normalizeHiddenOverrideRows(overrides.hidden),
         };
         rebuildBaseGraph();
         return true;
       })
       .catch((error) => {
         console.warn(error);
-        mergeOverrides = { address: [], name: [] };
+        mergeOverrides = { address: [], name: [], hidden: [] };
         rebuildBaseGraph();
         return false;
       })
@@ -1993,8 +2066,34 @@
     mergeOverrides = {
       address: normalizeMergeOverrideRows(overrides.address),
       name: normalizeMergeOverrideRows(overrides.name),
+      hidden: normalizeHiddenOverrideRows(overrides.hidden),
     };
     viewerState.pendingMergeNodeId = "";
+    rebuildBaseGraph();
+    await applyViewerState();
+  }
+
+  async function persistHiddenOverride(action) {
+    const response = await fetch(MERGE_OVERRIDES_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operation: String(action.operation || "add"),
+        kind: "hidden",
+        nodeId: action.nodeKey,
+        label: action.nodeLabel,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Hidden-node persistence failed (${response.status})`);
+    }
+    const payload = await response.json();
+    const overrides = payload?.overrides || {};
+    mergeOverrides = {
+      address: normalizeMergeOverrideRows(overrides.address),
+      name: normalizeMergeOverrideRows(overrides.name),
+      hidden: normalizeHiddenOverrideRows(overrides.hidden),
+    };
     rebuildBaseGraph();
     await applyViewerState();
   }
@@ -2040,6 +2139,7 @@
     const expandableLowConfidenceNode = isLowConfidenceDocumentNode(node);
     const mergeKind = mergeKindForNode(node);
     const mergePrimaryKey = nodeMergePrimaryKey(node);
+    const hidePrimaryKey = nodeHidePrimaryKey(node);
     const pendingMergeNode = nodeById.get(viewerState.pendingMergeNodeId) || null;
     const compatiblePendingMergeNode = pendingMergeNode
       && pendingMergeNode.id !== node.id
@@ -2071,6 +2171,15 @@
           }
         : null,
       registryActionForNode(node),
+      hidePrimaryKey
+        ? {
+            label: "Hide node across runs",
+            type: "hide_add",
+            nodeId: node.id,
+            nodeKey: hidePrimaryKey,
+            nodeLabel: String(node.label || node.id || "node"),
+          }
+        : null,
       mergeKind && mergePrimaryKey && compatiblePendingMergeNode
         ? {
             label: `Merge ${compatiblePendingMergeNode.label} into this node`,
@@ -2110,6 +2219,12 @@
     hideCanvasSearchPopover();
     const actions = [
       { label: "Add tree...", type: "canvas_add_prompt" },
+      ...(normalizeHiddenOverrideRows(mergeOverrides.hidden).map((row) => ({
+        label: `Restore ${row.label || row.nodeId}`,
+        type: "hide_remove",
+        nodeKey: row.nodeId,
+        nodeLabel: row.label || row.nodeId,
+      }))),
       ...viewerState.extraRootIds.map((nodeId) => {
         const node = nodeById.get(nodeId);
         return node ? { label: `Remove ${node.label || node.id}`, type: "canvas_remove_tree", nodeId } : null;
@@ -2485,6 +2600,24 @@
         } catch (error) {
           console.error(error);
           window.alert("Undo merge failed.");
+        }
+      } else if (action.type === "hide_add") {
+        const confirmed = window.confirm(`Hide "${action.nodeLabel}" across graph rebuilds?`);
+        if (!confirmed) return;
+        try {
+          await persistHiddenOverride({ ...action, operation: "add" });
+        } catch (error) {
+          console.error(error);
+          window.alert("Hide node failed.");
+        }
+      } else if (action.type === "hide_remove") {
+        const confirmed = window.confirm(`Restore "${action.nodeLabel}"?`);
+        if (!confirmed) return;
+        try {
+          await persistHiddenOverride({ ...action, operation: "remove" });
+        } catch (error) {
+          console.error(error);
+          window.alert("Restore node failed.");
         }
       } else if (action.type === "canvas_add_prompt") {
         closeContextMenu();

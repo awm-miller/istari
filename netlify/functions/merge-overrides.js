@@ -15,6 +15,13 @@ function normalizeRow(sourceId, targetId, leaderId = "") {
     : { sourceId: source, targetId: target };
 }
 
+function normalizeHiddenRow(nodeId, label = "") {
+  const node = String(nodeId || "");
+  const text = String(label || "");
+  if (!node) return null;
+  return text ? { nodeId: node, label: text } : { nodeId: node };
+}
+
 function upsertUnique(rows, sourceId, targetId, leaderId = "") {
   const row = normalizeRow(sourceId, targetId, leaderId);
   if (!row) return;
@@ -32,8 +39,24 @@ function removeRow(rows, sourceId, targetId) {
   return rows.filter((row) => !(row.sourceId === source && row.targetId === target));
 }
 
+function upsertHiddenUnique(rows, nodeId, label = "") {
+  const row = normalizeHiddenRow(nodeId, label);
+  if (!row) return;
+  const existingIndex = rows.findIndex((entry) => entry.nodeId === row.nodeId);
+  if (existingIndex >= 0) {
+    rows[existingIndex] = row;
+    return;
+  }
+  rows.push(row);
+}
+
+function removeHiddenRow(rows, nodeId) {
+  const target = String(nodeId || "");
+  return rows.filter((row) => row.nodeId !== target);
+}
+
 function normalizeOverrides(overrides) {
-  const normalized = { address: [], name: [] };
+  const normalized = { address: [], name: [], hidden: [] };
   if (!overrides || typeof overrides !== "object") {
     return normalized;
   }
@@ -46,6 +69,10 @@ function normalizeOverrides(overrides) {
     for (const row of Array.isArray(overrides[kind]) ? overrides[kind] : []) {
       upsertUnique(normalized.name, row?.sourceId, row?.targetId, row?.leaderId);
     }
+  }
+
+  for (const row of Array.isArray(overrides.hidden) ? overrides.hidden : []) {
+    upsertHiddenUnique(normalized.hidden, row?.nodeId, row?.label);
   }
   return normalized;
 }
@@ -115,11 +142,25 @@ exports.handler = async function handler(event) {
   const sourceId = String(payload.sourceId || "");
   const targetId = String(payload.targetId || "");
   const leaderId = String(payload.leaderId || "");
-  if (!["address", "name"].includes(kind)) {
-    return json(400, { error: "Unsupported merge kind." });
+  const nodeId = String(payload.nodeId || payload.sourceId || "");
+  const label = String(payload.label || "");
+  if (!["address", "name", "hidden"].includes(kind)) {
+    return json(400, { error: "Unsupported override kind." });
   }
   if (!["add", "remove"].includes(operation)) {
-    return json(400, { error: "Unsupported merge operation." });
+    return json(400, { error: "Unsupported override operation." });
+  }
+  if (kind === "hidden") {
+    if (!nodeId) {
+      return json(400, { error: "Invalid hidden node key." });
+    }
+    if (operation === "remove") {
+      current.hidden = removeHiddenRow(current.hidden, nodeId);
+    } else {
+      upsertHiddenUnique(current.hidden, nodeId, label);
+    }
+    await store.setJSON(STORE_KEY, current);
+    return json(200, { overrides: current });
   }
   if (!sourceId || !targetId || sourceId === targetId) {
     return json(400, { error: "Invalid merge pair." });
