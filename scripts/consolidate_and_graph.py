@@ -438,26 +438,77 @@ def _role_phrase(edge) -> str:
     phrase = _row_str(edge, "relationship_phrase").strip()
     canonical = _canonical_role_phrase(phrase)
     if canonical:
-        return canonical
-    rt = _row_str(edge, "role_type")
-    canonical = _canonical_role_phrase(rt)
-    if canonical:
-        return canonical
-    role_label = _row_str(edge, "role_label")
-    canonical = _canonical_role_phrase(role_label)
-    if canonical:
-        return canonical
-    if phrase:
-        return phrase
-    return "is linked to"
+        phrase = canonical
+    else:
+        rt = _row_str(edge, "role_type")
+        canonical = _canonical_role_phrase(rt)
+        if canonical:
+            phrase = canonical
+        else:
+            role_label = _row_str(edge, "role_label")
+            canonical = _canonical_role_phrase(role_label)
+            if canonical:
+                phrase = canonical
+            elif not phrase:
+                phrase = "is linked to"
+    if _row_str(edge, "end_date").strip():
+        if phrase.startswith("is "):
+            return f"was formerly {phrase[3:]}"
+        return f"was formerly {phrase}"
+    return phrase
 
 
 def _role_key(edge) -> tuple[int, str]:
     return (int(edge["organisation_id"]), _role_phrase(edge))
 
 
+def _sanction_match_has_eu_source(match: dict[str, object]) -> bool:
+    sources = [*(match.get("sources") or []), match.get("source")]
+    source_ids = [*(match.get("source_ids") or []), match.get("source_id")]
+    if any(str(source_id or "").strip().upper().startswith("EU ") for source_id in source_ids):
+        return True
+    return any("european union" in str(source or "").strip().lower() for source in sources)
+
+
+def _extract_org_date(metadata: dict[str, object], *keys: str) -> str:
+    for key in keys:
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _org_date_fields(registry_type: str, metadata: dict[str, object]) -> dict[str, str]:
+    registry = str(registry_type or "").strip().lower()
+    if registry == "company":
+        incorporation_date = _extract_org_date(
+            metadata,
+            "date_of_creation",
+            "incorporation_date",
+            "incorporated_on",
+        )
+        return {"incorporation_date": incorporation_date, "registration_date": ""}
+    if registry == "charity":
+        registration_date = _extract_org_date(
+            metadata,
+            "date_registered",
+            "DateRegistered",
+            "date_of_registration",
+            "DateOfRegistration",
+            "registration_date",
+            "RegistrationDate",
+            "reg_date",
+        )
+        return {"incorporation_date": "", "registration_date": registration_date}
+    return {"incorporation_date": "", "registration_date": ""}
+
+
 def _sanction_warning(sanction: dict[str, object]) -> str:
     matches = sanction.get("matches") or []
+    has_eu_source = any(
+        isinstance(match, dict) and _sanction_match_has_eu_source(match)
+        for match in matches
+    )
     sources = sorted(
         {
             str(source).strip()
@@ -467,10 +518,14 @@ def _sanction_warning(sanction: dict[str, object]) -> str:
         }
     )
     if not sources:
-        return "\u26a0\ufe0f <strong>SANCTIONED (SANCTIONS LIST)</strong>"
+        return (
+            "\u26a0\ufe0f <strong>SANCTIONED (SANCTIONS LIST)</strong>"
+            + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
+        )
     return (
         "\u26a0\ufe0f <strong>SANCTIONED</strong>: "
         + ", ".join(sources)
+        + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
     )
 
 
@@ -488,6 +543,11 @@ def _tag_sanctioned_nodes(nodes: list[dict], sanctions_by_person_id: dict[int, d
         if not matched:
             continue
         node["sanctioned"] = True
+        node["sanction_matches"] = [match for sanction in matched for match in (sanction.get("matches") or [])]
+        node["sanction_has_eu_source"] = any(
+            isinstance(match, dict) and _sanction_match_has_eu_source(match)
+            for match in node["sanction_matches"]
+        )
         warning = _sanction_warning(matched[0])
         tooltip_lines = list(node.get("tooltip_lines") or [])
         if not tooltip_lines or tooltip_lines[0] != warning:
@@ -653,11 +713,15 @@ def consolidate_run(run_id: int) -> dict:
     org_registry_lookup: dict[tuple[str, str, int], int] = {}
     for row in scoped_org_rows:
         oid = int(row["id"])
+        metadata = _json_dict(row["metadata_json"])
+        date_fields = _org_date_fields(str(row["registry_type"] or ""), metadata)
         org_map[oid] = {
             "id": f"org:{oid}",
             "label": str(row["name"] or ""),
             "registry_type": str(row["registry_type"] or ""),
             "registry_number": str(row["registry_number"] or ""),
+            "incorporation_date": date_fields["incorporation_date"],
+            "registration_date": date_fields["registration_date"],
         }
         org_registry_lookup[
             (
@@ -744,6 +808,8 @@ def consolidate_run(run_id: int) -> dict:
         phrase = _role_phrase(edge)
         detail = _pdf_role_detail(edge)
         evidence = _edge_evidence(edge)
+        start_date = str(edge["start_date"] or "")
+        end_date = str(edge["end_date"] or "")
         key = (gid, org_id, phrase)
         if key not in seen_po:
             seen_po.add(key)
@@ -758,12 +824,20 @@ def consolidate_run(run_id: int) -> dict:
                 "confidence": str(edge["confidence_class"] or ""),
                 "weight": float(edge["edge_weight"] or 0.35),
                 "evidence": evidence,
+                "start_date": start_date,
+                "end_date": end_date,
+                "is_former": bool(end_date),
             })
         elif evidence:
             for existing in person_org_edges:
                 if existing["source"] == gid and existing["target"] == org_id and existing["phrase"] == phrase:
                     if not existing.get("evidence"):
                         existing["evidence"] = evidence
+                    if not existing.get("start_date") and start_date:
+                        existing["start_date"] = start_date
+                    if not existing.get("end_date") and end_date:
+                        existing["end_date"] = end_date
+                    existing["is_former"] = bool(existing.get("end_date"))
                     break
         group_entry = next((c for c in consolidated if c["group_id"] == gid), None)
         person_label = group_entry["label"] if group_entry else ""
@@ -774,12 +848,16 @@ def consolidate_run(run_id: int) -> dict:
             "org": org_label,
             "role_type": role_type,
             "role_label": role_label,
+            "start_date": start_date,
+            "end_date": end_date,
         })
         org_people[org_id].append({
             "person": person_label,
             "phrase": phrase,
             "detail": detail,
             "role_type": role_type,
+            "start_date": start_date,
+            "end_date": end_date,
         })
 
     # --- person↔person shared-org connections ---
@@ -857,7 +935,10 @@ def consolidate_run(run_id: int) -> dict:
             tooltip.append(f"Aliases: {', '.join(entry['aliases'])}")
         tooltip.append(f"{entry['org_count']} orgs, {entry['role_count']} roles, score {entry['score']}")
         for r in roles[:15]:
-            tooltip.append(f"  {r['phrase']} <em>{r['org']}</em>")
+            line = f"  {r['phrase']} <em>{r['org']}</em>"
+            if r.get("end_date"):
+                line += f" (ended {r['end_date']})"
+            tooltip.append(line)
         nodes.append({
             "id": entry["group_id"],
             "label": entry["label"],
@@ -876,6 +957,10 @@ def consolidate_run(run_id: int) -> dict:
         people_list = org_people.get(info["id"], [])
         tooltip = [f"<strong>{info['label']}</strong>"]
         tooltip.append(f"{info['registry_type']} {info['registry_number']}")
+        if info.get("registration_date"):
+            tooltip.append(f"Charity registered: {info['registration_date']}")
+        if info.get("incorporation_date"):
+            tooltip.append(f"Company incorporated: {info['incorporation_date']}")
         addresses = org_addresses.get(info["id"], [])
         if addresses:
             tooltip.append(f"{len(addresses)} linked addresses:")
@@ -883,7 +968,10 @@ def consolidate_run(run_id: int) -> dict:
                 tooltip.append(f"  {addr['phrase']} <em>{addr['label']}</em>")
         tooltip.append(f"{len(people_list)} linked people:")
         for p in people_list[:20]:
-            tooltip.append(f"  {p['person']} {p['phrase']}")
+            line = f"  {p['person']} {p['phrase']}"
+            if p.get("end_date"):
+                line += f" (ended {p['end_date']})"
+            tooltip.append(line)
         nodes.append({
             "id": info["id"],
             "label": info["label"],
@@ -893,6 +981,8 @@ def consolidate_run(run_id: int) -> dict:
             "registry_number": info["registry_number"],
             "seed_names": [seed_name],
             "people_count": len(people_list),
+            "registration_date": info.get("registration_date", ""),
+            "incorporation_date": info.get("incorporation_date", ""),
             "tooltip_lines": tooltip,
         })
 
@@ -922,7 +1012,10 @@ def consolidate_run(run_id: int) -> dict:
             tooltip.append(f"Aliases: {', '.join(entry['aliases'])}")
         tooltip.append(f"{entry['org_count']} orgs, {entry['role_count']} roles, score {entry['score']}")
         for r in roles[:15]:
-            tooltip.append(f"  {r['phrase']} <em>{r['org']}</em>")
+            line = f"  {r['phrase']} <em>{r['org']}</em>"
+            if r.get("end_date"):
+                line += f" (ended {r['end_date']})"
+            tooltip.append(line)
         nodes.append({
             "id": entry["group_id"],
             "label": entry["label"],
@@ -963,6 +1056,9 @@ def consolidate_run(run_id: int) -> dict:
             "source_provider": pe["source_provider"],
             "confidence": pe["confidence"],
             "weight": pe["weight"],
+            "start_date": pe.get("start_date", ""),
+            "end_date": pe.get("end_date", ""),
+            "is_former": pe.get("is_former", False),
             "tooltip": f"{p_label} {pe['phrase']} {o_label}",
             "evidence": pe.get("evidence"),
         })
@@ -1055,6 +1151,11 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     existing["evidence"] = item.get("evidence")
                 if item.get("evidence_items") and not existing.get("evidence_items"):
                     existing["evidence_items"] = item.get("evidence_items")
+                if item.get("start_date") and not existing.get("start_date"):
+                    existing["start_date"] = item.get("start_date")
+                if item.get("end_date") and not existing.get("end_date"):
+                    existing["end_date"] = item.get("end_date")
+                    existing["is_former"] = True
                 continue
             seen[key] = item
             out.append(item)
@@ -1472,6 +1573,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "source_provider": edge.get("source_provider", ""),
                     "confidence": edge.get("confidence", ""),
                     "weight": float(edge.get("weight") or 0.35),
+                    "start_date": edge.get("start_date", ""),
+                    "end_date": edge.get("end_date", ""),
+                    "is_former": bool(edge.get("is_former")),
                     "tooltip": edge.get("tooltip", ""),
                     "evidence": edge.get("evidence"),
                 })
@@ -1479,6 +1583,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "identity": identity_meta[identity_id]["label"],
                     "seed": run["seed_name"],
                     "phrase": edge.get("phrase", ""),
+                    "detail": edge.get("end_date", "") and f"Ended: {edge.get('end_date', '')}" or "",
                 })
                 continue
 
@@ -1500,6 +1605,9 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "source_provider": edge.get("source_provider", ""),
                     "confidence": edge.get("confidence", ""),
                     "weight": float(edge.get("weight") or 0.35),
+                    "start_date": edge.get("start_date", ""),
+                    "end_date": edge.get("end_date", ""),
+                    "is_former": bool(edge.get("is_former")),
                     "tooltip": edge.get("tooltip", ""),
                     "evidence": edge.get("evidence"),
                 })
@@ -1507,10 +1615,12 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                 org_people[org_id].append({
                     "person": person_label,
                     "phrase": phrase,
+                    "detail": edge.get("end_date", "") and f"Ended: {edge.get('end_date', '')}" or "",
                 })
                 merged_person_roles[merged_person_id].append({
                     "phrase": phrase,
                     "org": org_nodes[org_id]["label"],
+                    "detail": edge.get("end_date", "") and f"Ended: {edge.get('end_date', '')}" or "",
                 })
 
     identity_org_edges = _dedupe_edges(identity_org_edges, ("source", "target", "phrase"))
@@ -1540,6 +1650,10 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         tooltip = [f"<strong>{node['label']}</strong>"]
         if node.get("registry_type") or node.get("registry_number"):
             tooltip.append(f"{node.get('registry_type', '')} {node.get('registry_number', '')}".strip())
+        if node.get("registration_date"):
+            tooltip.append(f"Charity registered: {node['registration_date']}")
+        if node.get("incorporation_date"):
+            tooltip.append(f"Company incorporated: {node['incorporation_date']}")
         if len(org_identity_seed_names.get(org_id, set())) > 1:
             tooltip.append(f"Shared by: {', '.join(sorted(org_identity_seed_names[org_id]))}")
         if identities:

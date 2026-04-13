@@ -888,8 +888,10 @@ def load_negative_news_clusters(
         graph = consolidate_multi_run(run_ids)
     nodes = [
         node for node in graph.get("nodes", [])
-        if str(node.get("kind") or "") == "person"
-        and str(node.get("id") or "").startswith("merged_person:")
+        if (
+            str(node.get("kind") or "") == "person"
+            and str(node.get("id") or "").startswith("merged_person:")
+        ) or str(node.get("kind") or "") == "seed_alias"
     ]
     nodes.sort(
         key=lambda node: (

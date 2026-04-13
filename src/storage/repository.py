@@ -823,6 +823,8 @@ class Repository:
                     person_org_roles.source,
                     person_org_roles.confidence_class,
                     person_org_roles.edge_weight,
+                    person_org_roles.start_date,
+                    person_org_roles.end_date,
                     person_org_roles.provenance_json
                 FROM person_org_roles
                 JOIN people
