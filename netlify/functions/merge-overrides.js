@@ -5,12 +5,31 @@ const { connectLambda, getStore } = require("@netlify/blobs");
 const STORE_NAME = "istari-manual-merges";
 const STORE_KEY = "overrides";
 
-function pushUnique(rows, sourceId, targetId) {
+function normalizeRow(sourceId, targetId, leaderId = "") {
   const source = String(sourceId || "");
   const target = String(targetId || "");
-  if (!source || !target || source === target) return;
-  if (rows.some((row) => row.sourceId === source && row.targetId === target)) return;
-  rows.push({ sourceId: source, targetId: target });
+  const leader = String(leaderId || "");
+  if (!source || !target || source === target) return null;
+  return leader
+    ? { sourceId: source, targetId: target, leaderId: leader }
+    : { sourceId: source, targetId: target };
+}
+
+function upsertUnique(rows, sourceId, targetId, leaderId = "") {
+  const row = normalizeRow(sourceId, targetId, leaderId);
+  if (!row) return;
+  const existingIndex = rows.findIndex((entry) => entry.sourceId === row.sourceId && entry.targetId === row.targetId);
+  if (existingIndex >= 0) {
+    rows[existingIndex] = row;
+    return;
+  }
+  rows.push(row);
+}
+
+function removeRow(rows, sourceId, targetId) {
+  const source = String(sourceId || "");
+  const target = String(targetId || "");
+  return rows.filter((row) => !(row.sourceId === source && row.targetId === target));
 }
 
 function normalizeOverrides(overrides) {
@@ -20,12 +39,12 @@ function normalizeOverrides(overrides) {
   }
 
   for (const row of Array.isArray(overrides.address) ? overrides.address : []) {
-    pushUnique(normalized.address, row?.sourceId, row?.targetId);
+    upsertUnique(normalized.address, row?.sourceId, row?.targetId, row?.leaderId);
   }
 
   for (const kind of ["name", "person", "identity"]) {
     for (const row of Array.isArray(overrides[kind]) ? overrides[kind] : []) {
-      pushUnique(normalized.name, row?.sourceId, row?.targetId);
+      upsertUnique(normalized.name, row?.sourceId, row?.targetId, row?.leaderId);
     }
   }
   return normalized;
@@ -91,17 +110,26 @@ exports.handler = async function handler(event) {
     return json(400, { error: "Invalid JSON body." });
   }
 
+  const operation = String(payload.operation || "add");
   const kind = String(payload.kind || "");
   const sourceId = String(payload.sourceId || "");
   const targetId = String(payload.targetId || "");
+  const leaderId = String(payload.leaderId || "");
   if (!["address", "name"].includes(kind)) {
     return json(400, { error: "Unsupported merge kind." });
+  }
+  if (!["add", "remove"].includes(operation)) {
+    return json(400, { error: "Unsupported merge operation." });
   }
   if (!sourceId || !targetId || sourceId === targetId) {
     return json(400, { error: "Invalid merge pair." });
   }
 
-  pushUnique(current[kind], sourceId, targetId);
+  if (operation === "remove") {
+    current[kind] = removeRow(current[kind], sourceId, targetId);
+  } else {
+    upsertUnique(current[kind], sourceId, targetId, leaderId);
+  }
   await store.setJSON(STORE_KEY, current);
 
   return json(200, { overrides: current });

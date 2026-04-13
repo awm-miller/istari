@@ -1501,6 +1501,21 @@
     return result;
   }
 
+  function normalizeMergeOverrideRows(rows) {
+    const seen = new Set();
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      sourceId: String(row?.sourceId || ""),
+      targetId: String(row?.targetId || ""),
+      leaderId: String(row?.leaderId || ""),
+    })).filter((row) => {
+      if (!row.sourceId || !row.targetId || row.sourceId === row.targetId) return false;
+      const key = `${row.sourceId}||${row.targetId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   function mergeKindForNode(node) {
     if (!node || node.is_low_confidence) return null;
     if (node.kind === "address") return "address";
@@ -1547,11 +1562,23 @@
       appears_under_identities: Array.isArray(node.appears_under_identities)
         ? node.appears_under_identities.map((item) => ({ ...item }))
         : [],
+      manual_merge_rows: Array.isArray(node.manual_merge_rows)
+        ? node.manual_merge_rows.map((row) => ({ ...row }))
+        : [],
     };
   }
 
-  function mergeNodeData(target, source) {
-    if (String(source.label || "").length > String(target.label || "").length) {
+  function nodeHasStableKey(node, stableKey) {
+    return !!stableKey && nodeMergeStableKeys(node).includes(String(stableKey || ""));
+  }
+
+  function mergeNodeData(target, source, row = null) {
+    const preferredLeaderKey = String(row?.leaderId || "");
+    if (preferredLeaderKey) {
+      if (nodeHasStableKey(source, preferredLeaderKey)) {
+        target.label = source.label;
+      }
+    } else if (String(source.label || "").length > String(target.label || "").length) {
       target.label = source.label;
     }
     target.aliases = uniqueValues([
@@ -1588,6 +1615,27 @@
     target.role_count = Math.max(Number(target.role_count || 0), Number(source.role_count || 0));
     target.score = Math.max(Number(target.score || 0), Number(source.score || 0));
     target.shared = !!target.shared || !!source.shared;
+    if (row?.sourceId && row?.targetId) {
+      const entry = {
+        kind: String(row.kind || mergeKindForNode(target) || ""),
+        sourceId: String(row.sourceId || ""),
+        targetId: String(row.targetId || ""),
+        leaderId: String(row.leaderId || ""),
+        sourceLabel: String(row.sourceLabel || source.label || source.id || "node"),
+        targetLabel: String(row.targetLabel || target.label || target.id || "node"),
+        leaderLabel: String(
+          row.leaderLabel
+          || (nodeHasStableKey(source, preferredLeaderKey) ? source.label : target.label)
+          || target.id
+          || "node"
+        ),
+      };
+      const entryKey = `${entry.sourceId}||${entry.targetId}`;
+      target.manual_merge_rows = [
+        ...(Array.isArray(target.manual_merge_rows) ? target.manual_merge_rows.filter((item) => `${item.sourceId}||${item.targetId}` !== entryKey) : []),
+        entry,
+      ];
+    }
   }
 
   function dedupeMergedEdges(edges) {
@@ -1626,25 +1674,45 @@
     const nextEdges = edges.map((edge) => ({ ...edge }));
     const nodeByMergeId = new Map(nextNodes.map((node) => [node.id, node]));
     const stableLookupByKind = new Map();
+    const stableLabelLookupByKind = new Map();
     ["address", "name"].forEach((kind) => {
       const lookup = new Map();
+      const labelLookup = new Map();
       nextNodes.forEach((node) => {
         if (mergeKindForNode(node) !== kind) return;
         nodeMergeStableKeys(node).forEach((key) => {
           if (!lookup.has(key)) lookup.set(key, node.id);
+          if (!labelLookup.has(key)) labelLookup.set(key, String(node.label || node.id || ""));
         });
       });
       stableLookupByKind.set(kind, lookup);
+      stableLabelLookupByKind.set(kind, labelLookup);
     });
 
     const redirects = new Map();
+    const appliedRows = [];
     ["address", "name"].forEach((kind) => {
       const lookup = stableLookupByKind.get(kind) || new Map();
-      (Array.isArray(overrides?.[kind]) ? overrides[kind] : []).forEach((row) => {
+      const labelLookup = stableLabelLookupByKind.get(kind) || new Map();
+      normalizeMergeOverrideRows(overrides?.[kind]).forEach((row) => {
         const sourceNodeId = lookup.get(String(row?.sourceId || ""));
         const targetNodeId = lookup.get(String(row?.targetId || ""));
         if (!sourceNodeId || !targetNodeId || sourceNodeId === targetNodeId) return;
         redirects.set(sourceNodeId, targetNodeId);
+        const leaderId = labelLookup.has(String(row?.leaderId || ""))
+          ? String(row?.leaderId || "")
+          : String(row?.targetId || "");
+        appliedRows.push({
+          kind,
+          sourceId: String(row.sourceId || ""),
+          targetId: String(row.targetId || ""),
+          leaderId,
+          sourceNodeId,
+          targetNodeId,
+          sourceLabel: String(labelLookup.get(String(row.sourceId || "")) || sourceNodeId),
+          targetLabel: String(labelLookup.get(String(row.targetId || "")) || targetNodeId),
+          leaderLabel: String(labelLookup.get(leaderId) || labelLookup.get(String(row.targetId || "")) || targetNodeId),
+        });
       });
     });
 
@@ -1658,12 +1726,18 @@
       return currentId;
     }
 
+    const rowBySourceNodeId = new Map();
+    appliedRows.forEach((row) => {
+      row.resolvedTargetNodeId = resolveNodeId(row.targetNodeId);
+      rowBySourceNodeId.set(row.sourceNodeId, row);
+    });
+
     nextNodes.forEach((node) => {
       const targetNodeId = resolveNodeId(node.id);
       if (targetNodeId === node.id) return;
       const targetNode = nodeByMergeId.get(targetNodeId);
       if (!targetNode) return;
-      mergeNodeData(targetNode, node);
+      mergeNodeData(targetNode, node, rowBySourceNodeId.get(node.id) || null);
     });
 
     const keptNodes = nextNodes.filter((node) => resolveNodeId(node.id) === node.id);
@@ -1832,8 +1906,8 @@
       .then((payload) => {
         const overrides = payload?.overrides || {};
         mergeOverrides = {
-          address: Array.isArray(overrides.address) ? overrides.address : [],
-          name: Array.isArray(overrides.name) ? overrides.name : [],
+          address: normalizeMergeOverrideRows(overrides.address),
+          name: normalizeMergeOverrideRows(overrides.name),
         };
         rebuildBaseGraph();
         return true;
@@ -1855,9 +1929,11 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        operation: String(action.operation || "add"),
         kind: action.kind,
         sourceId: action.sourceKey,
         targetId: action.targetKey,
+        leaderId: action.leaderKey,
       }),
     });
     if (!response.ok) {
@@ -1866,12 +1942,25 @@
     const payload = await response.json();
     const overrides = payload?.overrides || {};
     mergeOverrides = {
-      address: Array.isArray(overrides.address) ? overrides.address : [],
-      name: Array.isArray(overrides.name) ? overrides.name : [],
+      address: normalizeMergeOverrideRows(overrides.address),
+      name: normalizeMergeOverrideRows(overrides.name),
     };
     viewerState.pendingMergeNodeId = "";
     rebuildBaseGraph();
     await applyViewerState();
+  }
+
+  function promptForMergeLeader(action) {
+    const choice = window.prompt(
+      `Choose which name should lead this merge:\n1. ${action.sourceLabel}\n2. ${action.targetLabel}\n\nEnter 1 or 2.`,
+      "2",
+    );
+    if (choice === null) return "";
+    const trimmed = String(choice || "").trim();
+    if (trimmed === "1") return action.sourceKey;
+    if (trimmed === "2") return action.targetKey;
+    window.alert("Please enter 1 or 2.");
+    return "";
   }
 
   function registryActionForNode(node) {
@@ -1910,6 +1999,15 @@
       && nodeMergePrimaryKey(pendingMergeNode)
       ? pendingMergeNode
       : null;
+    const undoActions = (Array.isArray(node.manual_merge_rows) ? node.manual_merge_rows : []).map((row) => ({
+      label: `Undo merge with ${row.sourceLabel || row.sourceId}`,
+      type: "merge_remove",
+      kind: String(row.kind || mergeKind || ""),
+      sourceLabel: String(row.sourceLabel || row.sourceId || "node"),
+      targetLabel: String(row.targetLabel || node.label || node.id || "node"),
+      sourceKey: String(row.sourceId || ""),
+      targetKey: String(row.targetId || ""),
+    })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
       expandableLowConfidenceNode
@@ -1933,8 +2031,10 @@
             targetLabel: node.label,
             sourceKey: nodeMergePrimaryKey(compatiblePendingMergeNode),
             targetKey: mergePrimaryKey,
+            leaderKey: "",
           }
         : null,
+      ...undoActions,
       mergeKind && mergePrimaryKey && viewerState.pendingMergeNodeId === node.id
         ? { label: "Cancel merge", type: "merge_cancel" }
         : mergeKind && mergePrimaryKey
@@ -2317,13 +2417,25 @@
       } else if (action.type === "merge_cancel") {
         viewerState.pendingMergeNodeId = "";
       } else if (action.type === "merge_persist") {
-        const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}"? This will persist across graph rebuilds.`);
+        const leaderKey = promptForMergeLeader(action);
+        if (!leaderKey) return;
+        const leaderLabel = leaderKey === action.sourceKey ? action.sourceLabel : action.targetLabel;
+        const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}" and display "${leaderLabel}"? This will persist across graph rebuilds.`);
         if (!confirmed) return;
         try {
-          await persistMergeOverride(action);
+          await persistMergeOverride({ ...action, operation: "add", leaderKey });
         } catch (error) {
           console.error(error);
           window.alert("Persisted merge failed.");
+        }
+      } else if (action.type === "merge_remove") {
+        const confirmed = window.confirm(`Undo the merge of "${action.sourceLabel}" into "${action.targetLabel}"?`);
+        if (!confirmed) return;
+        try {
+          await persistMergeOverride({ ...action, operation: "remove" });
+        } catch (error) {
+          console.error(error);
+          window.alert("Undo merge failed.");
         }
       } else if (action.type === "canvas_add_prompt") {
         closeContextMenu();
