@@ -1,110 +1,230 @@
 # Project Istari
 
-CLI pipeline for linking people to England & Wales charities and companies.
+Project Istari starts with one or more people and tries to answer a simple question:
 
-Given one or more **seed names**, Istari searches UK public registries, resolves entity matches with AI, expands the network of connected organisations and people, and screens results against sanctions lists — producing a ranked, explorable network graph.
+"Which charities, companies, people, watchlists, and news hits are connected to them?"
+
+It does this by searching UK public registries, deciding which hits are really about the same person, expanding outward through organisations and officers or trustees, then rebuilding everything into one combined graph that can be reviewed in a browser.
 
 ## Architecture
 
-![Pipeline Architecture](docs/architecture.svg)
+Open the full architecture image: [`docs/architecture.svg`](docs/architecture.svg)
 
-### Discovery flow
+![Project Istari architecture](docs/architecture.svg)
 
-The current discovery flow below matches the live pipeline in `src/services/mvp_pipeline.py`, the PDF organisation resolver in `src/services/pdf_enrichment.py`, and the address pivot searcher in `src/address_pivot.py`.
+## What the system does
 
-```mermaid
-flowchart TD
-    seedName[SeedName]
-    step1[step1_expand_seed]
-    searchProviders[RegistrySearchProviders]
-    resolution[IdentityResolution]
-    step1Matches[Step1MatchedOrganisations]
-    discoveryRounds[run_connected_org_discovery]
-    step2[step2_expand_connected_organisations]
-    charityLinks[CharityLinkedCharities]
-    counterparts[CrossRegistryCounterparts]
-    addressPivot[AddressPivotSearcher]
-    step2b[step2b_enrich_from_pdfs]
-    pdfDocs[PDFDocuments]
-    pdfResolver[PdfOrganisationResolver.resolve_all]
-    extraOrgs[NewStep2Organisations]
-    step3[step3_expand_connected_people]
-    companyPeople[expand_company_people]
-    charityPeople[expand_charity_people]
-    ranking[RankingAndSanctions]
+At a high level, Istari has two big phases.
 
-    seedName --> step1
-    step1 --> searchProviders
-    searchProviders --> resolution
-    resolution --> step1Matches
-    step1Matches --> discoveryRounds
-    discoveryRounds --> step2
-    step2 --> charityLinks
-    step2 --> counterparts
-    step2 --> addressPivot
-    charityLinks --> extraOrgs
-    counterparts --> extraOrgs
-    addressPivot --> extraOrgs
-    discoveryRounds --> step2b
-    step2b --> pdfDocs
-    pdfDocs --> pdfResolver
-    pdfResolver --> extraOrgs
-    extraOrgs --> discoveryRounds
-    discoveryRounds --> step3
-    step3 --> companyPeople
-    step3 --> charityPeople
-    companyPeople --> ranking
-    charityPeople --> ranking
-```
+1. It runs discovery for each seed name separately.
+2. It rebuilds one combined graph from the latest run for each seed.
 
-Discovery notes:
-- `step1_expand_seed()` generates variants, searches the configured registry providers, then resolves candidate matches into initial step-1 organisations.
-- `run_connected_org_discovery()` now runs connected-org discovery in rounds so newly found charities, companies, address pivots, and PDF-discovered institutions can feed later rounds before people expansion starts.
-- `step2_expand_connected_organisations()` currently expands three connected-org paths: linked charities, same-name cross-registry counterparts, and shared-address pivots.
-- `step2b_enrich_from_pdfs()` extracts organisation mentions from filings and annual reports; `PdfOrganisationResolver.resolve_all()` now checks both Companies House and Charity Commission for each institution mention.
-- `step3_expand_connected_people()` runs only after discovery rounds have stabilised, then expands trustees/officers from all scoped organisations.
+The discovery phase is about finding people and organisations.
 
-### Pipeline steps
+The rebuild phase is about merging, annotating, and presenting the results.
 
-1. **Seed Expansion** — Generate name variants and search UK charity/company registries for candidate organisations.
-2. **Identity Resolution** — Score candidates with rules; use an LLM to decide ambiguous same-person matches and persist the initial matched organisations.
-3. **Connected Org Discovery** — Repeatedly expand linked charities, same-name company/charity counterparts, shared-address pivots, and PDF-discovered organisation mentions until no new organisations are added.
-4. **People Expansion** — Pull officers and trustees for every scoped organisation after discovery has stabilised.
-5. **Ranking + Sanctions** — Rank people by connection strength and screen them against sanctions lists.
-6. **Graph Consolidation** — Merge duplicate people and addresses across runs into one unified graph.
-7. **Output** — Serve an interactive network graph and export JSON for the web viewer.
+## Discovery flow in plain English
 
-### Low-confidence overlay
+Imagine you start with one person.
 
-The combined graph includes a dedicated low-confidence overlay for mapping-derived evidence such as open letters and signatory lists, folded in from cleaned mapping databases.
+First, Istari makes a list of likely spelling variants for that person's name. It then searches the Charity Commission and Companies House for possible matches.
 
-- Matched people resolve onto the existing graph identity node when there is a unique seed/identity match.
-- Matched organisations resolve onto existing graph organisations in three passes: exact label or alias match, deterministic company-suffix variants such as `Ltd`/`Limited`, then an AI tie-break only for unresolved organisation labels with a short candidate list.
-- Accepted low-confidence organisation resolutions are persisted into `mapping_matches` inside `data/mapping_links.combined.sqlite` during graph rebuilds.
-- Open letters are emitted as low-confidence document nodes; represented organisations listed in those letters are emitted as linked organisation nodes, with viewer text that states when a signer signed representing that organisation.
-- In the viewer these appear as reviewer-visible **identity → open letter → organisation** chains, rendered as yellow dashed inclusions, while the separate grey indirect-connection view stays limited to main-graph paths.
-- The overlay is exported separately from the consolidated graph so it can be toggled on and off in the Netlify viewer.
+Next, it decides which search hits are really about the same person. Easy cases are handled by rules. Hard cases can go to an AI model. Once a hit is accepted, the linked organisation becomes part of that seed's run.
 
-### Data sources
+After that, Istari starts expanding outward from the organisations it has found.
 
-| Source | Usage |
+It looks for:
+
+- linked charities from Charity Commission
+- a company and a charity with the same normalised name
+- other organisations at the same address
+- extra organisations mentioned in PDFs and filings
+
+Then it expands the people attached to those organisations.
+
+That means:
+
+- trustees for charities
+- officers, directors, and similar roles for companies
+
+Then it does something important: it feeds newly found people back into the same search process.
+
+In other words, if a newly discovered trustee or officer looks important, Istari can search that person too. If that search finds more organisations, those organisations get pulled into the run, and the process repeats for a limited number of rounds.
+
+So the real discovery loop is:
+
+1. find initial organisations from the seed
+2. expand connected organisations
+3. expand people from those organisations
+4. search those newly found people
+5. pull in any new organisations they reveal
+6. repeat until the run stops growing or hits its round limit
+
+That is the core of the pipeline.
+
+## What happens during discovery
+
+### 1. Seed search
+
+The system starts with a seed name and searches the UK registries for likely matches.
+
+In the standard CLI pipeline, the main sources are:
+
+- Charity Commission
+- Companies House
+
+Some extra discovery paths depend on API keys or feature flags being enabled.
+
+### 2. Entity resolution
+
+Search results are messy. The same person can appear under many spellings, and different people can share similar names.
+
+Istari scores each candidate and decides whether it is:
+
+- a real match
+- a maybe
+- not the same person
+
+Only real matches automatically drive the network outward.
+
+### 3. Organisation expansion
+
+Once an organisation is in scope, Istari tries to find nearby organisations in several ways:
+
+- a charity linked to that charity
+- the same organisation appearing in the other registry
+- another organisation at the same address
+- an organisation mentioned in a filing or annual report PDF
+
+This is how the graph starts to spread out from one initial seed.
+
+### 4. People expansion
+
+For every in-scope organisation, Istari pulls the people attached to it.
+
+That usually means:
+
+- trustees for charities
+- officers and directors for companies
+
+These people are stored as graph nodes and role edges.
+
+### 5. Recursive person search
+
+People discovered from those organisations can themselves become new search frontiers.
+
+That means the pipeline does not stop at:
+
+"seed -> organisation -> trustee"
+
+It can continue to:
+
+"seed -> organisation -> trustee -> another organisation -> more people"
+
+This is why discovery can uncover a wider network instead of just a first ring of connections.
+
+### 6. Ranking
+
+At the end of a run, people are ranked by how strongly they connect into the discovered organisation network.
+
+In simple terms, people rise higher when they connect to more important or more numerous organisations in that seed's run.
+
+### 7. Sanctions screening
+
+The ranked people are screened against sanctions data.
+
+Those results are saved so they can be reused later instead of recomputed every time.
+
+## What the pipeline does not do automatically
+
+It helps to be clear about the limits.
+
+- This pipeline is mainly built around UK registry discovery.
+- A company is not expanded through a special "company linked companies" API in the same way charities can be expanded through linked-charity data.
+- Some discovery paths only work when the needed API keys and feature flags are enabled.
+- Negative news is not part of the core discovery loop. It is a separate screening layer added later.
+- Egypt judgments are not part of the discovery loop either. They are attached later during graph rebuild.
+
+## What happens after discovery
+
+Once you have multiple runs, Istari rebuilds one combined graph from the latest run for each seed.
+
+This rebuild stage is separate from discovery.
+
+During rebuild, the system:
+
+1. picks the latest run for each seed
+2. merges duplicate people across runs
+3. merges shared organisations and addresses
+4. refreshes or reuses sanctions data
+5. attaches Egypt judgments hits
+6. attaches adverse-media or negative-news hits
+7. builds the optional low-confidence overlay
+8. writes the viewer outputs
+
+## Egypt judgments, sanctions, and negative news
+
+These three things are related, but they are not the same.
+
+### Sanctions
+
+Sanctions screening happens at the end of each discovery run on ranked people.
+
+Later, during graph rebuild, Istari reuses cached sanctions results where possible and only re-screens people whose cached record is missing or stale.
+
+### Egypt judgments
+
+Egypt judgments are added during graph rebuild from a curated local dataset in `data/egypt_judgments_screen.json`.
+
+The rebuild matches graph node names and aliases against that dataset and adds the hit information onto matching person nodes.
+
+### Negative news
+
+Negative news is a separate adverse-media pipeline.
+
+It does not decide who gets discovered. Instead, it works like a later annotation layer:
+
+1. build merged person clusters from the combined graph
+2. search the web for those clusters and their aliases
+3. fetch and extract article text
+4. classify the articles
+5. store the results in a separate SQLite database
+6. attach those claims back onto the rebuilt graph
+
+So negative news is a layer on top of discovery, not the discovery engine itself.
+
+## Low-confidence overlay
+
+The viewer also supports a separate low-confidence overlay.
+
+This is for review-only evidence chains that should not be mixed into the main graph as if they were equally strong.
+
+Typical examples include mapping-derived links, signatory data, and open-letter style evidence.
+
+The overlay is built separately and exported as its own JSON payload so it can be turned on and off in the viewer.
+
+## What gets written out
+
+After rebuild, the project writes:
+
+- the main HTML viewer
+- the main graph JSON
+- the low-confidence overlay JSON
+- the address coordinate JSON used by the viewer
+
+These outputs are written into `output/` and copied into `netlify_graph_viewer/` when that folder exists.
+
+## Main data sources
+
+| Source | What it is used for |
 |---|---|
-| **Charity Commission for England & Wales** | Charity search, trustee details, linked entities |
-| **Companies House** | Officer search, company profiles, appointments, date of birth |
-| **Gemini / OpenAI** | Entity resolution, address resolution, PDF extraction |
-| **Serper** | Web search for supplementary evidence |
-| **Court / sanctions / bank-freeze documents** | Compiled Egypt judgment / bank-freeze screening data in `data/egypt_judgments_screen.json` |
-| **Sanctions lists** | OFAC SDN, UK Sanctions List, France DG Tresor, Germany Finanzsanktionsliste |
-
-### Storage & output
-
-| Component | Description |
-|---|---|
-| **SQLite** | Entities, relationships, resolution decisions, and run metadata |
-| **Flask web UI** | Interactive network graph at `localhost:5000` |
-| **JSON export** | Graph payload for the Netlify viewer |
-| **Graph rebuild** | Cross-run merge of people and addresses into a single combined graph |
-| **Low-confidence overlay** | Separate JSON layer for dashed yellow evidence chains from cleaned mapping/signatory databases |
+| Charity Commission for England and Wales | charity search, trustees, linked charities |
+| Companies House | officer search, company records, appointments |
+| Serper | web search for some registry discovery and adverse media |
+| Gemini / OpenAI | entity resolution, PDF extraction, translation, article classification |
+| Local sanctions data | sanctions screening |
+| `data/egypt_judgments_screen.json` | curated Egypt judgments annotation during rebuild |
+| `data/negative_news.sqlite` | stored adverse-media results |
 
 ## Quick start
 
@@ -112,78 +232,73 @@ The combined graph includes a dedicated low-confidence overlay for mapping-deriv
 # Install
 pip install -e .
 
-# Set API keys in .env
+# Copy environment template
 cp .env.example .env
 
-# Initialise the database
+# Create the SQLite schema
 python -m src.cli init-db
 
-# Run the full pipeline for a seed name
+# Run one seed
 python -m src.cli run-name "Jane Smith"
 
-# Or run multiple seeds with overlap analysis
+# Run several seeds
 python -m src.cli run-seeds "Jane Smith" "John Doe"
 
-# Pilot adverse-media search for one or more people
-python -m src.cli negative-news --pages 2 --num 10 "Jane Smith"
-
-# Launch the web UI
-python -m src.cli web-ui
-
-# Rebuild the combined graph from all saved runs
+# Rebuild the combined graph from the latest run for each seed
 python scripts/rebuild_graph.py
+
+# Launch the local viewer
+python -m src.cli web-ui
 ```
 
-Graph rebuild convention: new rebuild stages should normally be implemented as small dedicated modules/helpers and then plugged into `scripts/rebuild_graph.py`, rather than expanding the merge engine directly.
+## Useful commands
 
-The rebuild now includes an Egypt judgments screening pass that annotates matched person nodes from `data/egypt_judgments_screen.json` with `egypt_judgment_hit` and compact source details for the viewer.
-
-## CLI reference
-
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `init-db` | Create the SQLite schema |
-| `run-name NAME` | Full pipeline for one seed |
-| `run-seeds NAME [NAME ...]` | Full pipeline per seed + overlap |
-| `step1-seed NAME` | Seed expansion only |
-| `step2-orgs RUN_ID` | Org expansion only |
-| `pdf-enrich RUN_ID` | PDF enrichment only |
-| `step3-people RUN_ID` | People expansion only |
-| `step4-ofac RUN_ID` | Sanctions screening only |
-| `rank` | Rank people by connections |
-| `negative-news NAME [NAME ...]` | Serper + extraction + Gemini adverse-media pilot |
-| `negative-news-clusters` | Batch adverse-media screening for top merged person clusters |
-| `negative-news-extract-test URL` | Fetch one article and inspect extraction QA |
-| `export-network --run-id ID` | Export graph as JSON |
-| `web-ui` | Launch the Flask web UI |
-| `healthcheck` | Check API keys and tooling |
+| `init-db` | create the main SQLite schema |
+| `run-name NAME` | run the full discovery pipeline for one seed |
+| `run-seeds NAME [NAME ...]` | run the full pipeline for multiple seeds |
+| `step1-seed NAME` | run only the first search and resolution step |
+| `step2-orgs RUN_ID` | expand connected organisations only |
+| `pdf-enrich RUN_ID` | run PDF enrichment for one run |
+| `step3-people RUN_ID` | expand trustees and officers only |
+| `step4-ofac RUN_ID` | run sanctions screening only |
+| `negative-news NAME [NAME ...]` | run adverse-media search for one or more names |
+| `negative-news-clusters` | run adverse-media screening over merged graph clusters |
+| `negative-news-extract-test URL` | fetch one page and inspect extraction output |
+| `export-network --run-id ID` | export graph JSON for selected runs |
+| `web-ui` | launch the local viewer |
+| `healthcheck` | check keys and local tooling |
 
-## Negative-news pilot
+## Negative-news workflow
 
-`negative-news` is a standalone adverse-media pass that:
+There are two ways negative news is used here.
 
-1. Searches Serper for quoted English and generated Arabic name variants.
-2. Fetches the linked page and extracts whole-page text for review.
-3. Uses Gemini to classify strict Muslim Brotherhood and broader Islamist connectedness signals.
+The first is a one-off person search:
 
-Useful flags:
+```bash
+python -m src.cli negative-news --pages 2 --num 10 "Jane Smith"
+```
 
-- `--context-term "ORG NAME"` adds quoted org phrases to the quoted name queries.
-- When a quoted org term is used, results are only kept if that exact org phrase appears in the search title, snippet, or extracted page text.
-- `--max-articles` caps fetch/classification volume per person.
-- `--no-classify` runs discovery and extraction only.
-- `--out PATH` writes the JSON report to disk.
+The second is the merged-cluster workflow, which works from the rebuilt graph:
 
-Use `negative-news-extract-test` when you want to QA a single URL's extraction output before spending Gemini calls on larger runs.
+```bash
+python -m src.cli negative-news-clusters --offset 0 --limit 50
+python scripts/run_negative_news_chunks.py
+```
 
-`negative-news-clusters` runs the same screening flow over the top merged people from the combined graph:
+That cluster workflow:
 
-- It uses the latest saved run for each seed, merges expanded people into cross-run clusters, and ranks those merged clusters by cumulative link score.
-- It searches every English alias in the cluster for 10 pages, generates one most-plausible Arabic alias from the lead cluster name and searches that for 10 pages, then runs a shorter 2-page quoted-name plus quoted-organisation pass across all linked organisations in the cluster.
-- Org-qualified hits are only retained when the quoted organisation phrase appears in the title, snippet, or extracted page text.
-- `--max-articles` caps how many unique URLs are fetched and classified per merged cluster after URL dedupe.
+- builds merged person clusters from the latest runs
+- searches on cluster names and aliases
+- uses linked organisation names as extra context terms
+- stores results in `data/negative_news.sqlite`
+- reattaches those results to the graph during rebuild
 
-Screening artifacts produced from this work:
+## Important implementation notes
 
-- `data/egypt_judgments_screen.json` is the compiled production screening dataset used during graph rebuilds.
-- `data/egypt_judgments_screen_aliases.json` stores the curated transliteration aliases used to keep matching deterministic.
+- The latest run for each seed is what feeds the combined graph rebuild.
+- Sanctions are cached and reused where possible.
+- Egypt judgments and negative news are both attached after graph consolidation.
+- The negative-news store is separate from the main discovery database.
+- The architecture image above is meant to reflect the code path in `src/services/mvp_pipeline.py`, `scripts/rebuild_graph.py`, `src/graph/egypt_judgments.py`, and `src/graph/adverse_media.py`.
