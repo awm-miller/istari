@@ -8,13 +8,69 @@ Given one or more **seed names**, Istari searches UK public registries, resolves
 
 ![Pipeline Architecture](docs/architecture.svg)
 
+### Discovery flow
+
+The current discovery flow below matches the live pipeline in `src/services/mvp_pipeline.py`, the PDF organisation resolver in `src/services/pdf_enrichment.py`, and the address pivot searcher in `src/address_pivot.py`.
+
+```mermaid
+flowchart TD
+    seedName[SeedName]
+    step1[step1_expand_seed]
+    searchProviders[RegistrySearchProviders]
+    resolution[IdentityResolution]
+    step1Matches[Step1MatchedOrganisations]
+    discoveryRounds[run_connected_org_discovery]
+    step2[step2_expand_connected_organisations]
+    charityLinks[CharityLinkedCharities]
+    counterparts[CrossRegistryCounterparts]
+    addressPivot[AddressPivotSearcher]
+    step2b[step2b_enrich_from_pdfs]
+    pdfDocs[PDFDocuments]
+    pdfResolver[PdfOrganisationResolver.resolve_all]
+    extraOrgs[NewStep2Organisations]
+    step3[step3_expand_connected_people]
+    companyPeople[expand_company_people]
+    charityPeople[expand_charity_people]
+    ranking[RankingAndSanctions]
+
+    seedName --> step1
+    step1 --> searchProviders
+    searchProviders --> resolution
+    resolution --> step1Matches
+    step1Matches --> discoveryRounds
+    discoveryRounds --> step2
+    step2 --> charityLinks
+    step2 --> counterparts
+    step2 --> addressPivot
+    charityLinks --> extraOrgs
+    counterparts --> extraOrgs
+    addressPivot --> extraOrgs
+    discoveryRounds --> step2b
+    step2b --> pdfDocs
+    pdfDocs --> pdfResolver
+    pdfResolver --> extraOrgs
+    extraOrgs --> discoveryRounds
+    discoveryRounds --> step3
+    step3 --> companyPeople
+    step3 --> charityPeople
+    companyPeople --> ranking
+    charityPeople --> ranking
+```
+
+Discovery notes:
+- `step1_expand_seed()` generates variants, searches the configured registry providers, then resolves candidate matches into initial step-1 organisations.
+- `run_connected_org_discovery()` now runs connected-org discovery in rounds so newly found charities, companies, address pivots, and PDF-discovered institutions can feed later rounds before people expansion starts.
+- `step2_expand_connected_organisations()` currently expands three connected-org paths: linked charities, same-name cross-registry counterparts, and shared-address pivots.
+- `step2b_enrich_from_pdfs()` extracts organisation mentions from filings and annual reports; `PdfOrganisationResolver.resolve_all()` now checks both Companies House and Charity Commission for each institution mention.
+- `step3_expand_connected_people()` runs only after discovery rounds have stabilised, then expands trustees/officers from all scoped organisations.
+
 ### Pipeline steps
 
-1. **Seed Expansion** — Generate name variants and search UK charity/company registries for matches.
-2. **Identity Resolution** — Score candidates with rules; use an LLM to decide ambiguous same-person matches.
-3. **Org Expansion** — Follow confirmed matches to linked charities and companies; find more orgs at shared addresses.
-4. **People Expansion + Sanctions** — Pull officers and trustees for each organisation; rank by connection strength; screen against sanctions lists.
-5. **PDF Enrichment** — Download annual reports and filings; extract names and roles using Gemini.
+1. **Seed Expansion** — Generate name variants and search UK charity/company registries for candidate organisations.
+2. **Identity Resolution** — Score candidates with rules; use an LLM to decide ambiguous same-person matches and persist the initial matched organisations.
+3. **Connected Org Discovery** — Repeatedly expand linked charities, same-name company/charity counterparts, shared-address pivots, and PDF-discovered organisation mentions until no new organisations are added.
+4. **People Expansion** — Pull officers and trustees for every scoped organisation after discovery has stabilised.
+5. **Ranking + Sanctions** — Rank people by connection strength and screen them against sanctions lists.
 6. **Graph Consolidation** — Merge duplicate people and addresses across runs into one unified graph.
 7. **Output** — Serve an interactive network graph and export JSON for the web viewer.
 
@@ -37,6 +93,7 @@ The combined graph includes a dedicated low-confidence overlay for mapping-deriv
 | **Companies House** | Officer search, company profiles, appointments, date of birth |
 | **Gemini / OpenAI** | Entity resolution, address resolution, PDF extraction |
 | **Serper** | Web search for supplementary evidence |
+| **Court / sanctions / bank-freeze documents** | Adverse-media review artifacts and extracted legal rosters in `docs/egypt-saudi-court-bank-freeze-extracts.md` |
 | **Sanctions lists** | OFAC SDN, UK Sanctions List, France DG Tresor, Germany Finanzsanktionsliste |
 
 ### Storage & output
@@ -123,3 +180,9 @@ Use `negative-news-extract-test` when you want to QA a single URL's extraction o
 - It searches every English alias in the cluster for 10 pages, generates one most-plausible Arabic alias from the lead cluster name and searches that for 10 pages, then runs a shorter 2-page quoted-name plus quoted-organisation pass across all linked organisations in the cluster.
 - Org-qualified hits are only retained when the quoted organisation phrase appears in the title, snippet, or extracted page text.
 - `--max-articles` caps how many unique URLs are fetched and classified per merged cluster after URL dedupe.
+
+Review artifacts produced from this work:
+
+- `docs/mb-screening-sources.md` is the current screening-grade shortlist of legal / official sources.
+- `docs/egypt-saudi-court-bank-freeze-extracts.md` stores the long-form extracted rosters and excerpts behind that shortlist.
+- `docs/negative-news-lists-review.md` is the archived broader review log from the exploration pass.
