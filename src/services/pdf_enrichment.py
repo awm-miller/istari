@@ -308,16 +308,36 @@ class PdfOrganisationResolver:
         self.charity_client = charity_client
         self.companies_house_client = companies_house_client
 
-    def resolve(self, organisation_name: str) -> OrganisationRecord | None:
+    def resolve_all(self, organisation_name: str) -> list[OrganisationRecord]:
         cleaned = _clean_text(organisation_name)
         if not cleaned:
-            return None
+            return []
 
+        resolved: list[OrganisationRecord] = []
         company_match = self._resolve_company(cleaned)
         if company_match is not None:
-            return company_match
+            resolved.append(company_match)
 
-        return search_name_to_organisation(self.charity_client, cleaned)
+        charity_match = search_name_to_organisation(self.charity_client, cleaned)
+        if charity_match is not None:
+            resolved.append(charity_match)
+        return self._dedupe_records(resolved)
+
+    @staticmethod
+    def _dedupe_records(records: list[OrganisationRecord]) -> list[OrganisationRecord]:
+        seen: set[tuple[str, str, int]] = set()
+        deduped: list[OrganisationRecord] = []
+        for record in records:
+            key = (
+                str(record.registry_type or "").strip(),
+                str(record.registry_number or "").strip(),
+                int(record.suffix or 0),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(record)
+        return deduped
 
     def _resolve_company(self, organisation_name: str) -> OrganisationRecord | None:
         if not self.settings.companies_house_api_key:
@@ -858,30 +878,31 @@ class PdfEnrichmentService:
         entity: PdfExtractedEntity,
         evidence_id: int,
     ) -> bool:
-        resolved = self.org_resolver.resolve(entity.name)
-        if resolved is None:
+        resolved_records = self.org_resolver.resolve_all(entity.name)
+        if not resolved_records:
             return False
-        organisation_id = self.repository.upsert_organisation(resolved)
-        self.repository.link_run_organisation(
-            run_id,
-            organisation_id,
-            stage="step2_connected_org",
-            source="pdf_org_mention",
-            metadata={
-                "parent_organisation_id": int(parent_org["id"]),
-                "parent_organisation_name": _clean_text(parent_org["name"]),
-                "document_title": document.title,
-                "document_url": entity.source_document_url,
-                "local_pdf_path": document.local_pdf_path,
-                "filing_description": document.filing_description,
-                "entity_name": entity.name,
-                "role_category": entity.role_category,
-                "connection_phrase": entity.connection_phrase,
-                "connection_detail": entity.notes,
-                "source_page_hint": entity.source_page_hint,
-                "evidence_id": evidence_id,
-            },
-        )
+        for resolved in resolved_records:
+            organisation_id = self.repository.upsert_organisation(resolved)
+            self.repository.link_run_organisation(
+                run_id,
+                organisation_id,
+                stage="step2_connected_org",
+                source="pdf_org_mention",
+                metadata={
+                    "parent_organisation_id": int(parent_org["id"]),
+                    "parent_organisation_name": _clean_text(parent_org["name"]),
+                    "document_title": document.title,
+                    "document_url": entity.source_document_url,
+                    "local_pdf_path": document.local_pdf_path,
+                    "filing_description": document.filing_description,
+                    "entity_name": entity.name,
+                    "role_category": entity.role_category,
+                    "connection_phrase": entity.connection_phrase,
+                    "connection_detail": entity.notes,
+                    "source_page_hint": entity.source_page_hint,
+                    "evidence_id": evidence_id,
+                },
+            )
         return True
 
 
