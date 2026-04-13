@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import redirect_stderr
 import hashlib
 import html
 import http.client
@@ -9,6 +10,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -761,13 +763,35 @@ class PdfEnrichmentService:
         output_dir = pdf_path.parent / f"{pdf_path.stem}_odl"
         output_dir.mkdir(parents=True, exist_ok=True)
         try:
-            opendataloader_pdf.convert(
-                input_path=[str(pdf_path)],
-                output_dir=str(output_dir),
-                format="markdown",
-                quiet=True,
+            with io.StringIO() as stderr_buffer, redirect_stderr(stderr_buffer):
+                opendataloader_pdf.convert(
+                    input_path=[str(pdf_path)],
+                    output_dir=str(output_dir),
+                    format="markdown",
+                    quiet=True,
+                )
+        except subprocess.CalledProcessError as exc:
+            output = " ".join(str(exc.output or "").split())
+            if output:
+                log.warning(
+                    "PDF->Markdown: opendataloader failed for %s (exit %s): %s",
+                    pdf_path.name,
+                    exc.returncode,
+                    output[:300],
+                )
+            else:
+                log.warning(
+                    "PDF->Markdown: opendataloader failed for %s (exit %s)",
+                    pdf_path.name,
+                    exc.returncode,
+                )
+            return ""
+        except Exception as exc:
+            log.warning(
+                "PDF->Markdown: opendataloader wrapper failed for %s: %s",
+                pdf_path.name,
+                exc,
             )
-        except Exception:
             return ""
         produced = output_dir / f"{pdf_path.stem}.md"
         if not produced.exists():
