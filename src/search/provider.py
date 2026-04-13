@@ -527,7 +527,7 @@ def _clean_trustee_name(name: str) -> str:
 
 def _extract_charity_number_from_title(title: str) -> str | None:
     """Extract charity number from titles like 'CHARITY NAME - 259232 - Charity Commission'."""
-    match = re.search(r"\b(\d{5,8})\b", title)
+    match = re.search(r"-\s*(\d{5,8})\s*-\s*Charity Commission\b", title, flags=re.IGNORECASE)
     if match:
         return match.group(1)
     return None

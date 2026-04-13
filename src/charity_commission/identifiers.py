@@ -10,9 +10,6 @@ def looks_like_charity_url(url: str) -> bool:
 
 
 def extract_charity_number_from_url(url: str) -> str | None:
-    match = re.search(r"charity-details/(\d+)", url or "", flags=re.IGNORECASE)
-    if match:
-        return match.group(1)
     parsed_match = re.search(r"[?&]regid=(\d+)", url or "", flags=re.IGNORECASE)
     if parsed_match:
         return parsed_match.group(1)
