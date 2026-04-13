@@ -69,6 +69,7 @@ def candidate_from_evidence_item(*, item: EvidenceItem, evidence_id: int) -> Can
             "role_label": item.raw_payload.get("role_label", ""),
             "relationship_kind": item.raw_payload.get("relationship_kind", ""),
             "relationship_phrase": item.raw_payload.get("relationship_phrase", ""),
+            "discovery_frontier_name": item.raw_payload.get("discovery_frontier_name", ""),
             "evidence": item.raw_payload,
         },
     )

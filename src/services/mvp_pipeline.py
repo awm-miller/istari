@@ -21,7 +21,8 @@ from src.ofac.screening import OFACScreener
 from src.ofac.screening import extract_identity_key_birth_month_year
 from src.resolution.features import build_candidate_match
 from src.resolution.matcher import HybridMatcher
-from src.search.provider import SearchProvider
+from src.search.provider import SearchProvider, build_search_providers
+from src.search.queries import normalize_name
 from src.services.pipeline_services import (
     DiscoveryService,
     RankingService,
@@ -192,6 +193,7 @@ def step1_expand_seed(
         search_providers=search_providers,
         run_id=run_id,
         variants=variants,
+        frontier_name=seed_name,
     )
     decisions = resolution_service.resolve_candidates(
         repository=repository,
@@ -493,7 +495,7 @@ def step2b_enrich_from_pdfs(
 
 
 def _scoped_org_count(repository: Repository, run_id: int) -> int:
-    return len(repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE]))
+    return len(repository.get_run_scoped_organisations(run_id))
 
 
 def run_connected_org_discovery(
@@ -576,6 +578,245 @@ def run_connected_org_discovery(
         "step2": step2_totals,
         "step2b": step2b_totals,
         "rounds": rounds,
+    }
+
+
+def _collect_frontier_people(
+    *,
+    repository: Repository,
+    run_id: int,
+    searched_people: set[str],
+) -> list[str]:
+    frontier: list[str] = []
+    seen_this_round: set[str] = set()
+    for row in repository.get_expanded_people_for_run(run_id, limit=5000):
+        person_name = str(row["person_name"] or "").strip()
+        person_key = normalize_name(person_name)
+        if not person_key or person_key in searched_people or person_key in seen_this_round:
+            continue
+        seen_this_round.add(person_key)
+        frontier.append(person_name)
+    return frontier
+
+
+def _search_people_frontier(
+    *,
+    repository: Repository,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    run_id: int,
+    creativity_level: str,
+    frontier_people: list[str],
+) -> dict[str, Any]:
+    variant_service = VariantService()
+    discovery_service = DiscoveryService()
+    resolution_service = ResolutionService()
+    linked_org_ids = {
+        int(row["id"])
+        for row in repository.get_run_scoped_organisations(run_id)
+    }
+    provider_metrics_total: dict[str, dict[str, int]] = {}
+    searched_people: list[str] = []
+    total_evidence = 0
+    total_candidates = 0
+    total_decisions = 0
+    linked_insertions = 0
+
+    for person_name in frontier_people:
+        variants = variant_service.generate(person_name, creativity_level)
+        if not variants:
+            continue
+        search_summary = discovery_service.search_name(
+            repository=repository,
+            charity_client=charity_client,
+            search_providers=search_providers,
+            run_id=run_id,
+            variants=variants,
+            frontier_name=person_name,
+        )
+        decisions = resolution_service.resolve_candidates(
+            repository=repository,
+            matcher=matcher,
+            run_id=run_id,
+        )
+        for provider_name, metrics in (search_summary.get("provider_metrics") or {}).items():
+            bucket = provider_metrics_total.setdefault(str(provider_name), {})
+            for key, value in metrics.items():
+                bucket[str(key)] = int(bucket.get(str(key), 0)) + int(value)
+        for organisation in repository.get_matched_organisations_for_run(run_id):
+            organisation_id = int(organisation["id"])
+            if organisation_id in linked_org_ids:
+                continue
+            linked_org_ids.add(organisation_id)
+            repository.link_run_organisation(
+                run_id,
+                organisation_id,
+                stage=STEP1_STAGE,
+                source="recursive_person_match",
+                metadata={
+                    "registry_type": organisation["registry_type"],
+                    "registry_number": organisation["registry_number"],
+                    "suffix": organisation["suffix"],
+                    "matched_from_name": person_name,
+                },
+            )
+            linked_insertions += 1
+        searched_people.append(person_name)
+        total_evidence += int(search_summary.get("evidence_count") or 0)
+        total_candidates += int(search_summary.get("candidate_count") or 0)
+        total_decisions += len(decisions)
+
+    return {
+        "searched_people": searched_people,
+        "searched_people_count": len(searched_people),
+        "linked_organisation_count": linked_insertions,
+        "search_summary": {
+            "evidence_count": total_evidence,
+            "candidate_count": total_candidates,
+            "provider_metrics": provider_metrics_total,
+        },
+        "decision_count": total_decisions,
+        "resolution_metrics": dict(getattr(resolution_service, "last_metrics", {})),
+    }
+
+
+def run_recursive_network_discovery(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    run_id: int,
+    limit: int,
+    max_rounds: int = 4,
+) -> dict[str, Any]:
+    run = repository.get_run(run_id)
+    if run is None:
+        raise RuntimeError(f"Run {run_id} does not exist.")
+    creativity_level = str(run["creativity_level"] or "balanced")
+    searched_people = {
+        normalize_name(str(run["seed_name"] or "")),
+    }
+    rounds: list[dict[str, Any]] = []
+    step2_totals: dict[str, Any] = {
+        "run_id": run_id,
+        "processed_organisation_count": 0,
+        "connected_organisation_count": 0,
+        "linked_insert_attempts": 0,
+        "address_count": 0,
+        "address_pivot_insert_attempts": 0,
+    }
+    step2b_totals: dict[str, Any] = {
+        "run_id": run_id,
+        "enabled": True,
+        "processed_organisation_count": 0,
+        "document_count": 0,
+        "entity_count": 0,
+        "people_added": 0,
+        "organisation_mentions_resolved": 0,
+        "organisation_mentions_seen": 0,
+        "warnings": [],
+    }
+    total_person_search = {
+        "searched_people_count": 0,
+        "linked_organisation_count": 0,
+        "decision_count": 0,
+        "search_summary": {
+            "evidence_count": 0,
+            "candidate_count": 0,
+            "provider_metrics": {},
+        },
+        "resolution_metrics": {},
+    }
+    latest_step3: dict[str, Any] = {"ranking": []}
+
+    for round_number in range(1, max_rounds + 1):
+        before_count = _scoped_org_count(repository, run_id)
+        discovery = run_connected_org_discovery(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            run_id=run_id,
+        )
+        step3 = step3_expand_connected_people(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            run_id=run_id,
+            limit=limit,
+        )
+        frontier_people = _collect_frontier_people(
+            repository=repository,
+            run_id=run_id,
+            searched_people=searched_people,
+        )
+        person_search = _search_people_frontier(
+            repository=repository,
+            charity_client=charity_client,
+            search_providers=search_providers,
+            matcher=matcher,
+            run_id=run_id,
+            creativity_level=creativity_level,
+            frontier_people=frontier_people,
+        )
+        for person_name in person_search["searched_people"]:
+            searched_people.add(normalize_name(str(person_name)))
+        after_count = _scoped_org_count(repository, run_id)
+
+        step2 = dict(discovery["step2"])
+        step2b = dict(discovery["step2b"])
+        step2_totals["processed_organisation_count"] += int(step2.get("processed_organisation_count") or 0)
+        step2_totals["linked_insert_attempts"] += int(step2.get("linked_insert_attempts") or 0)
+        step2_totals["address_count"] += int(step2.get("address_count") or 0)
+        step2_totals["address_pivot_insert_attempts"] += int(step2.get("address_pivot_insert_attempts") or 0)
+        step2_totals["connected_organisation_count"] = int(step2.get("connected_organisation_count") or 0)
+
+        step2b_totals["enabled"] = bool(step2b.get("enabled", step2b_totals["enabled"]))
+        step2b_totals["processed_organisation_count"] += int(step2b.get("processed_organisation_count") or 0)
+        step2b_totals["document_count"] += int(step2b.get("document_count") or 0)
+        step2b_totals["entity_count"] += int(step2b.get("entity_count") or 0)
+        step2b_totals["people_added"] += int(step2b.get("people_added") or 0)
+        step2b_totals["organisation_mentions_resolved"] += int(step2b.get("organisation_mentions_resolved") or 0)
+        step2b_totals["organisation_mentions_seen"] += int(step2b.get("organisation_mentions_seen") or 0)
+        step2b_totals["warnings"].extend(step2b.get("warnings") or [])
+
+        total_person_search["searched_people_count"] += int(person_search.get("searched_people_count") or 0)
+        total_person_search["linked_organisation_count"] += int(person_search.get("linked_organisation_count") or 0)
+        total_person_search["decision_count"] += int(person_search.get("decision_count") or 0)
+        total_person_search["search_summary"]["evidence_count"] += int(person_search["search_summary"].get("evidence_count") or 0)
+        total_person_search["search_summary"]["candidate_count"] += int(person_search["search_summary"].get("candidate_count") or 0)
+        for provider_name, metrics in (person_search["search_summary"].get("provider_metrics") or {}).items():
+            bucket = total_person_search["search_summary"]["provider_metrics"].setdefault(str(provider_name), {})
+            for key, value in metrics.items():
+                bucket[str(key)] = int(bucket.get(str(key), 0)) + int(value)
+        total_person_search["resolution_metrics"] = dict(person_search.get("resolution_metrics") or {})
+
+        rounds.append(
+            {
+                "round": round_number,
+                "scoped_org_count_before": before_count,
+                "scoped_org_count_after": after_count,
+                "discovery": discovery,
+                "step3": step3,
+                "frontier_people": frontier_people,
+                "recursive_person_search": person_search,
+            }
+        )
+        latest_step3 = step3
+        if after_count <= before_count and not frontier_people:
+            break
+
+    return {
+        "run_id": run_id,
+        "round_count": len(rounds),
+        "rounds": rounds,
+        "step2": step2_totals,
+        "step2b": step2b_totals,
+        "step3": latest_step3,
+        "recursive_person_search": total_person_search,
+        "ranking": latest_step3.get("ranking", []),
     }
 
 
@@ -672,23 +913,20 @@ def run_registry_only_mvp(
         creativity_level=creativity_level,
     )
     run_id = int(step1["run_id"])
-    discovery = run_connected_org_discovery(
+    discovery = run_recursive_network_discovery(
         repository=repository,
         settings=settings,
         charity_client=charity_client,
-        run_id=run_id,
-    )
-    step2 = discovery["step2"]
-    step2b = discovery["step2b"]
-    step3 = step3_expand_connected_people(
-        repository=repository,
-        settings=settings,
-        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
         run_id=run_id,
         limit=limit,
     )
+    step2 = discovery["step2"]
+    step2b = discovery["step2b"]
+    step3 = discovery["step3"]
 
-    ranking = step3["ranking"]
+    ranking = discovery["ranking"]
     step4 = step4_ofac_screening(repository=repository, settings=settings, ranking=ranking)
 
     return {
@@ -699,6 +937,7 @@ def run_registry_only_mvp(
         "step2b": step2b,
         "discovery_rounds": discovery["rounds"],
         "step3": step3,
+        "recursive_person_search": discovery["recursive_person_search"],
         "step4": step4,
         "search_summary": step1["search_summary"],
         "decision_count": step1["decision_count"],
@@ -758,28 +997,26 @@ def add_organisation_to_run(
     if not rerun_downstream:
         return result
 
-    discovery = run_connected_org_discovery(
+    discovery = run_recursive_network_discovery(
         repository=repository,
         settings=settings,
         charity_client=charity_client,
-        run_id=run_id,
-    )
-    step2 = discovery["step2"]
-    step2b = discovery["step2b"]
-    step3 = step3_expand_connected_people(
-        repository=repository,
-        settings=settings,
-        charity_client=charity_client,
+        search_providers=build_search_providers(settings, include_web_dork=False),
+        matcher=HybridMatcher(settings),
         run_id=run_id,
         limit=limit,
     )
+    step2 = discovery["step2"]
+    step2b = discovery["step2b"]
+    step3 = discovery["step3"]
     result.update(
         {
             "step2": step2,
             "step2b": step2b,
             "discovery_rounds": discovery["rounds"],
             "step3": step3,
-            "ranking": step3["ranking"],
+            "recursive_person_search": discovery["recursive_person_search"],
+            "ranking": discovery["ranking"],
         }
     )
     return result

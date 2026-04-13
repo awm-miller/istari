@@ -30,13 +30,10 @@ log = logging.getLogger("istari.pipeline")
 
 
 class VariantService:
-    def generate_and_store(
+    def generate(
         self,
-        repository: Repository,
-        run_id: int,
         seed_name: str,
         creativity_level: str,
-        settings: Any | None = None,
     ) -> list[NameVariant]:
         seed_variant = NameVariant(
             name=" ".join(str(seed_name).split()).strip(),
@@ -50,6 +47,17 @@ class VariantService:
             if v.name.lower() not in seen:
                 seen.add(v.name.lower())
                 variants.append(v)
+        return variants
+
+    def generate_and_store(
+        self,
+        repository: Repository,
+        run_id: int,
+        seed_name: str,
+        creativity_level: str,
+        settings: Any | None = None,
+    ) -> list[NameVariant]:
+        variants = self.generate(seed_name, creativity_level)
         repository.insert_name_variants(run_id, [asdict(variant) for variant in variants])
         log.info(
             "Generated %d variants for '%s' at level=%s",
@@ -69,6 +77,7 @@ class DiscoveryService:
         search_providers: list[SearchProvider],
         run_id: int,
         variants: list[NameVariant],
+        frontier_name: str | None = None,
     ) -> dict[str, Any]:
         evidence_count = 0
         candidate_count = 0
@@ -88,6 +97,11 @@ class DiscoveryService:
             except RuntimeError as exc:
                 log.warning("  %s failed: %s", provider_name, exc)
                 continue
+            if frontier_name:
+                for item in provider_items:
+                    payload = dict(item.raw_payload or {})
+                    payload["discovery_frontier_name"] = frontier_name
+                    item.raw_payload = payload
             provider_metrics = getattr(search_provider, "metrics", None)
             if isinstance(provider_metrics, dict):
                 search_provider_metrics[provider_name] = {
@@ -153,37 +167,43 @@ class ResolutionService:
 
         total = len(unresolved)
         processed = 0
-        known_seed_birth_month_years: set[tuple[int, int]] = set()
+        known_birth_month_years_by_frontier: dict[str, set[tuple[int, int]]] = {}
         for group in unique_groups:
             _representative_row, representative_candidate = max(
                 group,
                 key=lambda pair: float(pair[0]["score"]),
             )
-            base_decision = matcher.resolve(str(run["seed_name"]), representative_candidate)
+            frontier_name = _candidate_frontier_name(
+                representative_candidate,
+                default_seed_name=str(run["seed_name"]),
+            )
+            frontier_key = normalize_name(frontier_name)
+            known_birth_month_years = known_birth_month_years_by_frontier.setdefault(frontier_key, set())
+            base_decision = matcher.resolve(frontier_name, representative_candidate)
             base_decision = apply_low_information_name_guard(
-                seed_name=str(run["seed_name"]),
+                seed_name=frontier_name,
                 candidate=representative_candidate,
                 decision=base_decision,
             )
             minimum_similarity = 0.4 if candidate_matches_known_birth_month_year(
                 candidate=representative_candidate,
-                known_birth_month_years=known_seed_birth_month_years,
+                known_birth_month_years=known_birth_month_years,
             ) else 0.55
             base_decision = apply_weak_name_match_guard(
-                seed_name=str(run["seed_name"]),
+                seed_name=frontier_name,
                 candidate=representative_candidate,
                 decision=base_decision,
                 minimum_similarity=minimum_similarity,
             )
             base_decision = apply_conflicting_middle_name_guard(
-                seed_name=str(run["seed_name"]),
+                seed_name=frontier_name,
                 candidate=representative_candidate,
                 decision=base_decision,
             )
             base_decision = apply_birth_month_year_guard(
                 candidate=representative_candidate,
                 decision=base_decision,
-                known_birth_month_years=known_seed_birth_month_years,
+                known_birth_month_years=known_birth_month_years,
             )
             group_size = len(group)
             if _decision_used_llm(base_decision):
@@ -258,7 +278,7 @@ class ResolutionService:
                         and birth_month
                         and birth_year
                     ):
-                        known_seed_birth_month_years.add((birth_month, birth_year))
+                        known_birth_month_years.add((birth_month, birth_year))
 
                 decisions.append(
                     {
@@ -307,6 +327,17 @@ def _candidate_from_row(row: Any) -> Any:
         evidence_id=row["evidence_id"],
         raw_payload=json.loads(row["raw_payload_json"]),
     )
+
+
+def _candidate_frontier_name(candidate: Any, *, default_seed_name: str) -> str:
+    raw_payload = dict(candidate.raw_payload or {})
+    frontier_name = str(raw_payload.get("discovery_frontier_name") or "").strip()
+    if frontier_name:
+        return frontier_name
+    variant_name = str(candidate.name_variant or "").strip()
+    if variant_name:
+        return variant_name
+    return default_seed_name
 
 
 def _decision_for_duplicate(base_decision: ResolutionDecision, candidate: Any) -> ResolutionDecision:
@@ -358,7 +389,9 @@ def _blank_resolution_metrics() -> dict[str, int]:
 
 
 def _resolution_group_key(candidate: Any) -> tuple[str, str, str, str, int, str]:
+    frontier_name = _candidate_frontier_name(candidate, default_seed_name="")
     return (
+        normalize_name(frontier_name),
         normalize_name(str(candidate.candidate_name or "")),
         normalize_name(str(candidate.organisation_name or "")),
         str(candidate.registry_type or ""),
