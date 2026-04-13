@@ -99,7 +99,31 @@ def main() -> None:
         settings.project_root / "src" / "storage" / "schema.sql",
     )
     repository.init_db()
+    print(
+        json.dumps(
+            {
+                "stage": "load_cluster_source_start",
+                "offset": 0,
+                "limit": 1,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     cluster_source = load_negative_news_clusters(repository, offset=0, limit=1)
+    print(
+        json.dumps(
+            {
+                "stage": "load_cluster_source_done",
+                "offset": 0,
+                "limit": 1,
+                "total_available": int(cluster_source.get("total_available") or 0),
+                "run_ids": len(cluster_source.get("run_ids") or []),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     total_available = int(cluster_source.get("total_available") or 0)
     run_ids = list(cluster_source.get("run_ids") or [])
     if total_available <= 0:

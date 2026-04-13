@@ -28,6 +28,7 @@ DEFAULT_MAX_EXTRACT_CHARS = 500_000
 DEFAULT_PAGES = 10
 DEFAULT_NUM_PER_PAGE = 10
 _FETCH_TIMEOUT = 60
+_MAX_PDF_BYTES = 3_000_000
 _SKIP_RESULT_DOMAINS = {
     "charitycommission.gov.uk",
     "checkfree.co.uk",
@@ -48,6 +49,13 @@ _SKIP_RESULT_DOMAINS = {
 _SKIP_RESULT_HOST_FAMILIES = {
     "northdata.",
 }
+
+
+def _log_label(value: str, *, limit: int = 120) -> str:
+    clean = " ".join(str(value or "").split()).strip()
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3] + "..."
 
 
 def _url_fingerprint(url: str) -> str:
@@ -115,10 +123,18 @@ def serper_search(
     key = hashlib.sha256(json.dumps(payload_obj, sort_keys=True).encode()).hexdigest()[:20]
     cache_file = _cache_path(cache_dir, f"serper_{key}", ".json")
     if cache_file.exists():
-        return json.loads(cache_file.read_text(encoding="utf-8"))
+        rows = json.loads(cache_file.read_text(encoding="utf-8"))
+        log.info(
+            "Serper cache hit q=%s page=%s rows=%s",
+            _log_label(query, limit=90),
+            page,
+            len(rows) if isinstance(rows, list) else 0,
+        )
+        return rows
 
     url = f"{settings.serper_base_url}/search"
     payload = json.dumps(payload_obj).encode("utf-8")
+    log.info("Serper request q=%s page=%s num=%s", _log_label(query, limit=90), page, num)
     req = request.Request(
         url=url,
         data=payload,
@@ -150,6 +166,12 @@ def serper_search(
                     "position": item.get("position"),
                 }
             )
+    log.info(
+        "Serper response q=%s page=%s organic_rows=%s",
+        _log_label(query, limit=90),
+        page,
+        len(rows),
+    )
     cache_file.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
     return rows
 
@@ -252,6 +274,48 @@ def _negative_news_db_path(settings: Settings) -> Path:
     return settings.project_root / "data" / "negative_news.sqlite"
 
 
+def _cluster_source_cache_path(repository: Repository) -> Path:
+    return repository.database_path.parent / "negative_news_cluster_source_cache.json"
+
+
+def _load_cluster_source_cache(repository: Repository, *, run_ids: list[int]) -> dict[str, Any] | None:
+    cache_path = _cluster_source_cache_path(repository)
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    cached_run_ids = payload.get("run_ids")
+    clusters = payload.get("clusters")
+    total_available = payload.get("total_available")
+    if cached_run_ids != run_ids or not isinstance(clusters, list) or not isinstance(total_available, int):
+        return None
+    return payload
+
+
+def _write_cluster_source_cache(
+    repository: Repository,
+    *,
+    run_ids: list[int],
+    clusters: list[dict[str, Any]],
+) -> None:
+    cache_path = _cluster_source_cache_path(repository)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "run_ids": list(run_ids),
+                "total_available": len(clusters),
+                "clusters": clusters,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def fetch_and_extract_article(
     settings: Settings,
     url: str,
@@ -272,6 +336,11 @@ def fetch_and_extract_article(
         if html_cache.exists():
             raw = html_cache.read_text(encoding="utf-8", errors="replace")
             title = extract_title_from_html(raw, "")
+        log.info(
+            "Article cache hit url=%s chars=%s",
+            _log_label(url, limit=100),
+            len(text),
+        )
         return ExtractionReport(
             url=url,
             final_url=url,
@@ -289,6 +358,7 @@ def fetch_and_extract_article(
         )
 
     req = request.Request(url, headers={"User-Agent": settings.user_agent}, method="GET")
+    log.info("Article fetch start url=%s", _log_label(url, limit=100))
     try:
         with request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
             final_url = str(resp.geturl() or url)
@@ -296,6 +366,7 @@ def fetch_and_extract_article(
             content_type = str(resp.headers.get("Content-Type", "") or "")
             body = resp.read()
     except error.HTTPError as exc:
+        log.warning("Article fetch HTTP error url=%s status=%s", _log_label(url, limit=100), exc.code)
         return ExtractionReport(
             url=url,
             final_url=url,
@@ -313,6 +384,7 @@ def fetch_and_extract_article(
             error=f"HTTP {exc.code}",
         )
     except Exception as exc:
+        log.warning("Article fetch failed url=%s error=%s", _log_label(url, limit=100), exc)
         return ExtractionReport(
             url=url,
             final_url=url,
@@ -332,11 +404,43 @@ def fetch_and_extract_article(
 
     raw_bytes = len(body)
     is_pdf = _looks_like_pdf(final_url) or "pdf" in content_type.lower()
+    log.info(
+        "Article fetch done url=%s status=%s type=%s bytes=%s pdf=%s",
+        _log_label(final_url, limit=100),
+        status,
+        _log_label(content_type, limit=50),
+        raw_bytes,
+        is_pdf,
+    )
     if is_pdf:
+        if raw_bytes > _MAX_PDF_BYTES:
+            log.warning(
+                "PDF skipped as too large url=%s bytes=%s limit=%s",
+                _log_label(final_url, limit=100),
+                raw_bytes,
+                _MAX_PDF_BYTES,
+            )
+            return ExtractionReport(
+                url=url,
+                final_url=final_url,
+                content_type=content_type,
+                http_status=status,
+                raw_bytes=raw_bytes,
+                text_chars=0,
+                non_blank_lines=0,
+                truncated_by_cap=False,
+                max_extract_chars=max_extract_chars,
+                title="",
+                text="",
+                first_preview="",
+                last_preview="",
+                error=f"pdf skipped: too large ({raw_bytes} bytes)",
+            )
         pdf_cache.write_bytes(body)
         try:
             plain = _extract_pdf_text(pdf_cache)
         except Exception as exc:
+            log.warning("PDF extraction failed url=%s error=%s", _log_label(final_url, limit=100), exc)
             return ExtractionReport(
                 url=url,
                 final_url=final_url,
@@ -362,6 +466,12 @@ def fetch_and_extract_article(
     truncated = len(plain) > max_extract_chars
     text = plain[:max_extract_chars]
     text_cache.write_text(text, encoding="utf-8")
+    log.info(
+        "Article extract done url=%s chars=%s truncated=%s",
+        _log_label(final_url, limit=100),
+        len(text),
+        truncated,
+    )
 
     return ExtractionReport(
         url=url,
@@ -554,6 +664,14 @@ def _collect_search_hits(
     seen_urls: set[str] = set(excluded_urls or set())
     search_hits: list[dict[str, Any]] = []
     for spec in query_specs:
+        log.info(
+            "Search query start bucket=%s lang=%s pages=%s required_terms=%s q=%s",
+            spec.bucket,
+            spec.language,
+            spec.pages,
+            len(spec.required_terms),
+            _log_label(spec.query, limit=100),
+        )
         for page_idx in range(1, spec.pages + 1):
             try:
                 rows = search_func(
@@ -567,7 +685,15 @@ def _collect_search_hits(
                 log.warning("Serper failed q=%s page=%s: %s", spec.query[:80], page_idx, exc)
                 break
             if not rows:
+                log.info(
+                    "Search query empty bucket=%s lang=%s page=%s q=%s",
+                    spec.bucket,
+                    spec.language,
+                    page_idx,
+                    _log_label(spec.query, limit=100),
+                )
                 break
+            page_kept = 0
             for row in rows:
                 link = str(row.get("link") or "").strip()
                 if not link or link in seen_urls:
@@ -575,6 +701,7 @@ def _collect_search_hits(
                 if _should_skip_result_url(link):
                     continue
                 seen_urls.add(link)
+                page_kept += 1
                 search_hits.append(
                     {
                         "query": spec.query,
@@ -588,7 +715,23 @@ def _collect_search_hits(
                     }
                 )
                 if max_articles is not None and len(search_hits) >= max_articles:
+                    log.info(
+                        "Search hit cap reached hits=%s cap=%s last_q=%s",
+                        len(search_hits),
+                        max_articles,
+                        _log_label(spec.query, limit=100),
+                    )
                     return search_hits
+            log.info(
+                "Search query page done bucket=%s lang=%s page=%s rows=%s kept=%s total_hits=%s q=%s",
+                spec.bucket,
+                spec.language,
+                page_idx,
+                len(rows),
+                page_kept,
+                len(search_hits),
+                _log_label(spec.query, limit=100),
+            )
     return search_hits
 
 
@@ -722,8 +865,25 @@ def load_negative_news_clusters(
     run_ids = repository.get_latest_unique_run_ids()
     if not run_ids:
         return {"run_ids": [], "clusters": []}
+    cached = _load_cluster_source_cache(repository, run_ids=run_ids)
+    if cached is not None:
+        clusters = list(cached.get("clusters") or [])
+        start = max(0, int(offset))
+        end = start + max(0, int(limit))
+        log.info(
+            "Cluster source cache hit total_available=%s offset=%s limit=%s",
+            int(cached.get("total_available") or 0),
+            offset,
+            limit,
+        )
+        return {
+            "run_ids": run_ids,
+            "clusters": clusters[start:end],
+            "total_available": int(cached.get("total_available") or 0),
+        }
     from scripts.consolidate_and_graph import consolidate_multi_run
 
+    log.info("Cluster source build start run_ids=%s", len(run_ids))
     with io.StringIO() as buffer, redirect_stdout(buffer):
         graph = consolidate_multi_run(run_ids)
     nodes = [
@@ -739,9 +899,7 @@ def load_negative_news_clusters(
         )
     )
     clusters: list[dict[str, Any]] = []
-    start = max(0, int(offset))
-    end = start + max(0, int(limit))
-    for node in nodes[start:end]:
+    for node in nodes:
         person_ids = sorted({int(person_id) for person_id in (node.get("person_ids") or [])})
         aliases = _unique_nonempty([str(node.get("label") or ""), *(node.get("aliases") or [])])
         clusters.append(
@@ -756,7 +914,11 @@ def load_negative_news_clusters(
                 "context_terms": repository.get_organisation_names_for_person_ids(person_ids),
             }
         )
-    return {"run_ids": run_ids, "clusters": clusters, "total_available": len(nodes)}
+    _write_cluster_source_cache(repository, run_ids=run_ids, clusters=clusters)
+    start = max(0, int(offset))
+    end = start + max(0, int(limit))
+    log.info("Cluster source build done total_available=%s", len(clusters))
+    return {"run_ids": run_ids, "clusters": clusters[start:end], "total_available": len(clusters)}
 
 
 def run_negative_news_cluster_batch(
@@ -788,7 +950,16 @@ def run_negative_news_cluster_batch(
     )
     store.init_db()
 
+    log.info("Cluster batch load start offset=%s limit=%s", offset, limit)
     cluster_source = load_negative_news_clusters(repository, offset=offset, limit=limit)
+    log.info(
+        "Cluster batch load done offset=%s limit=%s clusters=%s total_available=%s run_ids=%s",
+        offset,
+        limit,
+        len(cluster_source.get("clusters") or []),
+        int(cluster_source.get("total_available") or 0),
+        len(cluster_source.get("run_ids") or []),
+    )
     output_path = (
         settings.project_root
         / "data"
@@ -855,11 +1026,27 @@ def run_negative_news_cluster_batch(
     for cluster_rank, cluster in enumerate(cluster_source["clusters"], start=max(0, int(offset)) + 1):
         if cluster["cluster_id"] in completed_cluster_ids:
             continue
+        log.info(
+            "Cluster start rank=%s label=%s person_ids=%s aliases=%s context_terms=%s",
+            cluster_rank,
+            _log_label(str(cluster.get("label") or ""), limit=100),
+            len(cluster.get("person_ids") or []),
+            len(cluster.get("aliases") or []),
+            len(cluster.get("context_terms") or []),
+        )
         english_aliases = _unique_nonempty(cluster.get("aliases") or [cluster.get("label") or ""])
         arabic_aliases = _generate_arabic_query_names(
             gemini,
             model=model,
             english_query_names=english_aliases,
+        )
+        log.info(
+            "Cluster aliases rank=%s english=%s arabic=%s lead=%s arabic_aliases=%s",
+            cluster_rank,
+            len(english_aliases),
+            len(arabic_aliases),
+            _log_label(english_aliases[0] if english_aliases else "", limit=80),
+            ", ".join(_log_label(alias, limit=40) for alias in arabic_aliases) or "(none)",
         )
         context_terms = _unique_nonempty(cluster.get("context_terms") or [])
         query_specs = build_cluster_query_specs(
@@ -869,6 +1056,12 @@ def run_negative_news_cluster_batch(
             broad_pages=broad_pages,
             org_pages=org_pages,
         )
+        log.info(
+            "Cluster query plan rank=%s broad_queries=%s org_queries=%s",
+            cluster_rank,
+            len([spec for spec in query_specs if spec.bucket == "broad"]),
+            len([spec for spec in query_specs if spec.bucket == "org"]),
+        )
         search_hits = _collect_cluster_search_hits(
             settings,
             query_specs=query_specs,
@@ -876,11 +1069,25 @@ def run_negative_news_cluster_batch(
             cache_dir=serper_dir,
             max_articles=max_articles_per_cluster,
         )
+        log.info(
+            "Cluster search complete rank=%s label=%s hits=%s",
+            cluster_rank,
+            _log_label(str(cluster.get("label") or ""), limit=100),
+            len(search_hits),
+        )
         articles_out: list[dict[str, Any]] = []
         cluster_error = ""
         try:
-            for hit in search_hits:
+            for article_idx, hit in enumerate(search_hits, start=1):
                 url = hit["url"]
+                log.info(
+                    "Cluster article start rank=%s item=%s/%s bucket=%s url=%s",
+                    cluster_rank,
+                    article_idx,
+                    len(search_hits),
+                    hit.get("bucket"),
+                    _log_label(url, limit=100),
+                )
                 ex = fetch_and_extract_article(
                     settings,
                     url,
@@ -899,16 +1106,36 @@ def run_negative_news_cluster_batch(
                 )
                 entry["required_term_matches"] = required_matches
                 if hit.get("required_terms") and not required_matches:
+                    log.info(
+                        "Cluster article filtered rank=%s item=%s reason=required_org_term_absent url=%s",
+                        cluster_rank,
+                        article_idx,
+                        _log_label(url, limit=100),
+                    )
                     entry["classification"] = None
                     entry["filtered_out"] = "required_org_term_absent"
                     continue
                 if ex.error or not ex.text.strip():
+                    log.info(
+                        "Cluster article extraction issue rank=%s item=%s error=%s chars=%s url=%s",
+                        cluster_rank,
+                        article_idx,
+                        _log_label(str(ex.error or ""), limit=80) or "(empty_text)",
+                        ex.text_chars,
+                        _log_label(url, limit=100),
+                    )
                     entry["classification"] = None
                     articles_out.append(entry)
                     continue
 
                 if classify and gemini:
                     try:
+                        log.info(
+                            "Cluster article classify start rank=%s item=%s url=%s",
+                            cluster_rank,
+                            article_idx,
+                            _log_label(ex.final_url, limit=100),
+                        )
                         cls = classify_article_mb(
                             gemini=gemini,
                             model=model,
@@ -918,13 +1145,34 @@ def run_negative_news_cluster_batch(
                             article_text=ex.text,
                         )
                         entry["classification"] = cls
+                        log.info(
+                            "Cluster article classify done rank=%s item=%s category=%s confidence=%s url=%s",
+                            cluster_rank,
+                            article_idx,
+                            _log_label(str((cls or {}).get("category") or ""), limit=40),
+                            (cls or {}).get("confidence"),
+                            _log_label(ex.final_url, limit=100),
+                        )
                     except Exception as exc:
+                        log.warning(
+                            "Cluster article classify failed rank=%s item=%s url=%s error=%s",
+                            cluster_rank,
+                            article_idx,
+                            _log_label(ex.final_url, limit=100),
+                            exc,
+                        )
                         entry["classification"] = {"error": str(exc)}
                 else:
                     entry["classification"] = None
                 articles_out.append(entry)
         except Exception as exc:
             cluster_error = str(exc)
+            log.exception(
+                "Cluster failed rank=%s label=%s error=%s",
+                cluster_rank,
+                _log_label(str(cluster.get("label") or ""), limit=100),
+                exc,
+            )
 
         for article in articles_out:
             classification = article.get("classification") or {}
@@ -977,6 +1225,14 @@ def run_negative_news_cluster_batch(
             category_counts=local_category_counts,
             result=cluster_result,
             error_text=cluster_error,
+        )
+        log.info(
+            "Cluster done rank=%s label=%s stored_articles=%s interesting=%s status=%s",
+            cluster_rank,
+            _log_label(str(cluster.get("label") or ""), limit=100),
+            len(articles_out),
+            sum(local_category_counts.values()),
+            "failed" if cluster_error else "completed",
         )
 
     store.mark_batch_completed(batch_run_id)
