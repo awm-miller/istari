@@ -144,10 +144,36 @@ def step2_expand_connected_organisations(
     charity_client: CharityCommissionClient,
     run_id: int,
 ) -> dict[str, Any]:
-    seed_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE])
+    scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    queue: list[dict[str, Any]] = []
+    queued_keys: set[tuple[str, str, int]] = set()
+    visited_keys: set[tuple[str, str, int]] = set()
+
+    for organisation in scoped_organisations:
+        key = (
+            str(organisation["registry_type"] or ""),
+            str(organisation["registry_number"] or ""),
+            int(organisation["suffix"] or 0),
+        )
+        if key in queued_keys:
+            continue
+        queued_keys.add(key)
+        queue.append(organisation)
+
     processed = 0
     linked_count = 0
-    for organisation in seed_organisations:
+    queue_index = 0
+    while queue_index < len(queue):
+        organisation = queue[queue_index]
+        queue_index += 1
+        org_key = (
+            str(organisation["registry_type"] or ""),
+            str(organisation["registry_number"] or ""),
+            int(organisation["suffix"] or 0),
+        )
+        if org_key in visited_keys:
+            continue
+        visited_keys.add(org_key)
         processed += 1
         if organisation["registry_type"] != "charity":
             continue
@@ -170,6 +196,21 @@ def step2_expand_connected_organisations(
                 },
             )
             linked_count += 1
+            linked_key = (
+                str(linked["registry_type"] or ""),
+                str(linked["registry_number"] or ""),
+                int(linked["suffix"] or 0),
+            )
+            if linked_key in queued_keys:
+                continue
+            queued_keys.add(linked_key)
+            queue.append(
+                {
+                    "registry_type": str(linked["registry_type"] or ""),
+                    "registry_number": str(linked["registry_number"] or ""),
+                    "suffix": int(linked["suffix"] or 0),
+                }
+            )
 
     address_count = 0
     address_pivot_count = 0
