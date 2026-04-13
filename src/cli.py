@@ -278,12 +278,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         try:
-            sys.stdout.reconfigure(errors="replace")
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
     if hasattr(sys.stderr, "reconfigure"):
         try:
-            sys.stderr.reconfigure(errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
 
