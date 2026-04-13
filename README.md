@@ -93,7 +93,7 @@ The combined graph includes a dedicated low-confidence overlay for mapping-deriv
 | **Companies House** | Officer search, company profiles, appointments, date of birth |
 | **Gemini / OpenAI** | Entity resolution, address resolution, PDF extraction |
 | **Serper** | Web search for supplementary evidence |
-| **Court / sanctions / bank-freeze documents** | Adverse-media review artifacts and extracted legal rosters in `docs/egypt-saudi-court-bank-freeze-extracts.md` |
+| **Court / sanctions / bank-freeze documents** | Compiled Egypt judgment / bank-freeze screening data in `data/egypt_judgments_screen.json` |
 | **Sanctions lists** | OFAC SDN, UK Sanctions List, France DG Tresor, Germany Finanzsanktionsliste |
 
 ### Storage & output
@@ -135,6 +135,8 @@ python scripts/rebuild_graph.py
 ```
 
 Graph rebuild convention: new rebuild stages should normally be implemented as small dedicated modules/helpers and then plugged into `scripts/rebuild_graph.py`, rather than expanding the merge engine directly.
+
+The rebuild now includes an Egypt judgments screening pass that annotates matched person nodes from `data/egypt_judgments_screen.json` with `egypt_judgment_hit` and compact source details for the viewer.
 
 ## CLI reference
 
@@ -181,8 +183,7 @@ Use `negative-news-extract-test` when you want to QA a single URL's extraction o
 - Org-qualified hits are only retained when the quoted organisation phrase appears in the title, snippet, or extracted page text.
 - `--max-articles` caps how many unique URLs are fetched and classified per merged cluster after URL dedupe.
 
-Review artifacts produced from this work:
+Screening artifacts produced from this work:
 
-- `docs/mb-screening-sources.md` is the current screening-grade shortlist of legal / official sources.
-- `docs/egypt-saudi-court-bank-freeze-extracts.md` stores the long-form extracted rosters and excerpts behind that shortlist.
-- `docs/negative-news-lists-review.md` is the archived broader review log from the exploration pass.
+- `data/egypt_judgments_screen.json` is the compiled production screening dataset used during graph rebuilds.
+- `data/egypt_judgments_screen_aliases.json` stores the curated transliteration aliases used to keep matching deterministic.

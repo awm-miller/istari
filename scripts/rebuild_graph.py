@@ -16,6 +16,7 @@ from src.graph.address_coordinates import (
     default_address_coordinate_cache_path,
 )
 from src.graph.build import consolidate_multi_run
+from src.graph.egypt_judgments import annotate_graph_with_egypt_judgments
 from src.graph.render import render_html
 from src.mapping_low_confidence import (
     build_low_confidence_overlay,
@@ -79,6 +80,7 @@ refresh_sanctions_for_runs(run_ids)
 
 print(f"Consolidating runs {run_ids}...", flush=True)
 data = consolidate_multi_run(run_ids)
+data = annotate_graph_with_egypt_judgments(data, settings=settings)
 negative_news_db_path = resolve_negative_news_db_path(settings)
 data = annotate_graph_with_adverse_media(data, settings=settings, database_path=negative_news_db_path)
 print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)

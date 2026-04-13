@@ -440,12 +440,14 @@
   function nodeRankScore(node) {
     const seedFlag = node.kind === "seed_alias" ? 2.8 : node.kind === "person" ? 1.4 : 0;
     const sanctionedFlag = node.sanctioned ? 3.5 : 0;
+    const egyptJudgmentFlag = node.egypt_judgment_hit ? 3.1 : 0;
     const adverseMediaFlag = node.adverse_media_hit ? 2.8 : 0;
     return (Number(node.score || 0) * 4.5)
       + (Number(node.role_count || 0) * 0.8)
       + (Number(node.org_count || 0) * 0.45)
       + seedFlag
       + sanctionedFlag
+      + egyptJudgmentFlag
       + adverseMediaFlag;
   }
 
@@ -1302,8 +1304,14 @@
   }
 
   function tooltipLinesForNode(node) {
+    const egyptJudgmentCount = Number(node?.egypt_judgment_count || 0);
+    const egyptJudgmentSummary = egyptJudgmentCount > 0
+      ? `Egypt judgments: ${egyptJudgmentCount} match${egyptJudgmentCount === 1 ? "" : "es"}`
+      : "";
     if (!node?.is_low_confidence) {
-      return Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
+      const lines = Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
+      if (egyptJudgmentSummary) lines.push(egyptJudgmentSummary);
+      return lines;
     }
     const linkedEdges = lowConfidenceEdgesByNodeId.get(node?.id) || [];
     let summary = "";
@@ -1322,6 +1330,7 @@
     const lines = [`<strong>${escapeHtml(node?.label || "Node")}</strong>`];
     if (summary) lines.push(escapeHtml(summary));
     else if (node?.label) lines.push(escapeHtml(String(node.label)));
+    if (egyptJudgmentSummary) lines.push(escapeHtml(egyptJudgmentSummary));
     return lines;
   }
 
@@ -1839,14 +1848,55 @@
     `;
   }
 
+  function renderEgyptJudgmentsHtml(node) {
+    const matches = Array.isArray(node?.egypt_judgment_matches) ? node.egypt_judgment_matches : [];
+    if (!matches.length) return "";
+    return `
+      <div class="analysis-section">
+        <div class="analysis-section-title">Egypt judgments screen</div>
+        <div class="analysis-claims">
+          ${matches.map((match, index) => {
+            const canonicalName = String(match?.canonical_name || "").trim();
+            const matchedName = String(match?.matched_name || "").trim();
+            const matchedAlias = String(match?.matched_alias || "").trim();
+            const sourceType = String(match?.source_type || "").trim().replaceAll("_", " ");
+            const sourceLabel = String(match?.source_label || "").trim();
+            const listName = String(match?.list_name || "").trim();
+            const sourceUrl = String(match?.source_url || "").trim();
+            const metaBits = [sourceLabel, sourceType].filter(Boolean).join(" · ");
+            const noteBits = [];
+            if (matchedName && matchedName !== canonicalName) noteBits.push(`Node matched as ${matchedName}`);
+            if (matchedAlias && matchedAlias !== canonicalName) noteBits.push(`Dataset alias ${matchedAlias}`);
+            return `
+              <div class="analysis-claim egypt-judgment-claim">
+                <div class="analysis-claim-header">
+                  <div class="analysis-claim-index">${index + 1}</div>
+                  <div class="analysis-claim-text">${escapeHtml(canonicalName || matchedName || "Egypt judgment match")}</div>
+                </div>
+                ${metaBits ? `<div class="analysis-claim-meta">${escapeHtml(metaBits)}</div>` : ""}
+                ${noteBits.length ? `<div class="analysis-claim-note">${escapeHtml(noteBits.join(" · "))}</div>` : ""}
+                <div class="analysis-claim-evidence">
+                  <span class="analysis-claim-evidence-label">Source</span>
+                  ${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(listName || sourceLabel || "Open source")}</a>` : `<span>${escapeHtml(listName || sourceLabel || "No linked source")}</span>`}
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderNodeAttributionHtml(node) {
     const edges = nodeAttributionEdges(node);
     const summary = summaryLinesForNodeAttribution(node, edges);
+    const egyptJudgmentsHtml = renderEgyptJudgmentsHtml(node);
     const adverseMediaHtml = renderAdverseMediaHtml(node);
     return `
       <div class="analysis-viewer">
         <div class="analysis-selection">${escapeHtml(node.label || node.id || "Node")}</div>
         ${summary.length ? `<div class="analysis-text">${summary.map((line) => escapeHtml(line)).join("<br>")}</div>` : ""}
+        ${egyptJudgmentsHtml}
         ${adverseMediaHtml}
         <div class="analysis-section">
           ${edges.length ? '<div class="analysis-section-title">Graph claims</div>' : ""}
@@ -1867,7 +1917,7 @@
                 </div>
               </div>
             `;
-          }).join("") : (adverseMediaHtml ? '<div class="analysis-empty">No direct graph claims are attached to this node.</div>' : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>')}
+          }).join("") : ((egyptJudgmentsHtml || adverseMediaHtml) ? '<div class="analysis-empty">No direct graph claims are attached to this node.</div>' : '<div class="analysis-empty">No direct claims or attributions are attached to this node in the current graph.</div>')}
           </div>
         </div>
       </div>

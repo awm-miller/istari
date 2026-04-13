@@ -81,6 +81,7 @@
   function nodeStrokeWidth(node) {
     if (node._focused) return 2.8;
     if (node.sanctioned) return 3.4;
+    if (node.egypt_judgment_hit) return 3.2;
     if (node.adverse_media_hit) return 3.0;
     if (node.is_low_confidence) return 1.4;
     return 1.2;
@@ -90,6 +91,7 @@
     if (node._focused) return 0.28;
     if (node.is_low_confidence) return 0.14;
     if (node.sanctioned) return 0.48;
+    if (node.egypt_judgment_hit) return 0.28;
     if (node.adverse_media_hit) return 0.24;
     return 0.18;
   }
@@ -280,10 +282,10 @@
       const scale = transform.k;
       if (rootIds.size) return sceneNodes;
       if (scale >= 0.85) return sceneNodes.slice(0, 1400);
-      const focused = sceneNodes.filter((node) => node._focused || node._hovered || node._searchHit || node.sanctioned || node.adverse_media_hit);
+      const focused = sceneNodes.filter((node) => node._focused || node._hovered || node._searchHit || node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit);
       if (scale >= 0.45) {
         const ranked = sceneNodes
-          .filter((node) => !node._focused && !node._hovered && !node._searchHit && !node.sanctioned && !node.adverse_media_hit && Number(node._rankScore || 0) > 0)
+          .filter((node) => !node._focused && !node._hovered && !node._searchHit && !node.sanctioned && !node.egypt_judgment_hit && !node.adverse_media_hit && Number(node._rankScore || 0) > 0)
           .sort((left, right) => Number(right._rankScore || 0) - Number(left._rankScore || 0))
           .slice(0, 220);
         return [...focused, ...ranked];
@@ -297,6 +299,7 @@
         const classes = ["graph-node-label"];
         if (node._focused) classes.push("highlight");
         if (node.sanctioned) classes.push("sanctioned");
+        if (node.egypt_judgment_hit) classes.push("egypt-judgment");
         if (node.adverse_media_hit) classes.push("adverse-media");
         if (node._hovered) classes.push("hovered");
         if (badgeSpec(node)) classes.push("has-badge");
@@ -344,7 +347,7 @@
         const bounds = pillBounds(node);
         const isHovered = node._hovered;
         const fillColor = node._colorValue;
-        const strokeColor = node.sanctioned ? 0xff2222 : node.adverse_media_hit ? 0xff6a00 : fillColor;
+        const strokeColor = node.sanctioned ? 0xff2222 : node.egypt_judgment_hit ? 0xff9800 : node.adverse_media_hit ? 0xff6a00 : fillColor;
         nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
         nodeLayer.fill({ color: fillColor, alpha: nodeFillAlpha(node) });
         if (node.is_low_confidence) {
@@ -353,7 +356,7 @@
           nodeLayer.stroke({
             color: strokeColor,
             width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node),
-            alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.adverse_media_hit ? 1 : 0.7),
+            alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit ? 1 : 0.7),
           });
           if (node._lowConfidenceOnlyVisible) {
             drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);

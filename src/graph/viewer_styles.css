@@ -339,6 +339,10 @@ body {{
   color: inherit;
   text-shadow: none;
 }
+.graph-node-label.egypt-judgment {{
+  color: inherit;
+  text-shadow: none;
+}
 .graph-node-label.adverse-media {{
   color: inherit;
   text-shadow: none;
@@ -643,6 +647,24 @@ body {{
 .adverse-media-claim {{
   border-color: rgba(249, 115, 22, 0.28);
   background: linear-gradient(180deg, rgba(249, 115, 22, 0.14), rgba(255,255,255,0.03));
+}}
+.egypt-judgment-claim {{
+  border-color: rgba(251, 146, 60, 0.3);
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.16), rgba(255,255,255,0.03));
+}}
+.egypt-judgment-claim .analysis-claim-index {{
+  background: rgba(251, 146, 60, 0.2);
+  border-color: rgba(251, 146, 60, 0.44);
+}}
+.egypt-judgment-claim .analysis-claim-evidence a {{
+  border-color: rgba(251, 146, 60, 0.34);
+  background: rgba(251, 146, 60, 0.16);
+  color: #ffd0a8;
+}}
+.egypt-judgment-claim .analysis-claim-evidence a:hover {{
+  color: var(--text-bright);
+  border-color: rgba(251, 146, 60, 0.52);
+  background: rgba(251, 146, 60, 0.24);
 }}
 .adverse-media-claim .analysis-claim-index {{
   background: rgba(249, 115, 22, 0.2);

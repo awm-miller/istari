@@ -8,7 +8,9 @@ venv/
 .env.*
 !.env.example
 
-data/
+data/*
+!data/egypt_judgments_screen.json
+!data/egypt_judgments_screen_aliases.json
 output/
 
 *.sqlite
@@ -23,6 +25,8 @@ build/
 
 netlify_graph_viewer/
 *.json
+!data/egypt_judgments_screen.json
+!data/egypt_judgments_screen_aliases.json
 
 Mapping/
 changes.md
