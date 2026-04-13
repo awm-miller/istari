@@ -503,6 +503,32 @@ def _org_date_fields(registry_type: str, metadata: dict[str, object]) -> dict[st
     return {"incorporation_date": "", "registration_date": ""}
 
 
+def _evidence_identity(evidence: dict[str, object] | None) -> tuple[str, str, str]:
+    if not evidence:
+        return ("", "", "")
+    return (
+        str(evidence.get("document_url") or "").strip(),
+        str(evidence.get("page_hint") or evidence.get("page_number") or "").strip(),
+        str(evidence.get("title") or "").strip(),
+    )
+
+
+def _merge_evidence_lists(*items: object) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        values = item if isinstance(item, list) else [item]
+        for candidate in values:
+            if not isinstance(candidate, dict):
+                continue
+            key = _evidence_identity(candidate)
+            if key in seen or key == ("", "", ""):
+                continue
+            seen.add(key)
+            merged.append(candidate)
+    return merged
+
+
 def _sanction_warning(sanction: dict[str, object]) -> str:
     matches = sanction.get("matches") or []
     has_eu_source = any(
@@ -821,23 +847,36 @@ def consolidate_run(run_id: int) -> dict:
                 "phrase": phrase,
                 "detail": detail,
                 "source_provider": str(edge["source"] or ""),
+                "source_providers": [str(edge["source"] or "")] if str(edge["source"] or "") else [],
                 "confidence": str(edge["confidence_class"] or ""),
                 "weight": float(edge["edge_weight"] or 0.35),
                 "evidence": evidence,
+                "evidence_items": [evidence] if evidence else [],
                 "start_date": start_date,
                 "end_date": end_date,
                 "is_former": bool(end_date),
             })
-        elif evidence:
+        else:
             for existing in person_org_edges:
                 if existing["source"] == gid and existing["target"] == org_id and existing["phrase"] == phrase:
+                    existing["source_providers"] = sorted(
+                        {
+                            *(existing.get("source_providers") or []),
+                            str(edge["source"] or ""),
+                        }
+                    )
                     if not existing.get("evidence"):
                         existing["evidence"] = evidence
+                    existing["evidence_items"] = _merge_evidence_lists(
+                        existing.get("evidence_items") or [],
+                        [evidence] if evidence else [],
+                    )
                     if not existing.get("start_date") and start_date:
                         existing["start_date"] = start_date
                     if not existing.get("end_date") and end_date:
                         existing["end_date"] = end_date
                     existing["is_former"] = bool(existing.get("end_date"))
+                    existing["weight"] = max(float(existing.get("weight") or 0.0), float(edge["edge_weight"] or 0.35))
                     break
         group_entry = next((c for c in consolidated if c["group_id"] == gid), None)
         person_label = group_entry["label"] if group_entry else ""
@@ -1056,6 +1095,8 @@ def consolidate_run(run_id: int) -> dict:
             "source_provider": pe["source_provider"],
             "confidence": pe["confidence"],
             "weight": pe["weight"],
+            "source_providers": pe.get("source_providers", []),
+            "evidence_items": pe.get("evidence_items", []),
             "start_date": pe.get("start_date", ""),
             "end_date": pe.get("end_date", ""),
             "is_former": pe.get("is_former", False),
@@ -1149,8 +1190,18 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             if existing is not None:
                 if item.get("evidence") and not existing.get("evidence"):
                     existing["evidence"] = item.get("evidence")
-                if item.get("evidence_items") and not existing.get("evidence_items"):
-                    existing["evidence_items"] = item.get("evidence_items")
+                existing["evidence_items"] = _merge_evidence_lists(
+                    existing.get("evidence_items") or [],
+                    item.get("evidence_items") or [],
+                    [existing.get("evidence")] if existing.get("evidence") else [],
+                    [item.get("evidence")] if item.get("evidence") else [],
+                )
+                existing["source_providers"] = sorted(
+                    {
+                        *(existing.get("source_providers") or []),
+                        *(item.get("source_providers") or []),
+                    }
+                )
                 if item.get("start_date") and not existing.get("start_date"):
                     existing["start_date"] = item.get("start_date")
                 if item.get("end_date") and not existing.get("end_date"):
