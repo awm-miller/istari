@@ -368,6 +368,93 @@ def step2b_enrich_from_pdfs(
     )
 
 
+def _scoped_org_count(repository: Repository, run_id: int) -> int:
+    return len(repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE]))
+
+
+def run_connected_org_discovery(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    run_id: int,
+    max_rounds: int = 4,
+) -> dict[str, Any]:
+    rounds: list[dict[str, Any]] = []
+    step2_totals = {
+        "run_id": run_id,
+        "processed_organisation_count": 0,
+        "connected_organisation_count": 0,
+        "linked_insert_attempts": 0,
+        "address_count": 0,
+        "address_pivot_insert_attempts": 0,
+    }
+    step2b_totals = {
+        "run_id": run_id,
+        "enabled": True,
+        "processed_organisation_count": 0,
+        "document_count": 0,
+        "entity_count": 0,
+        "people_added": 0,
+        "organisation_mentions_resolved": 0,
+        "organisation_mentions_seen": 0,
+        "warnings": [],
+    }
+
+    for round_number in range(1, max_rounds + 1):
+        before_count = _scoped_org_count(repository, run_id)
+        step2 = step2_expand_connected_organisations(
+            repository=repository,
+            charity_client=charity_client,
+            run_id=run_id,
+        )
+        after_step2_count = _scoped_org_count(repository, run_id)
+        step2b = step2b_enrich_from_pdfs(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            run_id=run_id,
+        )
+        after_step2b_count = _scoped_org_count(repository, run_id)
+
+        step2_totals["processed_organisation_count"] += int(step2.get("processed_organisation_count") or 0)
+        step2_totals["linked_insert_attempts"] += int(step2.get("linked_insert_attempts") or 0)
+        step2_totals["address_count"] += int(step2.get("address_count") or 0)
+        step2_totals["address_pivot_insert_attempts"] += int(step2.get("address_pivot_insert_attempts") or 0)
+        step2_totals["connected_organisation_count"] = int(step2.get("connected_organisation_count") or 0)
+
+        step2b_totals["enabled"] = bool(step2b.get("enabled", step2b_totals["enabled"]))
+        step2b_totals["processed_organisation_count"] += int(step2b.get("processed_organisation_count") or 0)
+        step2b_totals["document_count"] += int(step2b.get("document_count") or 0)
+        step2b_totals["entity_count"] += int(step2b.get("entity_count") or 0)
+        step2b_totals["people_added"] += int(step2b.get("people_added") or 0)
+        step2b_totals["organisation_mentions_resolved"] += int(step2b.get("organisation_mentions_resolved") or 0)
+        step2b_totals["organisation_mentions_seen"] += int(step2b.get("organisation_mentions_seen") or 0)
+        step2b_totals["warnings"].extend(step2b.get("warnings") or [])
+
+        rounds.append(
+            {
+                "round": round_number,
+                "scoped_org_count_before": before_count,
+                "scoped_org_count_after_step2": after_step2_count,
+                "scoped_org_count_after_step2b": after_step2b_count,
+                "step2": step2,
+                "step2b": step2b,
+            }
+        )
+        if after_step2b_count <= before_count:
+            break
+
+    return {
+        "run_id": run_id,
+        "round_count": len(rounds),
+        "scoped_organisation_count": _scoped_org_count(repository, run_id),
+        "step2": step2_totals,
+        "step2b": step2b_totals,
+        "rounds": rounds,
+    }
+
+
 def step4_ofac_screening(
     *,
     repository: Repository,
@@ -461,17 +548,14 @@ def run_registry_only_mvp(
         creativity_level=creativity_level,
     )
     run_id = int(step1["run_id"])
-    step2 = step2_expand_connected_organisations(
-        repository=repository,
-        charity_client=charity_client,
-        run_id=run_id,
-    )
-    step2b = step2b_enrich_from_pdfs(
+    discovery = run_connected_org_discovery(
         repository=repository,
         settings=settings,
         charity_client=charity_client,
         run_id=run_id,
     )
+    step2 = discovery["step2"]
+    step2b = discovery["step2b"]
     step3 = step3_expand_connected_people(
         repository=repository,
         settings=settings,
@@ -489,6 +573,7 @@ def run_registry_only_mvp(
         "step1": step1,
         "step2": step2,
         "step2b": step2b,
+        "discovery_rounds": discovery["rounds"],
         "step3": step3,
         "step4": step4,
         "search_summary": step1["search_summary"],
@@ -549,17 +634,14 @@ def add_organisation_to_run(
     if not rerun_downstream:
         return result
 
-    step2 = step2_expand_connected_organisations(
-        repository=repository,
-        charity_client=charity_client,
-        run_id=run_id,
-    )
-    step2b = step2b_enrich_from_pdfs(
+    discovery = run_connected_org_discovery(
         repository=repository,
         settings=settings,
         charity_client=charity_client,
         run_id=run_id,
     )
+    step2 = discovery["step2"]
+    step2b = discovery["step2b"]
     step3 = step3_expand_connected_people(
         repository=repository,
         settings=settings,
@@ -571,6 +653,7 @@ def add_organisation_to_run(
         {
             "step2": step2,
             "step2b": step2b,
+            "discovery_rounds": discovery["rounds"],
             "step3": step3,
             "ranking": step3["ranking"],
         }
