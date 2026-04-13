@@ -431,7 +431,6 @@
 
   function nodeColorValue(node) {
     const kind = normalizeNodeKind(node);
-    if (node.sanctioned) return COLORS.red;
     if (kind === "seed_alias") return COLORS.amber;
     if (kind === "charity" || kind === "company" || kind === "organisation") return COLORS.green;
     if (kind === "address") return COLORS.purple;

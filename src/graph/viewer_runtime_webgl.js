@@ -343,27 +343,22 @@
       sceneNodes.forEach((node) => {
         const bounds = pillBounds(node);
         const isHovered = node._hovered;
-        const color = node._colorValue;
+        const fillColor = node._colorValue;
+        const strokeColor = node.sanctioned ? 0xff2222 : node.adverse_media_hit ? 0xff6a00 : fillColor;
         nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
-        nodeLayer.fill({ color, alpha: nodeFillAlpha(node) });
+        nodeLayer.fill({ color: fillColor, alpha: nodeFillAlpha(node) });
         if (node.is_low_confidence) {
           drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
         } else {
-          nodeLayer.stroke({ color, width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node), alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.adverse_media_hit ? 1 : 0.7) });
+          nodeLayer.stroke({
+            color: strokeColor,
+            width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node),
+            alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.adverse_media_hit ? 1 : 0.7),
+          });
           if (node._lowConfidenceOnlyVisible) {
             drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
           }
         }
-        if (node.sanctioned) {
-          overlayLayer.roundRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8, (bounds.height + 8) / 2);
-          overlayLayer.fill({ color: 0xff2222, alpha: 0.12 });
-          overlayLayer.stroke({ color: 0xff8a8a, width: isHovered ? 3.4 : 2.8, alpha: 1 });
-        } else if (node.adverse_media_hit) {
-          overlayLayer.roundRect(bounds.x - 4, bounds.y - 4, bounds.width + 8, bounds.height + 8, (bounds.height + 8) / 2);
-          overlayLayer.fill({ color: 0xf97316, alpha: 0.14 });
-          overlayLayer.stroke({ color: 0xff6a00, width: isHovered ? 3.3 : 2.7, alpha: 1 });
-        }
-
       });
 
       updateLabels();
