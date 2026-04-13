@@ -111,8 +111,7 @@ class AddressPivotSearcher:
         seen_numbers: set[str] = set()
         for result in self._cached_serper(query):
             url = str(result.get("href") or result.get("url") or "")
-            title = str(result.get("title") or "")
-            charity_number = extract_charity_number_from_url(url) or _extract_charity_number_from_title(title)
+            charity_number = extract_charity_number_from_url(url)
             if not charity_number or charity_number in seen_numbers:
                 continue
             seen_numbers.add(charity_number)
@@ -195,7 +194,4 @@ def _has_matching_address(target: NormalizedAddress, candidates: list[Normalized
 
 
 def _extract_charity_number_from_title(title: str) -> str | None:
-    match = re.search(r"\b(\d{5,8})\b", title)
-    if match:
-        return match.group(1)
     return None
