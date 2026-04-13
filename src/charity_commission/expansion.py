@@ -71,6 +71,7 @@ def expand_charity_connected_organisations(
                 "registry_type": linked_record.registry_type,
                 "registry_number": linked_record.registry_number,
                 "suffix": linked_record.suffix,
+                "name": linked_record.name,
                 "source": "charity_commission_linked_charities",
             }
         )

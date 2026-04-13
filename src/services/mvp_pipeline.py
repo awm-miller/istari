@@ -12,6 +12,7 @@ from src.charity_commission.expansion import (
     expand_charity_connected_organisations,
     expand_charity_people,
 )
+from src.charity_commission.identifiers import extract_charity_number_from_payload
 from src.companies_house.client import CompaniesHouseClient
 from src.companies_house.expansion import expand_company_people
 from src.config import Settings
@@ -34,6 +35,88 @@ log = logging.getLogger("istari.pipeline")
 
 STEP1_STAGE = "step1_seed_match"
 STEP2_STAGE = "step2_connected_org"
+
+
+def _registry_name_key(value: str) -> str:
+    return "".join(ch.lower() for ch in str(value or "") if ch.isalnum())
+
+
+def _discover_named_counterparts(
+    *,
+    organisation: Any,
+    charity_client: CharityCommissionClient,
+    companies_house_client: CompaniesHouseClient | None,
+) -> list[OrganisationRecord]:
+    registry_type = str(organisation["registry_type"] or "").strip().lower()
+    try:
+        organisation_name = str(organisation["name"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        try:
+            organisation_name = str(organisation["organisation_name"] or "").strip()
+        except (KeyError, IndexError, TypeError):
+            organisation_name = ""
+    if not organisation_name:
+        return []
+    name_key = _registry_name_key(organisation_name)
+    discovered: list[OrganisationRecord] = []
+
+    if registry_type != "charity":
+        try:
+            charity_matches = charity_client.search_charities_by_name(organisation_name)
+        except RuntimeError:
+            charity_matches = []
+        for match in charity_matches:
+            if not isinstance(match, dict):
+                continue
+            charity_name = str(match.get("charity_name") or organisation_name).strip()
+            if _registry_name_key(charity_name) != name_key:
+                continue
+            charity_number = extract_charity_number_from_payload(match)
+            if not charity_number:
+                continue
+            discovered.append(
+                OrganisationRecord(
+                    registry_type="charity",
+                    registry_number=charity_number,
+                    suffix=int(match.get("group_subsid_suffix") or 0),
+                    organisation_number=match.get("organisation_number"),
+                    name=charity_name,
+                    status=match.get("reg_status"),
+                    metadata=match,
+                )
+            )
+
+    if registry_type != "company" and companies_house_client is not None:
+        try:
+            payload = companies_house_client.search_companies(organisation_name, items_per_page=10)
+        except RuntimeError:
+            payload = {}
+        for item in payload.get("items", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            company_name = str(item.get("title") or "").strip()
+            if not company_name or _registry_name_key(company_name) != name_key:
+                continue
+            company_number = str(item.get("company_number") or "").strip()
+            if not company_number:
+                continue
+            discovered.append(
+                OrganisationRecord(
+                    registry_type="company",
+                    registry_number=company_number,
+                    suffix=0,
+                    organisation_number=None,
+                    name=company_name,
+                    status=item.get("company_status"),
+                    metadata=item,
+                )
+            )
+
+    deduped: dict[tuple[str, str, int], OrganisationRecord] = {}
+    for record in discovered:
+        key = (record.registry_type, record.registry_number, int(record.suffix or 0))
+        deduped[key] = record
+    return list(deduped.values())
 
 
 def hydrate_cached_sanctions(
@@ -145,6 +228,8 @@ def step2_expand_connected_organisations(
     run_id: int,
 ) -> dict[str, Any]:
     scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    settings = getattr(charity_client, "settings", None)
+    companies_house_client = CompaniesHouseClient(settings) if isinstance(settings, Settings) else None
     queue: list[dict[str, Any]] = []
     queued_keys: set[tuple[str, str, int]] = set()
     visited_keys: set[tuple[str, str, int]] = set()
@@ -176,13 +261,14 @@ def step2_expand_connected_organisations(
         visited_keys.add(org_key)
         processed += 1
         if organisation["registry_type"] != "charity":
-            continue
-        connected = expand_charity_connected_organisations(
-            repository=repository,
-            charity_client=charity_client,
-            charity_number=int(organisation["registry_number"]),
-            suffix=int(organisation["suffix"]),
-        )
+            connected = []
+        else:
+            connected = expand_charity_connected_organisations(
+                repository=repository,
+                charity_client=charity_client,
+                charity_number=int(organisation["registry_number"]),
+                suffix=int(organisation["suffix"]),
+            )
         for linked in connected:
             repository.link_run_organisation(
                 run_id,
@@ -209,14 +295,52 @@ def step2_expand_connected_organisations(
                     "registry_type": str(linked["registry_type"] or ""),
                     "registry_number": str(linked["registry_number"] or ""),
                     "suffix": int(linked["suffix"] or 0),
+                    "name": str(linked.get("name") or ""),
+                }
+            )
+        for counterpart in _discover_named_counterparts(
+            organisation=organisation,
+            charity_client=charity_client,
+            companies_house_client=companies_house_client,
+        ):
+            counterpart_id = repository.upsert_organisation(counterpart)
+            repository.link_run_organisation(
+                run_id,
+                counterpart_id,
+                stage=STEP2_STAGE,
+                source="registry_name_counterpart",
+                metadata={
+                    "parent_registry_type": str(organisation["registry_type"] or ""),
+                    "parent_registry_number": str(organisation["registry_number"] or ""),
+                    "parent_suffix": int(organisation["suffix"] or 0),
+                    "connection_phrase": (
+                        "is the Charity Commission counterpart of"
+                        if counterpart.registry_type == "charity"
+                        else "is the Companies House counterpart of"
+                    ),
+                },
+            )
+            linked_count += 1
+            linked_key = (
+                counterpart.registry_type,
+                counterpart.registry_number,
+                int(counterpart.suffix or 0),
+            )
+            if linked_key in queued_keys:
+                continue
+            queued_keys.add(linked_key)
+            queue.append(
+                {
+                    "registry_type": counterpart.registry_type,
+                    "registry_number": counterpart.registry_number,
+                    "suffix": int(counterpart.suffix or 0),
+                    "name": counterpart.name,
                 }
             )
 
     address_count = 0
     address_pivot_count = 0
-    settings = getattr(charity_client, "settings", None)
     if isinstance(settings, Settings):
-        companies_house_client = CompaniesHouseClient(settings)
         address_searcher = AddressPivotSearcher(
             settings=settings,
             charity_client=charity_client,
