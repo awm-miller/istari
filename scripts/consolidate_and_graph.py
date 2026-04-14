@@ -640,11 +640,11 @@ def _sanction_warning(matches: list[dict[str, object]]) -> str:
     visible_sources = [source for source in sources if source != "EU-linked"]
     if not visible_sources:
         return (
-            "\u26a0\ufe0f <strong>SANCTIONED (SANCTIONS LIST)</strong>"
+            "\u26a0\ufe0f <strong>POTENTIAL SANCTION (SANCTIONS LIST)</strong>"
             + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
         )
     return (
-        "\u26a0\ufe0f <strong>SANCTIONED</strong>: "
+        "\u26a0\ufe0f <strong>POTENTIAL SANCTION</strong>: "
         + ", ".join(visible_sources)
         + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
     )

@@ -1920,34 +1920,8 @@
     const summaryText = summarySources.length ? summarySources.join(" · ") : "";
     return `
       <div class="analysis-section">
-        <div class="analysis-section-title">Sanctions</div>
+        <div class="analysis-section-title">Potential sanctions match</div>
         ${summaryText ? `<div class="analysis-text">${escapeHtml(summaryText)}</div>` : ""}
-        <div class="analysis-claims">
-          ${matches.map((match, index) => {
-            const displayName = String(match?.matched_name || match?.name || "").trim();
-            const source = sanctionSourceLabel(match?.source);
-            const program = String(match?.program || "").trim();
-            const sourceId = String(match?.source_id || "").trim();
-            const metaBits = [source, program, sourceId ? `ID ${sourceId}` : ""].filter(Boolean).join(" · ");
-            const noteBits = [];
-            if (match?.match_type) noteBits.push(`Match: ${String(match.match_type).trim()}`);
-            if (match?.matched_birth_month && match?.matched_birth_year) {
-              noteBits.push(`DOB matched: ${String(match.matched_birth_month).padStart(2, "0")}/${match.matched_birth_year}`);
-            }
-            const remarks = String(match?.remarks || "").trim();
-            return `
-              <div class="analysis-claim sanction-claim">
-                <div class="analysis-claim-header">
-                  <div class="analysis-claim-index">${index + 1}</div>
-                  <div class="analysis-claim-text">${escapeHtml(displayName || source)}</div>
-                </div>
-                ${metaBits ? `<div class="analysis-claim-meta">${escapeHtml(metaBits)}</div>` : ""}
-                ${noteBits.length ? `<div class="analysis-claim-note">${escapeHtml(noteBits.join(" · "))}</div>` : ""}
-                ${remarks ? `<div class="analysis-claim-quote">${escapeHtml(remarks)}</div>` : ""}
-              </div>
-            `;
-          }).join("")}
-        </div>
       </div>
     `;
   }
