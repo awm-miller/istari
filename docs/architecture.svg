@@ -125,17 +125,15 @@
   <rect x="402" y="712" width="396" height="108" rx="8" fill="#FFF" stroke="#FDE68A" stroke-width="1" filter="url(#cs)"/>
   <rect x="402" y="712" width="4" height="108" rx="2" fill="#EF4444"/>
   <text x="420" y="736" font-size="13" font-weight="600" fill="#1E293B">Screening</text>
-  <text x="420" y="756" font-size="11.5" fill="#64748B">- Refresh and reuse cached sanctions data</text>
-  <text x="420" y="771" font-size="11.5" fill="#64748B">- Match names against Egypt judgments dataset</text>
-  <text x="420" y="786" font-size="11.5" fill="#64748B">- Attach negative-news hits from SQLite store</text>
+  <text x="420" y="756" font-size="11.5" fill="#64748B">- Layer in sanctions data</text>
+  <text x="420" y="771" font-size="11.5" fill="#64748B">- Match names to Egyptian + Saudi judgments</text>
+  <text x="420" y="786" font-size="11.5" fill="#64748B">- Match names to foreign-language + English news</text>
 
   <line x1="798" y1="766" x2="824" y2="766" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 10: Low-confidence overlay (toggleable) -->
   <rect x="826" y="712" width="310" height="108" rx="8" fill="#FFF" stroke="#94A3B8" stroke-width="1" stroke-dasharray="4 3" filter="url(#cs)"/>
   <rect x="826" y="712" width="4" height="108" rx="2" fill="#64748B"/>
-  <rect x="1054" y="724" width="70" height="18" rx="9" fill="#E0F2FE" stroke="#7DD3FC" stroke-width="0.5"/>
-  <text x="1066" y="737" font-size="9" font-weight="500" fill="#0369A1">toggleable</text>
   <text x="844" y="736" font-size="13" font-weight="600" fill="#1E293B">Low-confidence overlay</text>
   <text x="844" y="756" font-size="11.5" fill="#64748B">Weaker evidence chains (mapping,</text>
   <text x="844" y="771" font-size="11.5" fill="#64748B">signatory data, open letters)</text>
