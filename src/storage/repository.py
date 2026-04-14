@@ -304,6 +304,41 @@ class Repository:
         with self.connect() as connection:
             return connection.execute(sql, params).fetchall()
 
+    def get_run_organisations_with_people(
+        self,
+        run_id: int,
+        *,
+        stages: list[str] | None = None,
+    ) -> list[sqlite3.Row]:
+        sql = """
+            SELECT DISTINCT
+                organisations.id,
+                organisations.registry_type,
+                organisations.registry_number,
+                organisations.suffix,
+                organisations.organisation_number,
+                organisations.name,
+                organisations.status,
+                organisations.metadata_json,
+                run_organisations.stage,
+                run_organisations.source,
+                run_organisations.metadata_json AS run_metadata_json
+            FROM run_organisations
+            JOIN organisations
+                ON organisations.id = run_organisations.organisation_id
+            JOIN person_org_roles
+                ON person_org_roles.organisation_id = organisations.id
+            WHERE run_organisations.run_id = ?
+        """
+        params: list[Any] = [run_id]
+        if stages:
+            placeholders = ",".join("?" for _ in stages)
+            sql += f" AND run_organisations.stage IN ({placeholders})"
+            params.extend(stages)
+        sql += " ORDER BY organisations.name ASC, organisations.registry_type ASC, organisations.registry_number ASC"
+        with self.connect() as connection:
+            return connection.execute(sql, params).fetchall()
+
     def insert_evidence_item(self, run_id: int, item: EvidenceItem) -> int:
         with self.connect() as connection:
             connection.execute(

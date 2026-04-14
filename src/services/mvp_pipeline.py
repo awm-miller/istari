@@ -484,7 +484,10 @@ def step2b_enrich_from_pdfs(
     charity_client: CharityCommissionClient,
     run_id: int,
 ) -> dict[str, Any]:
-    scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    scoped_organisations = repository.get_run_organisations_with_people(
+        run_id,
+        stages=[STEP1_STAGE, STEP2_STAGE],
+    )
     return enrich_run_from_pdfs(
         repository=repository,
         settings=settings,
@@ -515,18 +518,6 @@ def run_connected_org_discovery(
         "address_count": 0,
         "address_pivot_insert_attempts": 0,
     }
-    step2b_totals = {
-        "run_id": run_id,
-        "enabled": True,
-        "processed_organisation_count": 0,
-        "document_count": 0,
-        "entity_count": 0,
-        "people_added": 0,
-        "organisation_mentions_resolved": 0,
-        "organisation_mentions_seen": 0,
-        "warnings": [],
-    }
-
     for round_number in range(1, max_rounds + 1):
         before_count = _scoped_org_count(repository, run_id)
         step2 = step2_expand_connected_organisations(
@@ -535,13 +526,6 @@ def run_connected_org_discovery(
             run_id=run_id,
         )
         after_step2_count = _scoped_org_count(repository, run_id)
-        step2b = step2b_enrich_from_pdfs(
-            repository=repository,
-            settings=settings,
-            charity_client=charity_client,
-            run_id=run_id,
-        )
-        after_step2b_count = _scoped_org_count(repository, run_id)
 
         step2_totals["processed_organisation_count"] += int(step2.get("processed_organisation_count") or 0)
         step2_totals["linked_insert_attempts"] += int(step2.get("linked_insert_attempts") or 0)
@@ -549,26 +533,15 @@ def run_connected_org_discovery(
         step2_totals["address_pivot_insert_attempts"] += int(step2.get("address_pivot_insert_attempts") or 0)
         step2_totals["connected_organisation_count"] = int(step2.get("connected_organisation_count") or 0)
 
-        step2b_totals["enabled"] = bool(step2b.get("enabled", step2b_totals["enabled"]))
-        step2b_totals["processed_organisation_count"] += int(step2b.get("processed_organisation_count") or 0)
-        step2b_totals["document_count"] += int(step2b.get("document_count") or 0)
-        step2b_totals["entity_count"] += int(step2b.get("entity_count") or 0)
-        step2b_totals["people_added"] += int(step2b.get("people_added") or 0)
-        step2b_totals["organisation_mentions_resolved"] += int(step2b.get("organisation_mentions_resolved") or 0)
-        step2b_totals["organisation_mentions_seen"] += int(step2b.get("organisation_mentions_seen") or 0)
-        step2b_totals["warnings"].extend(step2b.get("warnings") or [])
-
         rounds.append(
             {
                 "round": round_number,
                 "scoped_org_count_before": before_count,
                 "scoped_org_count_after_step2": after_step2_count,
-                "scoped_org_count_after_step2b": after_step2b_count,
                 "step2": step2,
-                "step2b": step2b,
             }
         )
-        if after_step2b_count <= before_count:
+        if after_step2_count <= before_count:
             break
 
     return {
@@ -576,7 +549,6 @@ def run_connected_org_discovery(
         "round_count": len(rounds),
         "scoped_organisation_count": _scoped_org_count(repository, run_id),
         "step2": step2_totals,
-        "step2b": step2b_totals,
         "rounds": rounds,
     }
 
@@ -747,6 +719,12 @@ def run_recursive_network_discovery(
             run_id=run_id,
             limit=limit,
         )
+        step2b = step2b_enrich_from_pdfs(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            run_id=run_id,
+        )
         frontier_people = _collect_frontier_people(
             repository=repository,
             run_id=run_id,
@@ -766,7 +744,7 @@ def run_recursive_network_discovery(
         after_count = _scoped_org_count(repository, run_id)
 
         step2 = dict(discovery["step2"])
-        step2b = dict(discovery["step2b"])
+        step2b = dict(step2b)
         step2_totals["processed_organisation_count"] += int(step2.get("processed_organisation_count") or 0)
         step2_totals["linked_insert_attempts"] += int(step2.get("linked_insert_attempts") or 0)
         step2_totals["address_count"] += int(step2.get("address_count") or 0)
