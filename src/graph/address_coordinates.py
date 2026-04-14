@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -115,19 +116,17 @@ def _address_lookup(node: dict[str, Any]) -> dict[str, str]:
     label = str(node.get("label") or "").strip()
     postcode = str(node.get("postcode") or "").strip()
     country = str(node.get("country") or "").strip()
+    label_query = _address_query(label=label, postcode=postcode, country=country)
+    cleaned_label_query = _clean_address_query(label_query)
     if postcode:
         normalized_postcode = postcode.upper().replace(" ", "")
         return {
             "key": f"postcode:{normalized_postcode}",
             "query": postcode,
             "method": "postcode",
+            "fallback_query": cleaned_label_query or label_query,
         }
-    parts = [label] if label else []
-    if postcode and postcode.lower() not in label.lower():
-        parts.append(postcode)
-    if country and country.lower() not in label.lower():
-        parts.append(country)
-    query = ", ".join(part for part in parts if part).strip()
+    query = cleaned_label_query or label_query
     return {
         "key": f"query:{query.lower()}",
         "query": query,
@@ -140,7 +139,34 @@ def _lookup_coordinates(lookup: dict[str, str], *, user_agent: str) -> dict[str,
         point = _geocode_postcode(lookup["query"], user_agent=user_agent)
         if point:
             return point
+        fallback_query = str(lookup.get("fallback_query") or "").strip()
+        if fallback_query and fallback_query != str(lookup["query"]).strip():
+            point = _geocode_query(fallback_query, user_agent=user_agent)
+            if point:
+                return point
     return _geocode_query(lookup["query"], user_agent=user_agent)
+
+
+def _address_query(*, label: str, postcode: str, country: str) -> str:
+    parts = [label] if label else []
+    if postcode and postcode.lower() not in label.lower():
+        parts.append(postcode)
+    if country and country.lower() not in label.lower():
+        parts.append(country)
+    return ", ".join(part for part in parts if part).strip()
+
+
+def _clean_address_query(query: str) -> str:
+    cleaned = str(query or "").strip()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(
+        r"^\d+\s*-\s*COMPANIES HOUSE DEFAULT ADDRESS,?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip(" ,")
 
 
 def _geocode_postcode(postcode: str, *, user_agent: str) -> dict[str, Any] | None:
