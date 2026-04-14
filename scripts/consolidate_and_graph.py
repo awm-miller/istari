@@ -482,11 +482,24 @@ def _role_phrase(edge) -> str:
 def _role_org_label(edge) -> str:
     label = _row_str(edge, "organisation_name").strip()
     if label:
-        return label.lower()
+        return _normalized_org_label(label)
     try:
         return str(int(edge["organisation_id"]))
     except (TypeError, ValueError, KeyError, IndexError):
         return ""
+
+
+def _normalized_org_label(label: str) -> str:
+    normalized = str(label or "").strip().lower()
+    return normalized
+
+
+def _merged_org_key(org_id: str, org_nodes: dict[str, dict]) -> str:
+    node = org_nodes.get(org_id) or {}
+    label = str(node.get("label") or "").strip()
+    if label:
+        return _normalized_org_label(label)
+    return str(org_id).strip()
 
 
 def _role_key(edge) -> tuple[str, str]:
@@ -1457,6 +1470,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
     person_entry_to_merged_id: dict[tuple[int, str], str] = {}
     merged_person_nodes: dict[str, dict] = {}
     merged_person_orgs: dict[str, set[str]] = defaultdict(set)
+    merged_person_org_keys: dict[str, set[str]] = defaultdict(set)
     merged_person_role_keys: dict[str, set[tuple[str, str]]] = defaultdict(set)
     merged_person_score: dict[str, float] = defaultdict(float)
     merged_person_roles: dict[str, list[dict]] = defaultdict(list)
@@ -1691,6 +1705,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     continue
                 phrase = str(edge.get("phrase", "") or "")
                 merged_person_orgs[merged_person_id].add(org_id)
+                merged_person_org_keys[merged_person_id].add(_merged_org_key(org_id, org_nodes))
                 merged_person_role_keys[merged_person_id].add((str(org_nodes[org_id]["label"]).lower(), phrase))
                 merged_person_score[merged_person_id] += float(edge.get("weight") or 0.35)
                 org_person_edges.append({
@@ -1808,7 +1823,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
 
     merged_people_consolidated: list[dict] = []
     for merged_id, node in merged_person_nodes.items():
-        node["org_count"] = len(merged_person_orgs.get(merged_id, set()))
+        node["org_count"] = len(merged_person_org_keys.get(merged_id, set()))
         node["role_count"] = len(merged_person_role_keys.get(merged_id, set()))
         node["score"] = round(float(merged_person_score.get(merged_id, 0.0)), 4)
         identity_refs = []
