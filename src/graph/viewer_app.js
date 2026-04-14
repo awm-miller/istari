@@ -1336,6 +1336,23 @@
 
   function tooltipLinesForEdge(edge) {
     if (!edge?.is_low_confidence) {
+      const displayPersonLabels = Array.isArray(edge?.display_person_labels)
+        ? edge.display_person_labels.map((value) => String(value || "").trim()).filter(Boolean)
+        : [];
+      if (edge?.kind === "role" && displayPersonLabels.length && !Array.isArray(edge?.tooltip_lines)) {
+        const sourceNode = nodeById.get(edge?.source) || null;
+        const targetNode = nodeById.get(edge?.target) || null;
+        const sourceKind = String(sourceNode?.kind || "");
+        const targetKind = String(targetNode?.kind || "");
+        const orgLabel = sourceKind === "organisation"
+          ? String(sourceNode?.label || edge?.source || "Organisation")
+          : String(targetNode?.label || edge?.target || "Organisation");
+        const phrase = String(edge?.phrase || "").trim() || "is linked to";
+        const personLabel = displayPersonLabels.length === 1
+          ? displayPersonLabels[0]
+          : summarizeLabelList(displayPersonLabels);
+        return [`${escapeHtml(personLabel)} ${escapeHtml(phrase)} ${escapeHtml(orgLabel)}.`];
+      }
       return Array.isArray(edge?.tooltip_lines) ? edge.tooltip_lines.slice() : [edge?.tooltip || "link"];
     }
     const sourceLabel = String(nodeById.get(edge?.source)?.label || edge?.source || "Source");
@@ -1723,6 +1740,10 @@
         if ((!existing.tooltip_lines || !existing.tooltip_lines.length) && edge.tooltip_lines?.length) {
           existing.tooltip_lines = edge.tooltip_lines;
         }
+        existing.display_person_labels = uniqueValues([
+          ...(Array.isArray(existing.display_person_labels) ? existing.display_person_labels : []),
+          ...(Array.isArray(edge.display_person_labels) ? edge.display_person_labels : []),
+        ]);
         return;
       }
       seen.set(key, edge);

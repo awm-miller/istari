@@ -617,6 +617,23 @@ def _edge_evidence_items(edge: dict[str, object]) -> list[dict[str, object]]:
     )
 
 
+def _edge_display_person_labels(*values: object) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            label = str(item or "").strip()
+            if not label:
+                continue
+            normalized = label.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            labels.append(label)
+    return labels
+
+
 def _sanction_warning(matches: list[dict[str, object]]) -> str:
     sources = _sanction_source_labels(matches)
     has_eu_source = "EU-linked" in sources
@@ -931,6 +948,7 @@ def consolidate_run(run_id: int) -> dict:
                 "weight": float(edge["edge_weight"] or 0.35),
                 "evidence": evidence,
                 "evidence_items": [evidence] if evidence else [],
+                "display_person_labels": _edge_display_person_labels(edge["person_name"]),
                 "start_date": start_date,
                 "end_date": end_date,
                 "is_former": bool(end_date),
@@ -949,6 +967,10 @@ def consolidate_run(run_id: int) -> dict:
                     existing["evidence_items"] = _merge_evidence_lists(
                         existing.get("evidence_items") or [],
                         [evidence] if evidence else [],
+                    )
+                    existing["display_person_labels"] = _edge_display_person_labels(
+                        existing.get("display_person_labels") or [],
+                        edge["person_name"],
                     )
                     if not existing.get("start_date") and start_date:
                         existing["start_date"] = start_date
@@ -1176,6 +1198,7 @@ def consolidate_run(run_id: int) -> dict:
             "weight": pe["weight"],
             "source_providers": pe.get("source_providers", []),
             "evidence_items": pe.get("evidence_items", []),
+            "display_person_labels": pe.get("display_person_labels", []),
             "start_date": pe.get("start_date", ""),
             "end_date": pe.get("end_date", ""),
             "is_former": pe.get("is_former", False),
@@ -1744,6 +1767,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "tooltip": edge.get("tooltip", ""),
                     "evidence": edge.get("evidence"),
                     "evidence_items": _edge_evidence_items(edge),
+                    "display_person_labels": _edge_display_person_labels(edge.get("display_person_labels") or []),
                 })
                 person_label = merged_person_nodes[merged_person_id]["label"]
                 org_people[org_id].append({
