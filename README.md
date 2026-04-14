@@ -8,9 +8,9 @@ It does this by searching UK public registries, deciding which hits are really a
 
 ## Architecture
 
-Open the full architecture image: [`docs/architecture.svg`](docs/architecture.svg)
+![Project Istari pipeline](docs/architecture_dark.png)
 
-![Project Istari architecture](docs/architecture.svg)
+Open the detailed version: [`docs/architecture.svg`](docs/architecture.svg)
 
 ## What the system does
 
