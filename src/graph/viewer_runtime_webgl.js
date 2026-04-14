@@ -348,6 +348,7 @@
         const isHovered = node._hovered;
         const fillColor = node._colorValue;
         const strokeColor = node.sanctioned ? 0xff2222 : node.egypt_judgment_hit ? 0xff9800 : node.adverse_media_hit ? 0xff6a00 : fillColor;
+        const hasCombinedSanctionAdverse = !!(node.sanctioned && node.adverse_media_hit);
         nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
         nodeLayer.fill({ color: fillColor, alpha: nodeFillAlpha(node) });
         if (node.is_low_confidence) {
@@ -358,6 +359,18 @@
             width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node),
             alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit ? 1 : 0.7),
           });
+          if (hasCombinedSanctionAdverse) {
+            const inset = 2.4;
+            const innerWidth = Math.max(1.6, (isHovered ? 2.6 : 2.1));
+            overlayLayer.roundRect(
+              bounds.x + inset,
+              bounds.y + inset,
+              Math.max(0, bounds.width - (inset * 2)),
+              Math.max(0, bounds.height - (inset * 2)),
+              Math.max(0, bounds.radius - inset),
+            );
+            overlayLayer.stroke({ color: 0xff6a00, width: innerWidth, alpha: 1 });
+          }
           if (node._lowConfidenceOnlyVisible) {
             drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
           }

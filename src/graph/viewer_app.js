@@ -1883,6 +1883,54 @@
     return "Adverse media";
   }
 
+  function sanctionSourceLabel(source) {
+    const value = String(source || "").trim();
+    if (value === "Direction Generale du Tresor") return "France Treasury";
+    if (value === "Germany Finanzsanktionsliste") return "Germany Sanctions List";
+    return value || "Sanctions list";
+  }
+
+  function renderSanctionsHtml(node) {
+    const matches = Array.isArray(node?.sanction_matches) ? node.sanction_matches : [];
+    if (!matches.length) return "";
+    const summarySources = Array.isArray(node?.sanction_sources)
+      ? node.sanction_sources.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const summaryText = summarySources.length ? summarySources.join(" · ") : "";
+    return `
+      <div class="analysis-section">
+        <div class="analysis-section-title">Sanctions</div>
+        ${summaryText ? `<div class="analysis-text">${escapeHtml(summaryText)}</div>` : ""}
+        <div class="analysis-claims">
+          ${matches.map((match, index) => {
+            const displayName = String(match?.matched_name || match?.name || "").trim();
+            const source = sanctionSourceLabel(match?.source);
+            const program = String(match?.program || "").trim();
+            const sourceId = String(match?.source_id || "").trim();
+            const metaBits = [source, program, sourceId ? `ID ${sourceId}` : ""].filter(Boolean).join(" · ");
+            const noteBits = [];
+            if (match?.match_type) noteBits.push(`Match: ${String(match.match_type).trim()}`);
+            if (match?.matched_birth_month && match?.matched_birth_year) {
+              noteBits.push(`DOB matched: ${String(match.matched_birth_month).padStart(2, "0")}/${match.matched_birth_year}`);
+            }
+            const remarks = String(match?.remarks || "").trim();
+            return `
+              <div class="analysis-claim sanction-claim">
+                <div class="analysis-claim-header">
+                  <div class="analysis-claim-index">${index + 1}</div>
+                  <div class="analysis-claim-text">${escapeHtml(displayName || source)}</div>
+                </div>
+                ${metaBits ? `<div class="analysis-claim-meta">${escapeHtml(metaBits)}</div>` : ""}
+                ${noteBits.length ? `<div class="analysis-claim-note">${escapeHtml(noteBits.join(" · "))}</div>` : ""}
+                ${remarks ? `<div class="analysis-claim-quote">${escapeHtml(remarks)}</div>` : ""}
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderAdverseMediaHtml(node) {
     const claims = Array.isArray(node?.adverse_media_claims) ? node.adverse_media_claims : [];
     if (!claims.length) return "";
@@ -1962,12 +2010,14 @@
   function renderNodeAttributionHtml(node) {
     const edges = nodeAttributionEdges(node);
     const summary = summaryLinesForNodeAttribution(node, edges);
+    const sanctionsHtml = renderSanctionsHtml(node);
     const egyptJudgmentsHtml = renderEgyptJudgmentsHtml(node);
     const adverseMediaHtml = renderAdverseMediaHtml(node);
     return `
       <div class="analysis-viewer">
         <div class="analysis-selection">${escapeHtml(node.label || node.id || "Node")}</div>
         ${summary.length ? `<div class="analysis-text">${summary.map((line) => escapeHtml(line)).join("<br>")}</div>` : ""}
+        ${sanctionsHtml}
         ${egyptJudgmentsHtml}
         ${adverseMediaHtml}
         <div class="analysis-section">
@@ -2173,7 +2223,7 @@
       registryActionForNode(node),
       hidePrimaryKey
         ? {
-            label: "Hide node across runs",
+            label: "Hide",
             type: "hide_add",
             nodeId: node.id,
             nodeKey: hidePrimaryKey,

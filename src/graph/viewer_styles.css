@@ -648,9 +648,17 @@ body {{
   border-color: rgba(249, 115, 22, 0.28);
   background: linear-gradient(180deg, rgba(249, 115, 22, 0.14), rgba(255,255,255,0.03));
 }}
+.sanction-claim {{
+  border-color: rgba(239, 68, 68, 0.34);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16), rgba(255,255,255,0.03));
+}}
 .egypt-judgment-claim {{
   border-color: rgba(251, 146, 60, 0.3);
   background: linear-gradient(180deg, rgba(251, 146, 60, 0.16), rgba(255,255,255,0.03));
+}}
+.sanction-claim .analysis-claim-index {{
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.44);
 }}
 .egypt-judgment-claim .analysis-claim-index {{
   background: rgba(251, 146, 60, 0.2);
