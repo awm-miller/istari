@@ -1,7 +1,8 @@
 (function () {
   const rawMainNodes = {nodes_json};
   const rawMainEdges = {edges_json}.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
-  const LOW_CONFIDENCE_DATA_URL = "graph-data-low-confidence.json";
+  const LOW_CONFIDENCE_DATA_URL = "graph-data-open-letters.json";
+  const LOW_CONFIDENCE_NODES_DATA_URL = "graph-data-low-confidence-nodes.json";
   const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
@@ -10,6 +11,7 @@
     amber: 0xfacc15,
     blue: 0x58a6ff,
     green: 0x3fb950,
+    pink: 0xff5fbf,
     purple: 0xb382f0,
     slate: 0x64748b,
     red: 0xff2222,
@@ -51,6 +53,7 @@
   let showPeopleInput;
   let showAddressesInput;
   let showLowConfidenceInput;
+  let showLowConfidenceNodesInput;
 
   let baseNodes = rawMainNodes.slice();
   let baseEdges = rawMainEdges.slice();
@@ -66,6 +69,12 @@
   let lowConfidenceLoadingPromise = null;
   let lowConfidenceNodeById = new Map();
   let lowConfidenceEdgesByNodeId = new Map();
+  let lowConfidenceOrgNodes = [];
+  let lowConfidenceOrgEdges = [];
+  let lowConfidenceOrgLoaded = false;
+  let lowConfidenceOrgLoadingPromise = null;
+  let lowConfidenceOrgNodeById = new Map();
+  let lowConfidenceOrgEdgesByNodeId = new Map();
 
   let nodeById = new Map();
   let edgesByNodeId = new Map();
@@ -81,7 +90,7 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
-  let mergeOverrides = { address: [], name: [], hidden: [] };
+  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
   let mergeOverridesLoadingPromise = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
 
@@ -91,6 +100,7 @@
     extraRootIds: [],
     hiddenTypes: new Set(),
     showLowConfidence: false,
+    showLowConfidenceNodes: false,
     showIndirectOnly: false,
     showSanctionedOnly: false,
     analysisNodeIds: [],
@@ -359,7 +369,7 @@
   }
 
   function expandLowConfidenceSearchContext(seedIds, visibleIds, options = {}) {
-    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
     if (!includeLowConfidence) return;
     const queue = [];
     const visited = new Set();
@@ -452,7 +462,11 @@
   }
 
   function edgeColorValue(edge) {
-    if (edge.is_low_confidence) return COLORS.amber;
+    if (edge.is_low_confidence) {
+      return String(edge.low_confidence_category || "") === "unresolved_org"
+        ? COLORS.pink
+        : COLORS.amber;
+    }
     if (edge.kind === "hidden_connection") return 0x94a3b8;
     if (edge.kind === "alias") return COLORS.amber;
     const roleType = String(edge.role_type || "").toLowerCase();
@@ -472,7 +486,8 @@
       ["show-organisations", "Organisation", true],
       ["show-addresses", "Address", true],
       ["show-people", "Person", true],
-      ["show-low-confidence", "Low confidence overlay", false],
+      ["show-low-confidence", "Open letters", false],
+      ["show-low-confidence-nodes", "Low confidence nodes", false],
     ];
     legendEl.innerHTML = items.map(([id, label, checked]) => `
       <label class="row">
@@ -489,6 +504,7 @@
     showPeopleInput = document.getElementById("show-people");
     showAddressesInput = document.getElementById("show-addresses");
     showLowConfidenceInput = document.getElementById("show-low-confidence");
+    showLowConfidenceNodesInput = document.getElementById("show-low-confidence-nodes");
   }
 
   function rebuildIndexes() {
@@ -552,8 +568,14 @@
   function rebuildActiveGraph() {
     const mainNodeIds = new Set(baseNodes.map((node) => node.id));
     allEdges = baseEdges.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed").map((edge) => ({ ...edge }));
-    if (!viewerState.showLowConfidence || !lowConfidenceLoaded) {
+    if ((!viewerState.showLowConfidence || !lowConfidenceLoaded)
+      && (!viewerState.showLowConfidenceNodes || !lowConfidenceOrgLoaded)) {
       allNodes = baseNodes.filter((node) => node.kind !== "seed").map((node) => ({ ...node }));
+      if (Array.isArray(mergeOverrides?.organisation) && mergeOverrides.organisation.length) {
+        const merged = applyMergeOverrides(allNodes, allEdges, { organisation: mergeOverrides.organisation });
+        allNodes = merged.nodes;
+        allEdges = merged.edges;
+      }
       rebuildIndexes();
       return;
     }
@@ -564,28 +586,51 @@
     );
     const activeLowNodeIds = new Set();
     const activeLowEdgeIds = new Set();
-    lowConfidenceEdges.forEach((edge) => {
-      if (isCompactLowConfidenceEdge(edge)) {
-        activeLowEdgeIds.add(edge.id);
-        if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
-        if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
-        if (baseNodeById.get(edge.source)?.kind === "seed") activeSeedIds.add(edge.source);
-        if (baseNodeById.get(edge.target)?.kind === "seed") activeSeedIds.add(edge.target);
-      }
-    });
-    [...viewerState.expandedLowConfidenceNodeIds].forEach((nodeId) => {
-      const cluster = collectExpandedLowConfidenceCluster(nodeId);
-      cluster.edgeIds.forEach((edgeId) => activeLowEdgeIds.add(edgeId));
-      cluster.nodeIds.forEach((visibleNodeId) => {
-        if (!mainNodeIds.has(visibleNodeId)) activeLowNodeIds.add(visibleNodeId);
+    if (viewerState.showLowConfidence && lowConfidenceLoaded) {
+      lowConfidenceEdges.forEach((edge) => {
+        if (isCompactLowConfidenceEdge(edge)) {
+          activeLowEdgeIds.add(edge.id);
+          if (!mainNodeIds.has(edge.source)) activeLowNodeIds.add(edge.source);
+          if (!mainNodeIds.has(edge.target)) activeLowNodeIds.add(edge.target);
+          if (baseNodeById.get(edge.source)?.kind === "seed") activeSeedIds.add(edge.source);
+          if (baseNodeById.get(edge.target)?.kind === "seed") activeSeedIds.add(edge.target);
+        }
       });
-    });
-    activateOpenLetterUpstreamSeeds(activeLowNodeIds, activeSeedIds);
+      [...viewerState.expandedLowConfidenceNodeIds].forEach((nodeId) => {
+        const cluster = collectExpandedLowConfidenceCluster(nodeId);
+        cluster.edgeIds.forEach((edgeId) => activeLowEdgeIds.add(edgeId));
+        cluster.nodeIds.forEach((visibleNodeId) => {
+          if (!mainNodeIds.has(visibleNodeId)) activeLowNodeIds.add(visibleNodeId);
+        });
+      });
+      activateOpenLetterUpstreamSeeds(activeLowNodeIds, activeSeedIds);
+    }
+
+    const activeLowConfidenceOrgNodeIds = new Set();
+    const activeLowConfidenceOrgEdgeIds = new Set();
+    if (viewerState.showLowConfidenceNodes && lowConfidenceOrgLoaded) {
+      lowConfidenceOrgEdges.forEach((edge) => {
+        const sourceMainNode = baseNodeById.get(edge.source) || null;
+        const targetMainNode = baseNodeById.get(edge.target) || null;
+        if (!!sourceMainNode === !!targetMainNode) return;
+        activeLowConfidenceOrgEdgeIds.add(edge.id);
+        if (!mainNodeIds.has(edge.source)) activeLowConfidenceOrgNodeIds.add(edge.source);
+        if (!mainNodeIds.has(edge.target)) activeLowConfidenceOrgNodeIds.add(edge.target);
+      });
+    }
+
     allNodes = baseNodes
       .filter((node) => node.kind !== "seed" || activeSeedIds.has(node.id))
       .map((node) => ({ ...node }));
     allNodes.push(...lowConfidenceNodes.filter((node) => activeLowNodeIds.has(node.id)).map((node) => ({ ...node })));
+    allNodes.push(...lowConfidenceOrgNodes.filter((node) => activeLowConfidenceOrgNodeIds.has(node.id)).map((node) => ({ ...node })));
     allEdges.push(...lowConfidenceEdges.filter((edge) => activeLowEdgeIds.has(edge.id)).map((edge) => ({ ...edge })));
+    allEdges.push(...lowConfidenceOrgEdges.filter((edge) => activeLowConfidenceOrgEdgeIds.has(edge.id)).map((edge) => ({ ...edge })));
+    if (Array.isArray(mergeOverrides?.organisation) && mergeOverrides.organisation.length) {
+      const merged = applyMergeOverrides(allNodes, allEdges, { organisation: mergeOverrides.organisation });
+      allNodes = merged.nodes;
+      allEdges = merged.edges;
+    }
     rebuildIndexes();
   }
 
@@ -597,6 +642,17 @@
       if (!lowConfidenceEdgesByNodeId.has(edge.target)) lowConfidenceEdgesByNodeId.set(edge.target, []);
       lowConfidenceEdgesByNodeId.get(edge.source).push(edge);
       lowConfidenceEdgesByNodeId.get(edge.target).push(edge);
+    });
+  }
+
+  function rebuildLowConfidenceOrgIndexes() {
+    lowConfidenceOrgNodeById = new Map(lowConfidenceOrgNodes.map((node) => [node.id, node]));
+    lowConfidenceOrgEdgesByNodeId = new Map();
+    lowConfidenceOrgEdges.forEach((edge) => {
+      if (!lowConfidenceOrgEdgesByNodeId.has(edge.source)) lowConfidenceOrgEdgesByNodeId.set(edge.source, []);
+      if (!lowConfidenceOrgEdgesByNodeId.has(edge.target)) lowConfidenceOrgEdgesByNodeId.set(edge.target, []);
+      lowConfidenceOrgEdgesByNodeId.get(edge.source).push(edge);
+      lowConfidenceOrgEdgesByNodeId.get(edge.target).push(edge);
     });
   }
 
@@ -642,6 +698,7 @@
       showAddressesInput?.checked ? null : "address",
     ].filter(Boolean));
     viewerState.showLowConfidence = !!showLowConfidenceInput?.checked;
+    viewerState.showLowConfidenceNodes = !!showLowConfidenceNodesInput?.checked;
     viewerState.showIndirectOnly = !!indirectOnlyInput?.checked;
     viewerState.showSanctionedOnly = !!sanctionedOnlyInput?.checked;
   }
@@ -820,7 +877,7 @@
   }
 
   function applyTypeFilters(visibleIds, rootIds, options = {}) {
-    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
     if (!visibleIds.size) return new Set();
     const filteredIds = new Set(
       [...visibleIds].filter((id) => {
@@ -878,7 +935,7 @@
   }
 
   function buildSearchProjection(matchedIds, options = {}) {
-    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
     const visibleIds = new Set();
     matchedIds.forEach((id) => visibleIds.add(id));
     function walkLane(nodeId, visited, directionFn) {
@@ -956,7 +1013,7 @@
   }
 
   function buildIndirectOrgProjection(options = {}) {
-    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
     const qualifyingOrgIds = new Set();
     indirectIdentityIdsByOrg.forEach((identityIds, orgId) => {
       if (identityIds.size >= 2) qualifyingOrgIds.add(orgId);
@@ -982,7 +1039,7 @@
   }
 
   function buildSanctionedProjection(options = {}) {
-    const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
     const sanctionedIds = new Set(
       allNodes
         .filter((node) => node.kind !== "seed" && node.sanctioned)
@@ -1453,6 +1510,35 @@
     return lowConfidenceLoadingPromise;
   }
 
+  async function ensureLowConfidenceOrgLoaded() {
+    if (lowConfidenceOrgLoaded) return true;
+    if (lowConfidenceOrgLoadingPromise) return lowConfidenceOrgLoadingPromise;
+    lowConfidenceOrgLoadingPromise = fetch(LOW_CONFIDENCE_NODES_DATA_URL)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Failed to load low-confidence nodes (${response.status})`);
+        return response.json();
+      })
+      .then((payload) => {
+        lowConfidenceOrgNodes = Array.isArray(payload.nodes) ? payload.nodes : [];
+        lowConfidenceOrgEdges = Array.isArray(payload.edges) ? payload.edges : [];
+        rebuildLowConfidenceOrgIndexes();
+        lowConfidenceOrgLoaded = true;
+        return true;
+      })
+      .catch((error) => {
+        console.error(error);
+        lowConfidenceOrgNodes = [];
+        lowConfidenceOrgEdges = [];
+        rebuildLowConfidenceOrgIndexes();
+        lowConfidenceOrgLoaded = false;
+        return false;
+      })
+      .finally(() => {
+        lowConfidenceOrgLoadingPromise = null;
+      });
+    return lowConfidenceOrgLoadingPromise;
+  }
+
   function isCompaniesHouseDocumentUrl(value) {
     try {
       const url = new URL(String(value || "").trim(), window.location.origin);
@@ -1555,9 +1641,11 @@
   }
 
   function mergeKindForNode(node) {
-    if (!node || node.is_low_confidence) return null;
+    if (!node) return null;
+    if (node.is_low_confidence && String(node.low_confidence_category || "") !== "unresolved_org") return null;
     if (node.kind === "address") return "address";
     if (node.kind === "person" || node.kind === "seed_alias" || node.lane === 1) return "name";
+    if (node.kind === "organisation") return "organisation";
     return null;
   }
 
@@ -1574,6 +1662,19 @@
           .filter(Boolean)
           .map((value) => `address:${value}`)),
       );
+    }
+    if (kind === "organisation") {
+      const registryType = String(node.registry_type || "").trim().toLowerCase();
+      const registryNumber = String(node.registry_number || "").trim();
+      const suffix = Number(node.suffix || 0);
+      return uniqueValues([
+        registryType && registryNumber ? `org:${registryType}:${registryNumber}:${suffix}` : "",
+        registryType && registryNumber ? `org:${registryType}:${registryNumber}` : "",
+        ...(Array.isArray(node.organisation_merge_keys) ? node.organisation_merge_keys.map((value) => String(value || "").trim()) : []),
+        node.unresolved_org_key ? String(node.unresolved_org_key) : "",
+        `node-id:${String(node.id)}`,
+        String(node.label || "").trim() ? `label:${String(node.label).trim().toLowerCase()}` : "",
+      ]);
     }
     return uniqueValues([
       `node-id:${String(node.id)}`,
@@ -1636,6 +1737,7 @@
       identity_keys: Array.isArray(node.identity_keys) ? node.identity_keys.slice() : [],
       person_ids: Array.isArray(node.person_ids) ? node.person_ids.slice() : [],
       normalized_keys: Array.isArray(node.normalized_keys) ? node.normalized_keys.slice() : [],
+      organisation_merge_keys: Array.isArray(node.organisation_merge_keys) ? node.organisation_merge_keys.slice() : [],
       seed_names: Array.isArray(node.seed_names) ? node.seed_names.slice() : [],
       tooltip_lines: Array.isArray(node.tooltip_lines) ? node.tooltip_lines.slice() : [],
       appears_under_identities: Array.isArray(node.appears_under_identities)
@@ -1758,7 +1860,7 @@
     const nodeByMergeId = new Map(nextNodes.map((node) => [node.id, node]));
     const stableLookupByKind = new Map();
     const stableLabelLookupByKind = new Map();
-    ["address", "name"].forEach((kind) => {
+    ["address", "name", "organisation"].forEach((kind) => {
       const lookup = new Map();
       const labelLookup = new Map();
       nextNodes.forEach((node) => {
@@ -1774,7 +1876,7 @@
 
     const redirects = new Map();
     const appliedRows = [];
-    ["address", "name"].forEach((kind) => {
+    ["address", "name", "organisation"].forEach((kind) => {
       const lookup = stableLookupByKind.get(kind) || new Map();
       const labelLookup = stableLabelLookupByKind.get(kind) || new Map();
       normalizeMergeOverrideRows(overrides?.[kind]).forEach((row) => {
@@ -2074,6 +2176,7 @@
         mergeOverrides = {
           address: normalizeMergeOverrideRows(overrides.address),
           name: normalizeMergeOverrideRows(overrides.name),
+          organisation: normalizeMergeOverrideRows(overrides.organisation),
           hidden: normalizeHiddenOverrideRows(overrides.hidden),
         };
         rebuildBaseGraph();
@@ -2081,7 +2184,7 @@
       })
       .catch((error) => {
         console.warn(error);
-        mergeOverrides = { address: [], name: [], hidden: [] };
+        mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
         rebuildBaseGraph();
         return false;
       })
@@ -2111,6 +2214,7 @@
     mergeOverrides = {
       address: normalizeMergeOverrideRows(overrides.address),
       name: normalizeMergeOverrideRows(overrides.name),
+      organisation: normalizeMergeOverrideRows(overrides.organisation),
       hidden: normalizeHiddenOverrideRows(overrides.hidden),
     };
     viewerState.pendingMergeNodeId = "";
@@ -2137,6 +2241,7 @@
     mergeOverrides = {
       address: normalizeMergeOverrideRows(overrides.address),
       name: normalizeMergeOverrideRows(overrides.name),
+      organisation: normalizeMergeOverrideRows(overrides.organisation),
       hidden: normalizeHiddenOverrideRows(overrides.hidden),
     };
     rebuildBaseGraph();
@@ -2145,7 +2250,7 @@
 
   function promptForMergeLeader(action) {
     const choice = window.prompt(
-      `Choose which name should lead this merge:\n1. ${action.sourceLabel}\n2. ${action.targetLabel}\n\nEnter 1 or 2.`,
+      `Choose which label should lead this merge:\n1. ${action.sourceLabel}\n2. ${action.targetLabel}\n\nEnter 1 or 2.`,
       "2",
     );
     if (choice === null) return "";
@@ -2587,6 +2692,13 @@
       if (showLowConfidenceInput.checked) {
         const ok = await ensureLowConfidenceLoaded();
         if (!ok) showLowConfidenceInput.checked = false;
+      }
+      applyViewerState();
+    });
+    showLowConfidenceNodesInput.addEventListener("change", async () => {
+      if (showLowConfidenceNodesInput.checked) {
+        const ok = await ensureLowConfidenceOrgLoaded();
+        if (!ok) showLowConfidenceNodesInput.checked = false;
       }
       applyViewerState();
     });

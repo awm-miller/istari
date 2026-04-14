@@ -567,6 +567,7 @@ class PdfEnrichmentService:
                 evidence_id = self._store_entity_evidence(
                     run_id=run_id,
                     organisation_name=org_name,
+                    parent_org=organisation,
                     document=hydrated,
                     entity=entity,
                     entity_index=index,
@@ -920,6 +921,7 @@ class PdfEnrichmentService:
         *,
         run_id: int,
         organisation_name: str,
+        parent_org: Any,
         document: PdfSourceDocument,
         entity: PdfExtractedEntity,
         entity_index: int,
@@ -935,6 +937,11 @@ class PdfEnrichmentService:
             snippet=f"{entity.name} extracted from PDF for {organisation_name} ({document.filing_description})" if document.filing_description else f"{entity.name} extracted from PDF for {organisation_name}",
             raw_payload={
                 "organisation_name": organisation_name,
+                "parent_organisation_id": int(parent_org["id"]),
+                "parent_organisation_name": _clean_text(parent_org["name"]),
+                "parent_registry_type": _clean_text(parent_org["registry_type"]),
+                "parent_registry_number": _clean_text(parent_org["registry_number"]),
+                "parent_suffix": int(parent_org["suffix"] or 0),
                 "document": {
                     "title": document.title,
                     "url": document.document_url,

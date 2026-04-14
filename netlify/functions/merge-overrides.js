@@ -56,7 +56,7 @@ function removeHiddenRow(rows, nodeId) {
 }
 
 function normalizeOverrides(overrides) {
-  const normalized = { address: [], name: [], hidden: [] };
+  const normalized = { address: [], name: [], organisation: [], hidden: [] };
   if (!overrides || typeof overrides !== "object") {
     return normalized;
   }
@@ -69,6 +69,10 @@ function normalizeOverrides(overrides) {
     for (const row of Array.isArray(overrides[kind]) ? overrides[kind] : []) {
       upsertUnique(normalized.name, row?.sourceId, row?.targetId, row?.leaderId);
     }
+  }
+
+  for (const row of Array.isArray(overrides.organisation) ? overrides.organisation : []) {
+    upsertUnique(normalized.organisation, row?.sourceId, row?.targetId, row?.leaderId);
   }
 
   for (const row of Array.isArray(overrides.hidden) ? overrides.hidden : []) {
@@ -144,7 +148,7 @@ exports.handler = async function handler(event) {
   const leaderId = String(payload.leaderId || "");
   const nodeId = String(payload.nodeId || payload.sourceId || "");
   const label = String(payload.label || "");
-  if (!["address", "name", "hidden"].includes(kind)) {
+  if (!["address", "name", "organisation", "hidden"].includes(kind)) {
     return json(400, { error: "Unsupported override kind." });
   }
   if (!["add", "remove"].includes(operation)) {

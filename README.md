@@ -159,7 +159,7 @@ During rebuild, the system:
 4. refreshes or reuses sanctions data
 5. attaches Egypt judgments hits
 6. attaches adverse-media or negative-news hits
-7. builds the optional low-confidence overlay
+7. builds the optional open-letters and low-confidence-node overlays
 8. writes the viewer outputs
 
 ## Egypt judgments, sanctions, and negative news
@@ -193,15 +193,15 @@ It does not decide who gets discovered. Instead, it works like a later annotatio
 
 So negative news is a layer on top of discovery, not the discovery engine itself.
 
-## Low-confidence overlay
+## Open letters and low-confidence nodes
 
-The viewer also supports a separate low-confidence overlay.
+The viewer also supports two separate review overlays.
 
-This is for review-only evidence chains that should not be mixed into the main graph as if they were equally strong.
+`Open letters` is the existing mapping-derived review layer. It covers signatory data, open-letter style evidence, and similar spreadsheet-imported links that should stay visually separate from the main graph.
 
-Typical examples include mapping-derived links, signatory data, and open-letter style evidence.
+`Low confidence nodes` are unresolved PDF-extracted organisation mentions. These are cases where the PDF extraction found an organisation name, but the pipeline could not confidently resolve it to a Charity Commission or Companies House record. They stay visible as review nodes instead of being dropped entirely.
 
-The overlay is built separately and exported as its own JSON payload so it can be turned on and off in the viewer.
+Both overlays are built separately and exported as their own JSON payloads so they can be turned on and off independently in the viewer.
 
 ## What gets written out
 
@@ -209,7 +209,8 @@ After rebuild, the project writes:
 
 - the main HTML viewer
 - the main graph JSON
-- the low-confidence overlay JSON
+- the open-letters overlay JSON
+- the low-confidence-nodes overlay JSON
 - the address coordinate JSON used by the viewer
 
 These outputs are written into `output/` and copied into `netlify_graph_viewer/` when that folder exists.

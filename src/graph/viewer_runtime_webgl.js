@@ -78,6 +78,12 @@
       && !!node.low_confidence_expandable;
   }
 
+  function lowConfidenceColor(node) {
+    return String(node?.low_confidence_category || "") === "unresolved_org"
+      ? 0xff5fbf
+      : 0xfacc15;
+  }
+
   function nodeStrokeWidth(node) {
     if (node._focused) return 2.8;
     if (node.sanctioned) return 3.4;
@@ -352,7 +358,7 @@
         nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
         nodeLayer.fill({ color: fillColor, alpha: nodeFillAlpha(node) });
         if (node.is_low_confidence) {
-          drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
+          drawDashedCapsuleBorder(overlayLayer, bounds, lowConfidenceColor(node), isHovered ? 2.2 : 1.8);
         } else {
           nodeLayer.stroke({
             color: strokeColor,

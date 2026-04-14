@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.address_resolution import AddressMergeMatcher, address_bucket_keys, addresses_match
 from src.config import load_settings
 from src.graph.render import render_html as _render_html
+from src.graph.unresolved_pdf_orgs import build_unresolved_pdf_org_overlay
 from src.mapping_low_confidence import (
     build_low_confidence_overlay,
     rebuild_overlay_mapping_db,
@@ -3341,10 +3342,11 @@ def main() -> None:
 
     project_root = Path(__file__).resolve().parents[1]
     mapping_db_path = rebuild_overlay_mapping_db(project_root)
-    low_confidence_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data["run_id"])}}
+    open_letters_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data["run_id"])}}
+    low_confidence_nodes_data = {"nodes": [], "edges": [], "summary": {"run_ids": args.run_ids}}
     if mapping_db_path.exists():
         try:
-            low_confidence_data = build_low_confidence_overlay(
+            open_letters_data = build_low_confidence_overlay(
                 main_data=data,
                 database_path=mapping_db_path,
                 run_key=str(data["run_id"]),
@@ -3354,21 +3356,33 @@ def main() -> None:
                 settings=load_settings(),
             )
             print(
-                "Loaded low-confidence overlay: "
-                f"{len(low_confidence_data.get('nodes') or [])} nodes, "
-                f"{len(low_confidence_data.get('edges') or [])} edges"
+                "Loaded open-letters overlay: "
+                f"{len(open_letters_data.get('nodes') or [])} nodes, "
+                f"{len(open_letters_data.get('edges') or [])} edges"
             )
         except Exception as error:
-            print(f"Warning: failed to build low-confidence overlay: {error}")
+            print(f"Warning: failed to build open-letters overlay: {error}")
+
+    try:
+        low_confidence_nodes_data = build_unresolved_pdf_org_overlay(
+            repository=repository,
+            run_ids=args.run_ids,
+            main_data=data,
+        )
+        print(
+            "Loaded low-confidence nodes: "
+            f"{len(low_confidence_nodes_data.get('nodes') or [])} nodes, "
+            f"{len(low_confidence_nodes_data.get('edges') or [])} edges"
+        )
+    except Exception as error:
+        print(f"Warning: failed to build low-confidence nodes: {error}")
 
     id_slug = "+".join(str(r) for r in args.run_ids)
     out_path = args.out or f"output/run_{id_slug}_graph.html"
     out_file = Path(out_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    render_payload = dict(data)
-    render_payload["low_confidence"] = low_confidence_data
-    html_content = render_html(render_payload)
+    html_content = render_html(dict(data))
     out_file.write_text(html_content, encoding="utf-8")
     print(f"Graph written to {out_path}")
 
@@ -3377,10 +3391,19 @@ def main() -> None:
     graph_json_path.write_text(graph_json, encoding="utf-8")
     print(f"Graph JSON written to {graph_json_path}")
 
-    low_conf_json = json.dumps(low_confidence_data, indent=2, ensure_ascii=False)
-    low_conf_json_path = out_file.parent / "graph-data-low-confidence.json"
+    open_letters_json = json.dumps(open_letters_data, indent=2, ensure_ascii=False)
+    open_letters_json_path = out_file.parent / "graph-data-open-letters.json"
+    open_letters_json_path.write_text(open_letters_json, encoding="utf-8")
+    print(f"Open-letters JSON written to {open_letters_json_path}")
+
+    low_conf_json = json.dumps(low_confidence_nodes_data, indent=2, ensure_ascii=False)
+    low_conf_json_path = out_file.parent / "graph-data-low-confidence-nodes.json"
     low_conf_json_path.write_text(low_conf_json, encoding="utf-8")
-    print(f"Low-confidence JSON written to {low_conf_json_path}")
+    print(f"Low-confidence nodes JSON written to {low_conf_json_path}")
+
+    legacy_low_conf_json_path = out_file.parent / "graph-data-low-confidence.json"
+    legacy_low_conf_json_path.write_text(open_letters_json, encoding="utf-8")
+    print(f"Legacy low-confidence JSON written to {legacy_low_conf_json_path}")
 
     netlify_path = Path("netlify_graph_viewer/index.html")
     if netlify_path.parent.exists():
@@ -3388,12 +3411,28 @@ def main() -> None:
         print(f"Netlify viewer updated at {netlify_path}")
         (netlify_path.parent / "graph-data.json").write_text(graph_json, encoding="utf-8")
         print(f"Netlify graph JSON updated at {netlify_path.parent / 'graph-data.json'}")
-        (netlify_path.parent / "graph-data-low-confidence.json").write_text(
+        (netlify_path.parent / "graph-data-open-letters.json").write_text(
+            open_letters_json,
+            encoding="utf-8",
+        )
+        print(
+            "Netlify open-letters JSON updated at "
+            f"{netlify_path.parent / 'graph-data-open-letters.json'}"
+        )
+        (netlify_path.parent / "graph-data-low-confidence-nodes.json").write_text(
             low_conf_json,
             encoding="utf-8",
         )
         print(
-            "Netlify low-confidence JSON updated at "
+            "Netlify low-confidence nodes JSON updated at "
+            f"{netlify_path.parent / 'graph-data-low-confidence-nodes.json'}"
+        )
+        (netlify_path.parent / "graph-data-low-confidence.json").write_text(
+            open_letters_json,
+            encoding="utf-8",
+        )
+        print(
+            "Netlify legacy low-confidence JSON updated at "
             f"{netlify_path.parent / 'graph-data-low-confidence.json'}"
         )
 

@@ -1256,6 +1256,7 @@ def build_low_confidence_overlay(
                 or f"{link_row['from_label']} {phrase} {link_row['to_label']}",
                 "tooltip_lines": tooltip_lines,
                 "is_low_confidence": True,
+                "low_confidence_category": "open_letter",
                 "evidence": evidence_items[0] if evidence_items else None,
                 "evidence_items": evidence_items,
             }
@@ -1289,6 +1290,7 @@ def build_low_confidence_overlay(
                     or f"{affiliation['source_id']} {affiliation['phrase']} {affiliation['organisation_label']}",
                     "tooltip_lines": affiliation["tooltip_lines"],
                     "is_low_confidence": True,
+                    "low_confidence_category": "open_letter",
                     "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
                     "evidence_items": affiliation["evidence_items"],
                 }
@@ -1356,6 +1358,7 @@ def build_low_confidence_overlay(
                 "represented_signer_ids": [affiliation["signer_id"]],
                 "represented_signer_labels": _dedupe_preserve_order([affiliation["signer_label"]]),
                 "is_low_confidence": True,
+                "low_confidence_category": "open_letter",
                 "evidence": affiliation["evidence_items"][0] if affiliation["evidence_items"] else None,
                 "evidence_items": affiliation["evidence_items"],
             }
@@ -1867,6 +1870,7 @@ def _ensure_overlay_node(
         "aliases": [],
         "tooltip_lines": tooltip_lines,
         "is_low_confidence": True,
+        "low_confidence_category": "open_letter",
         "mapping_entity_type": display_entity_type,
         "low_confidence_expandable": is_expandable,
     }
