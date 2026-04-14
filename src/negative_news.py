@@ -963,6 +963,10 @@ def partition_negative_news_clusters_by_history(
         lookup_key = str(cluster.get("cluster_lookup_key") or cluster_lookup_key(cluster))
         fingerprint = person_ids_fingerprint(cluster.get("person_ids"))
         historical_match = historical_by_cluster_id.get(cluster_id)
+        if historical_match is not None and cluster_kind == "person":
+            historical_fingerprint = person_ids_fingerprint((historical_match.get("result") or {}).get("person_ids"))
+            if not historical_fingerprint or historical_fingerprint != fingerprint:
+                historical_match = None
         if historical_match is None and lookup_key:
             candidate = historical_by_cluster_lookup_key.get(lookup_key)
             if candidate is not None and _cluster_kind(

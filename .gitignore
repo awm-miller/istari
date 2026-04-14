@@ -34,3 +34,4 @@ node_modules/
 # Local Netlify folder
 .netlify
 scripts/extract_latest_seed_runs_db.py
+old_dbs/

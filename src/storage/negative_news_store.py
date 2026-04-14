@@ -31,19 +31,20 @@ def cluster_lookup_key(cluster: Any) -> str:
     if not isinstance(cluster, dict):
         return ""
     cluster_kind = str(cluster.get("cluster_kind") or cluster.get("kind") or "").strip().lower()
-    if cluster_kind != "seed_alias":
+    if cluster_kind not in {"seed_alias", "person"}:
         return ""
 
-    identity_keys = sorted(
-        {
-            str(value).strip()
-            for value in (cluster.get("identity_keys") or [])
-            if str(value).strip()
-        }
-    )
-    if identity_keys:
-        digest = sha256("\n".join(identity_keys).encode("utf-8")).hexdigest()[:16]
-        return f"seed_alias:identity_keys:{digest}"
+    if cluster_kind == "seed_alias":
+        identity_keys = sorted(
+            {
+                str(value).strip()
+                for value in (cluster.get("identity_keys") or [])
+                if str(value).strip()
+            }
+        )
+        if identity_keys:
+            digest = sha256("\n".join(identity_keys).encode("utf-8")).hexdigest()[:16]
+            return f"seed_alias:identity_keys:{digest}"
 
     names = sorted(
         {
@@ -56,7 +57,7 @@ def cluster_lookup_key(cluster: Any) -> str:
     if not names:
         return ""
     digest = sha256("\n".join(names).encode("utf-8")).hexdigest()[:16]
-    return f"seed_alias:names:{digest}"
+    return f"{cluster_kind}:names:{digest}"
 
 
 class NegativeNewsStore:

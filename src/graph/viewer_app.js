@@ -2026,7 +2026,7 @@
           ${edges.length ? edges.map((edge, index) => {
             const links = evidenceActionsForEdge(edge)
               .map((action) => `<a href="${escapeHtml(action.url)}" target="_blank" rel="noreferrer">${escapeHtml(action.label)}</a>`)
-              .join(" · ");
+              .join("");
             return `
               <div class="analysis-claim">
                 <div class="analysis-claim-header">
@@ -2373,7 +2373,7 @@
                 return `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>`;
               })
               .filter(Boolean)
-              .join(" · ");
+              .join("");
             return `
               <div class="analysis-claim">
                 <div class="analysis-claim-header">
