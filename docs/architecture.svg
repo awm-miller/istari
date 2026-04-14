@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1100" width="1200" height="1100"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 880" width="1200" height="880"
      font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
@@ -20,137 +20,124 @@
     </filter>
   </defs>
 
-  <rect width="1200" height="1100" fill="url(#bg)"/>
-
-  <!-- Title -->
-  <text x="48" y="48" font-size="26" font-weight="700" fill="#0F172A" letter-spacing="-0.5">Project Istari Architecture</text>
-  <text x="48" y="74" font-size="13" fill="#64748B">Per-seed discovery &#xB7; Recursive expansion &#xB7; Screening &#xB7; Graph rebuild &#xB7; Post-processing</text>
+  <rect width="1200" height="880" fill="url(#bg)"/>
 
   <!-- SECTION 1: Per-seed discovery -->
-  <rect x="38" y="96" width="540" height="570" rx="14" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#ss)"/>
-  <text x="62" y="128" font-size="18" font-weight="700" fill="#1D4ED8">1. Per-seed discovery run</text>
-  <text x="62" y="148" font-size="12" fill="#3B82F6" opacity="0.8">The pipeline behind run-name and run-seeds.</text>
+  <rect x="38" y="20" width="540" height="570" rx="14" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1.5" filter="url(#ss)"/>
+  <text x="62" y="52" font-size="18" font-weight="700" fill="#1D4ED8">1. Per-seed discovery run</text>
+  <text x="62" y="72" font-size="12" fill="#3B82F6" opacity="0.8">The pipeline behind run-name and run-seeds.</text>
 
   <!-- Card 1: Seed search -->
-  <rect x="62" y="164" width="492" height="66" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
-  <rect x="62" y="164" width="4" height="66" rx="2" fill="#3B82F6"/>
-  <text x="82" y="188" font-size="14" font-weight="600" fill="#1E293B">Start with one seed name</text>
-  <text x="82" y="206" font-size="12" fill="#64748B">Generate spelling variants, then search Charity Commission</text>
-  <text x="82" y="220" font-size="12" fill="#64748B">and Companies House for possible matches.</text>
+  <rect x="62" y="88" width="492" height="66" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
+  <rect x="62" y="88" width="4" height="66" rx="2" fill="#3B82F6"/>
+  <text x="82" y="112" font-size="14" font-weight="600" fill="#1E293B">Start with one seed name</text>
+  <text x="82" y="130" font-size="12" fill="#64748B">Generate spelling variants, then search Charity Commission</text>
+  <text x="82" y="144" font-size="12" fill="#64748B">and Companies House for possible matches.</text>
+
+  <line x1="308" y1="154" x2="308" y2="174" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Card 2: Entity resolution -->
+  <rect x="62" y="176" width="492" height="54" rx="8" fill="#FFF" stroke="#E0E7FF" stroke-width="1" filter="url(#cs)"/>
+  <rect x="62" y="176" width="4" height="54" rx="2" fill="#8B5CF6"/>
+  <text x="82" y="199" font-size="14" font-weight="600" fill="#1E293B">Resolve which hits are really the same person</text>
+  <text x="82" y="217" font-size="12" fill="#64748B">Rules handle easy cases. AI is used only when a match is ambiguous.</text>
 
   <line x1="308" y1="230" x2="308" y2="250" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
-  <!-- Card 2: Entity resolution -->
-  <rect x="62" y="252" width="492" height="54" rx="8" fill="#FFF" stroke="#E0E7FF" stroke-width="1" filter="url(#cs)"/>
-  <rect x="62" y="252" width="4" height="54" rx="2" fill="#8B5CF6"/>
-  <text x="82" y="275" font-size="14" font-weight="600" fill="#1E293B">Resolve which hits are really the same person</text>
-  <text x="82" y="293" font-size="12" fill="#64748B">Rules handle easy cases. AI is used only when a match is ambiguous.</text>
-
-  <line x1="308" y1="306" x2="308" y2="326" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
-
   <!-- Card 3: Organisation pool -->
-  <rect x="62" y="328" width="492" height="126" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
-  <rect x="62" y="328" width="4" height="126" rx="2" fill="#3B82F6"/>
-  <text x="82" y="352" font-size="14" font-weight="600" fill="#1E293B">Build the organisation pool</text>
-  <text x="82" y="370" font-size="12" fill="#64748B">Every matched organisation can grow the pool in four ways:</text>
-  <text x="96" y="390" font-size="11.5" fill="#64748B">-  Linked charities from Charity Commission</text>
-  <text x="96" y="406" font-size="11.5" fill="#64748B">-  Same-name charity and company counterparts</text>
-  <text x="96" y="422" font-size="11.5" fill="#64748B">-  Shared address pivots</text>
-  <text x="96" y="438" font-size="11.5" fill="#64748B">-  Organisations mentioned in PDFs and filings</text>
+  <rect x="62" y="252" width="492" height="126" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
+  <rect x="62" y="252" width="4" height="126" rx="2" fill="#3B82F6"/>
+  <text x="82" y="276" font-size="14" font-weight="600" fill="#1E293B">Build the organisation pool</text>
+  <text x="82" y="294" font-size="12" fill="#64748B">Every matched organisation can grow the pool in four ways:</text>
+  <text x="96" y="314" font-size="11.5" fill="#64748B">-  Linked charities from Charity Commission</text>
+  <text x="96" y="330" font-size="11.5" fill="#64748B">-  Same-name charity and company counterparts</text>
+  <text x="96" y="346" font-size="11.5" fill="#64748B">-  Shared address pivots</text>
+  <text x="96" y="362" font-size="11.5" fill="#64748B">-  Organisations mentioned in PDFs and filings</text>
 
-  <line x1="308" y1="454" x2="308" y2="474" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="308" y1="378" x2="308" y2="398" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 4: People expansion -->
-  <rect x="62" y="476" width="492" height="62" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
-  <rect x="62" y="476" width="4" height="62" rx="2" fill="#3B82F6"/>
-  <text x="82" y="500" font-size="14" font-weight="600" fill="#1E293B">Expand people from those organisations</text>
-  <text x="82" y="518" font-size="12" fill="#64748B">Pull trustees for charities and officers for companies,</text>
-  <text x="82" y="532" font-size="12" fill="#64748B">then resolve them into person records.</text>
+  <rect x="62" y="400" width="492" height="62" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
+  <rect x="62" y="400" width="4" height="62" rx="2" fill="#3B82F6"/>
+  <text x="82" y="424" font-size="14" font-weight="600" fill="#1E293B">Expand people from those organisations</text>
+  <text x="82" y="442" font-size="12" fill="#64748B">Pull trustees for charities and officers for companies,</text>
+  <text x="82" y="456" font-size="12" fill="#64748B">then resolve them into person records.</text>
 
-  <line x1="308" y1="538" x2="308" y2="558" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="308" y1="462" x2="308" y2="482" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 5: Recursive search -->
-  <rect x="62" y="560" width="492" height="62" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
-  <rect x="62" y="560" width="4" height="62" rx="2" fill="#3B82F6"/>
-  <text x="82" y="584" font-size="14" font-weight="600" fill="#1E293B">Feed newly found people back into search</text>
-  <text x="82" y="602" font-size="12" fill="#64748B">New trustees and officers are searched too. If they match</text>
-  <text x="82" y="616" font-size="12" fill="#64748B">new organisations, those organisations join the run.</text>
+  <rect x="62" y="484" width="492" height="62" rx="8" fill="#FFF" stroke="#DBEAFE" stroke-width="1" filter="url(#cs)"/>
+  <rect x="62" y="484" width="4" height="62" rx="2" fill="#3B82F6"/>
+  <text x="82" y="508" font-size="14" font-weight="600" fill="#1E293B">Feed newly found people back into search</text>
+  <text x="82" y="526" font-size="12" fill="#64748B">New trustees and officers are searched too. If they match</text>
+  <text x="82" y="540" font-size="12" fill="#64748B">new organisations, those organisations join the run.</text>
 
   <!-- Recursive loop arrow -->
-  <path d="M 554 590 C 585 590, 585 390, 554 390"
+  <path d="M 554 514 C 585 514, 585 314, 554 314"
         fill="none" stroke="#818CF8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr-loop)"/>
-  <text x="592" y="478" font-size="11" fill="#818CF8" font-style="italic">Repeat until no new</text>
-  <text x="592" y="493" font-size="11" fill="#818CF8" font-style="italic">entities found, or round</text>
-  <text x="592" y="508" font-size="11" fill="#818CF8" font-style="italic">cap is reached.</text>
+  <text x="592" y="402" font-size="11" fill="#818CF8" font-style="italic">Repeat until no new</text>
+  <text x="592" y="417" font-size="11" fill="#818CF8" font-style="italic">entities found, or round</text>
+  <text x="592" y="432" font-size="11" fill="#818CF8" font-style="italic">cap is reached.</text>
 
   <!-- SECTION 2: Rank and screen -->
-  <rect x="660" y="96" width="502" height="270" rx="14" fill="#F5F3FF" stroke="#DDD6FE" stroke-width="1.5" filter="url(#ss)"/>
-  <text x="684" y="128" font-size="18" font-weight="700" fill="#6D28D9">2. Rank and screen each run</text>
-  <text x="684" y="148" font-size="12" fill="#7C3AED" opacity="0.8">Once discovery settles, scoring and watchlist checks begin.</text>
+  <rect x="660" y="20" width="502" height="270" rx="14" fill="#F5F3FF" stroke="#DDD6FE" stroke-width="1.5" filter="url(#ss)"/>
+  <text x="684" y="52" font-size="18" font-weight="700" fill="#6D28D9">2. Rank and screen each run</text>
+  <text x="684" y="72" font-size="12" fill="#7C3AED" opacity="0.8">Once discovery settles, scoring and watchlist checks begin.</text>
 
   <!-- Card 6: Ranking -->
-  <rect x="684" y="164" width="454" height="66" rx="8" fill="#FFF" stroke="#E9D5FF" stroke-width="1" filter="url(#cs)"/>
-  <rect x="684" y="164" width="4" height="66" rx="2" fill="#8B5CF6"/>
-  <text x="704" y="188" font-size="14" font-weight="600" fill="#1E293B">Rank people by connection strength</text>
-  <text x="704" y="206" font-size="12" fill="#64748B">People are ranked by how many scoped organisations</text>
-  <text x="704" y="220" font-size="12" fill="#64748B">they connect to and how strong those links are.</text>
+  <rect x="684" y="88" width="454" height="66" rx="8" fill="#FFF" stroke="#E9D5FF" stroke-width="1" filter="url(#cs)"/>
+  <rect x="684" y="88" width="4" height="66" rx="2" fill="#8B5CF6"/>
+  <text x="704" y="112" font-size="14" font-weight="600" fill="#1E293B">Rank people by connection strength</text>
+  <text x="704" y="130" font-size="12" fill="#64748B">People are ranked by how many scoped organisations</text>
+  <text x="704" y="144" font-size="12" fill="#64748B">they connect to and how strong those links are.</text>
 
-  <line x1="911" y1="230" x2="911" y2="260" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="911" y1="154" x2="911" y2="184" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 7: Sanctions screening -->
-  <rect x="684" y="262" width="454" height="66" rx="8" fill="#FFF" stroke="#FECACA" stroke-width="1" filter="url(#cs)"/>
-  <rect x="684" y="262" width="4" height="66" rx="2" fill="#EF4444"/>
-  <text x="704" y="286" font-size="14" font-weight="600" fill="#1E293B">Run sanctions screening</text>
-  <text x="704" y="304" font-size="12" fill="#64748B">Ranked people are checked against local sanctions data</text>
-  <text x="704" y="318" font-size="12" fill="#64748B">and cached for reuse later.</text>
+  <rect x="684" y="186" width="454" height="66" rx="8" fill="#FFF" stroke="#FECACA" stroke-width="1" filter="url(#cs)"/>
+  <rect x="684" y="186" width="4" height="66" rx="2" fill="#EF4444"/>
+  <text x="704" y="210" font-size="14" font-weight="600" fill="#1E293B">Run sanctions screening</text>
+  <text x="704" y="228" font-size="12" fill="#64748B">Ranked people are checked against local sanctions data</text>
+  <text x="704" y="242" font-size="12" fill="#64748B">and cached for reuse later.</text>
 
   <!-- Connection: Section 1 to Section 2 -->
-  <path d="M 578,300 C 618,300 630,200 684,200" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <path d="M 578,224 C 618,224 630,124 684,124" fill="none" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Connection: Section 2 to Section 3 -->
-  <line x1="911" y1="366" x2="911" y2="718" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="911" y1="290" x2="911" y2="642" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- SECTION 3: Rebuild -->
-  <rect x="38" y="718" width="1124" height="210" rx="14" fill="#FFFBEB" stroke="#FCD34D" stroke-width="1.5" filter="url(#ss)"/>
-  <text x="62" y="750" font-size="18" font-weight="700" fill="#92400E">3. Rebuild the combined graph from the latest run for each seed</text>
-  <text x="62" y="770" font-size="12" fill="#B45309" opacity="0.8">The separate rebuild stage that produces the viewer outputs.</text>
+  <rect x="38" y="642" width="1124" height="210" rx="14" fill="#FFFBEB" stroke="#FCD34D" stroke-width="1.5" filter="url(#ss)"/>
+  <text x="62" y="674" font-size="18" font-weight="700" fill="#92400E">3. Rebuild the combined graph from the latest run for each seed</text>
+  <text x="62" y="694" font-size="12" fill="#B45309" opacity="0.8">The separate rebuild stage that produces the viewer outputs.</text>
 
   <!-- Card 8: Merge -->
-  <rect x="64" y="788" width="310" height="108" rx="8" fill="#FFF" stroke="#FDE68A" stroke-width="1" filter="url(#cs)"/>
-  <rect x="64" y="788" width="4" height="108" rx="2" fill="#F59E0B"/>
-  <text x="82" y="812" font-size="13" font-weight="600" fill="#1E293B">Merge runs together</text>
-  <text x="82" y="832" font-size="11.5" fill="#64748B">Take the latest run for each seed,</text>
-  <text x="82" y="847" font-size="11.5" fill="#64748B">then merge duplicate people, orgs,</text>
-  <text x="82" y="862" font-size="11.5" fill="#64748B">and addresses into one graph.</text>
+  <rect x="64" y="712" width="310" height="108" rx="8" fill="#FFF" stroke="#FDE68A" stroke-width="1" filter="url(#cs)"/>
+  <rect x="64" y="712" width="4" height="108" rx="2" fill="#F59E0B"/>
+  <text x="82" y="736" font-size="13" font-weight="600" fill="#1E293B">Merge runs together</text>
+  <text x="82" y="756" font-size="11.5" fill="#64748B">Take the latest run for each seed,</text>
+  <text x="82" y="771" font-size="11.5" fill="#64748B">then merge duplicate people, orgs,</text>
+  <text x="82" y="786" font-size="11.5" fill="#64748B">and addresses into one graph.</text>
 
-  <line x1="374" y1="842" x2="400" y2="842" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="374" y1="766" x2="400" y2="766" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 9: Screening (consolidated) -->
-  <rect x="402" y="788" width="396" height="108" rx="8" fill="#FFF" stroke="#FDE68A" stroke-width="1" filter="url(#cs)"/>
-  <rect x="402" y="788" width="4" height="108" rx="2" fill="#EF4444"/>
-  <text x="420" y="812" font-size="13" font-weight="600" fill="#1E293B">Screening</text>
-  <text x="420" y="832" font-size="11.5" fill="#64748B">- Refresh and reuse cached sanctions data</text>
-  <text x="420" y="847" font-size="11.5" fill="#64748B">- Match names against Egypt judgments dataset</text>
-  <text x="420" y="862" font-size="11.5" fill="#64748B">- Attach negative-news hits from SQLite store</text>
+  <rect x="402" y="712" width="396" height="108" rx="8" fill="#FFF" stroke="#FDE68A" stroke-width="1" filter="url(#cs)"/>
+  <rect x="402" y="712" width="4" height="108" rx="2" fill="#EF4444"/>
+  <text x="420" y="736" font-size="13" font-weight="600" fill="#1E293B">Screening</text>
+  <text x="420" y="756" font-size="11.5" fill="#64748B">- Refresh and reuse cached sanctions data</text>
+  <text x="420" y="771" font-size="11.5" fill="#64748B">- Match names against Egypt judgments dataset</text>
+  <text x="420" y="786" font-size="11.5" fill="#64748B">- Attach negative-news hits from SQLite store</text>
 
-  <line x1="798" y1="842" x2="824" y2="842" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="798" y1="766" x2="824" y2="766" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- Card 10: Low-confidence overlay (toggleable) -->
-  <rect x="826" y="788" width="310" height="108" rx="8" fill="#FFF" stroke="#94A3B8" stroke-width="1" stroke-dasharray="4 3" filter="url(#cs)"/>
-  <rect x="826" y="788" width="4" height="108" rx="2" fill="#64748B"/>
-  <rect x="1054" y="800" width="70" height="18" rx="9" fill="#E0F2FE" stroke="#7DD3FC" stroke-width="0.5"/>
-  <text x="1066" y="813" font-size="9" font-weight="500" fill="#0369A1">toggleable</text>
-  <text x="844" y="812" font-size="13" font-weight="600" fill="#1E293B">Low-confidence overlay</text>
-  <text x="844" y="832" font-size="11.5" fill="#64748B">Weaker evidence chains (mapping,</text>
-  <text x="844" y="847" font-size="11.5" fill="#64748B">signatory data, open letters)</text>
-  <text x="844" y="862" font-size="11.5" fill="#64748B">exported as a toggleable layer.</text>
-
-  <!-- Connection: Section 3 to Section 4 -->
-  <line x1="600" y1="928" x2="600" y2="968" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
-
-  <!-- SECTION 4: Outputs -->
-  <rect x="38" y="970" width="1124" height="88" rx="14" fill="#ECFDF5" stroke="#6EE7B7" stroke-width="1.5" filter="url(#ss)"/>
-  <text x="62" y="1002" font-size="18" font-weight="700" fill="#065F46">4. Outputs</text>
-  <text x="62" y="1022" font-size="12" fill="#047857">HTML viewer, graph JSON, address coordinate JSON, and low-confidence overlay JSON (toggled on/off in viewer).</text>
-  <text x="62" y="1040" font-size="12" fill="#047857">Screening results are attached during rebuild, not during the discovery search itself.</text>
+  <rect x="826" y="712" width="310" height="108" rx="8" fill="#FFF" stroke="#94A3B8" stroke-width="1" stroke-dasharray="4 3" filter="url(#cs)"/>
+  <rect x="826" y="712" width="4" height="108" rx="2" fill="#64748B"/>
+  <rect x="1054" y="724" width="70" height="18" rx="9" fill="#E0F2FE" stroke="#7DD3FC" stroke-width="0.5"/>
+  <text x="1066" y="737" font-size="9" font-weight="500" fill="#0369A1">toggleable</text>
+  <text x="844" y="736" font-size="13" font-weight="600" fill="#1E293B">Low-confidence overlay</text>
+  <text x="844" y="756" font-size="11.5" fill="#64748B">Weaker evidence chains (mapping,</text>
+  <text x="844" y="771" font-size="11.5" fill="#64748B">signatory data, open letters)</text>
+  <text x="844" y="786" font-size="11.5" fill="#64748B">exported as a toggleable layer.</text>
 </svg>
