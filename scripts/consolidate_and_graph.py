@@ -460,8 +460,18 @@ def _role_phrase(edge) -> str:
     return phrase
 
 
-def _role_key(edge) -> tuple[int, str]:
-    return (int(edge["organisation_id"]), _role_phrase(edge))
+def _role_org_label(edge) -> str:
+    label = _row_str(edge, "organisation_name").strip()
+    if label:
+        return label.lower()
+    try:
+        return str(int(edge["organisation_id"]))
+    except (TypeError, ValueError, KeyError, IndexError):
+        return ""
+
+
+def _role_key(edge) -> tuple[str, str]:
+    return (_role_org_label(edge), _role_phrase(edge))
 
 
 def _sanction_match_has_eu_source(match: dict[str, object]) -> bool:
@@ -1662,7 +1672,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     continue
                 phrase = str(edge.get("phrase", "") or "")
                 merged_person_orgs[merged_person_id].add(org_id)
-                merged_person_role_keys[merged_person_id].add((org_id, phrase))
+                merged_person_role_keys[merged_person_id].add((str(org_nodes[org_id]["label"]).lower(), phrase))
                 merged_person_score[merged_person_id] += float(edge.get("weight") or 0.35)
                 org_person_edges.append({
                     "source": org_id,
