@@ -91,7 +91,7 @@ class CharityCommissionSearchProvider:
                         title=charity_name,
                         url=(
                             "https://register-of-charities.charitycommission.gov.uk/"
-                            f"charity-search/-/charity-details/{charity_number}"
+                            f"charity-details/?regid={charity_number}&subid=0"
                         ),
                         snippet=f"Charity Commission name search match for {variant.name}",
                         raw_payload={

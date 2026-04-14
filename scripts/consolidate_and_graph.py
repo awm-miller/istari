@@ -433,8 +433,8 @@ def _charity_commission_role_evidence(edge) -> dict[str, object] | None:
     return {
         "title": "Charity Commission charity page",
         "document_url": (
-            "https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/"
-            f"{registry_number}"
+            "https://register-of-charities.charitycommission.gov.uk/charity-details/"
+            f"?regid={registry_number}&subid=0"
         ),
         "page_hint": "",
         "page_number": None,
@@ -676,8 +676,8 @@ def _address_edge_evidence(row) -> dict[str, object] | None:
         return {
             "title": "Charity Commission charity page",
             "document_url": (
-                "https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/"
-                f"{registry_number}"
+                "https://register-of-charities.charitycommission.gov.uk/charity-details/"
+                f"?regid={registry_number}&subid=0"
             ),
         }
     return None

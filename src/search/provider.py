@@ -449,7 +449,10 @@ class CharityCommissionSiteDorkProvider(SearchProvider):
                     source="cc_site_dork",
                     source_key=f"cc_site:{charity_number}:{best_trustee}",
                     title=charity_name,
-                    url=f"https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/{charity_number}",
+                    url=(
+                        "https://register-of-charities.charitycommission.gov.uk/"
+                        f"charity-details/?regid={charity_number}&subid=0"
+                    ),
                     snippet=f"{best_trustee} is a trustee of {charity_name} (charity {charity_number})",
                     raw_payload={
                         "variant": best_variant,
