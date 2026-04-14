@@ -37,6 +37,8 @@ _ALLOWED_ROLE_CATEGORIES = {
 _ALLOWED_ENTITY_TYPES = {"person", "organisation", "other"}
 _MAX_CHARS_PER_CHUNK = 12000
 _CHARITY_COMMISSION_REGISTER_BASE_URL = "https://register-of-charities.charitycommission.gov.uk"
+_OCR_PAGE_TIMEOUT_SECONDS = 20
+_OCR_MAX_PAGES = 12
 
 
 def _clean_text(value: str) -> str:
@@ -95,10 +97,31 @@ def _ocr_pdf(pdf_path: Path) -> str:
 
     doc = fitz.open(str(pdf_path))
     pages: list[str] = []
-    for page_num in range(doc.page_count):
-        pix = doc[page_num].get_pixmap(dpi=300)
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
-        text = pytesseract.image_to_string(img, lang="eng").strip()
+    for page_num in range(min(doc.page_count, _OCR_MAX_PAGES)):
+        try:
+            pix = doc[page_num].get_pixmap(dpi=300)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            text = pytesseract.image_to_string(
+                img,
+                lang="eng",
+                timeout=_OCR_PAGE_TIMEOUT_SECONDS,
+            ).strip()
+        except RuntimeError as exc:
+            log.warning(
+                "OCR timed out for %s on page %d: %s",
+                pdf_path.name,
+                page_num + 1,
+                exc,
+            )
+            break
+        except Exception as exc:
+            log.warning(
+                "OCR failed for %s on page %d: %s",
+                pdf_path.name,
+                page_num + 1,
+                exc,
+            )
+            break
         if text:
             pages.append(text)
     doc.close()
@@ -409,6 +432,8 @@ class PdfEnrichmentService:
             GeminiClient(
                 api_key=settings.gemini_api_key,
                 cache_dir=settings.cache_dir / "gemini_pdf_enrichment",
+                timeout_seconds=30.0,
+                attempts=2,
             )
             if settings.gemini_api_key
             else None
@@ -452,6 +477,10 @@ class PdfEnrichmentService:
                 org_summary = self._enrich_organisation(run_id=run_id, organisation=organisation)
             except RuntimeError as exc:
                 summary["warnings"].append(str(exc))
+                continue
+            except Exception as exc:
+                log.warning("PDF enrichment: org failed unexpectedly for %s: %s", _clean_text(organisation["name"]), exc)
+                summary["warnings"].append(f"{_clean_text(organisation['name'])}: {exc}")
                 continue
             summary["document_count"] += int(org_summary["document_count"])
             summary["entity_count"] += int(org_summary["entity_count"])
@@ -501,6 +530,10 @@ class PdfEnrichmentService:
                 )
             except RuntimeError as exc:
                 log.warning("PDF enrichment: [%s] doc %d failed: %s", org_name, doc_index, exc)
+                summary["warnings"].append(f"{org_name}: {exc}")
+                continue
+            except Exception as exc:
+                log.warning("PDF enrichment: [%s] doc %d failed unexpectedly: %s", org_name, doc_index, exc)
                 summary["warnings"].append(f"{org_name}: {exc}")
                 continue
 
