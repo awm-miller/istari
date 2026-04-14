@@ -2176,7 +2176,7 @@
       return {
         type: "open_url",
         label: "Open Charity Commission page",
-        url: `https://register-of-charities.charitycommission.gov.uk/charity-search/-/charity-details/${encodeURIComponent(registryNumber)}`,
+        url: `https://register-of-charities.charitycommission.gov.uk/charity-details/?regid=${encodeURIComponent(registryNumber)}&subid=0`,
       };
     }
     return null;
