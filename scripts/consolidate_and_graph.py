@@ -226,6 +226,19 @@ def _is_notice_boilerplate_text(value: str) -> bool:
     text = str(value or "").strip().lower()
     if not text:
         return False
+    if "bona vacantia" in text:
+        return True
+    if "crown" in text and any(
+        token in text
+        for token in (
+            "upon dissolution",
+            "will belong to the crown",
+            "belong to the crown",
+            "property and rights vested in",
+            "held in trust for",
+        )
+    ):
+        return True
     if "gives notice" in text:
         return True
     if "issuing authority" in text or "issuing the gazette notice" in text:
@@ -242,6 +255,12 @@ def _is_notice_boilerplate_text(value: str) -> bool:
 def _is_notice_org_mention(source: str, metadata: dict[str, object]) -> bool:
     if source != "pdf_org_mention":
         return False
+    entity_name = str(metadata.get("entity_name") or "").strip().lower()
+    if entity_name in {"crown", "the crown"} and any(
+        _is_notice_boilerplate_text(str(metadata.get(key) or ""))
+        for key in ("connection_phrase", "connection_detail")
+    ):
+        return True
     return any(
         _is_notice_boilerplate_text(str(metadata.get(key) or ""))
         for key in ("entity_name", "connection_phrase", "connection_detail")

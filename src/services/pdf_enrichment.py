@@ -215,6 +215,19 @@ def _is_notice_boilerplate_text(value: str) -> bool:
     text = _clean_text(value).lower()
     if not text:
         return False
+    if "bona vacantia" in text:
+        return True
+    if "crown" in text and any(
+        token in text
+        for token in (
+            "upon dissolution",
+            "will belong to the crown",
+            "belong to the crown",
+            "property and rights vested in",
+            "held in trust for",
+        )
+    ):
+        return True
     if "gives notice" in text:
         return True
     if "issuing authority" in text or "issuing the gazette notice" in text:
@@ -229,6 +242,15 @@ def _is_notice_boilerplate_text(value: str) -> bool:
 
 
 def _is_notice_boilerplate_entity(entity: PdfExtractedEntity) -> bool:
+    entity_name = _clean_text(entity.name).lower()
+    if entity_name in {"crown", "the crown"} and any(
+        _is_notice_boilerplate_text(value)
+        for value in (
+            entity.connection_phrase,
+            entity.notes,
+        )
+    ):
+        return True
     return any(
         _is_notice_boilerplate_text(value)
         for value in (
