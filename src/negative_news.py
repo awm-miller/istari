@@ -19,7 +19,11 @@ from src.gemini_api import GeminiClient, extract_gemini_text
 from src.html_plain_text import extract_title_from_html, html_to_plain_text
 from src.openai_api import extract_json_document
 from src.search.queries import generate_name_variants
-from src.storage.negative_news_store import NegativeNewsStore, person_ids_fingerprint
+from src.storage.negative_news_store import (
+    NegativeNewsStore,
+    cluster_lookup_key,
+    person_ids_fingerprint,
+)
 from src.storage.repository import Repository
 
 log = logging.getLogger("istari.negative_news")
@@ -920,18 +924,22 @@ def load_negative_news_clusters(
     for node in nodes:
         person_ids = sorted({int(person_id) for person_id in (node.get("person_ids") or [])})
         aliases = _unique_nonempty([str(node.get("label") or ""), *(node.get("aliases") or [])])
+        identity_keys = _unique_nonempty([str(value) for value in (node.get("identity_keys") or [])])
+        cluster = {
+            "cluster_id": str(node.get("id") or ""),
+            "cluster_kind": _cluster_kind(str(node.get("id") or ""), node.get("kind")),
+            "label": str(node.get("label") or ""),
+            "aliases": aliases,
+            "identity_keys": identity_keys,
+            "person_ids": person_ids,
+            "org_count": int(node.get("org_count") or 0),
+            "role_count": int(node.get("role_count") or 0),
+            "score": float(node.get("score") or 0.0),
+            "context_terms": repository.get_organisation_names_for_person_ids(person_ids),
+        }
+        cluster["cluster_lookup_key"] = cluster_lookup_key(cluster)
         clusters.append(
-            {
-                "cluster_id": str(node.get("id") or ""),
-                "cluster_kind": _cluster_kind(str(node.get("id") or ""), node.get("kind")),
-                "label": str(node.get("label") or ""),
-                "aliases": aliases,
-                "person_ids": person_ids,
-                "org_count": int(node.get("org_count") or 0),
-                "role_count": int(node.get("role_count") or 0),
-                "score": float(node.get("score") or 0.0),
-                "context_terms": repository.get_organisation_names_for_person_ids(person_ids),
-            }
+            cluster
         )
     _write_cluster_source_cache(repository, run_ids=run_ids, clusters=clusters)
     start = max(0, int(offset))
@@ -945,14 +953,23 @@ def partition_negative_news_clusters_by_history(
     clusters: list[dict[str, Any]],
 ) -> dict[str, Any]:
     historical_by_cluster_id = store.get_latest_completed_results_by_cluster_id()
+    historical_by_cluster_lookup_key = store.get_latest_completed_results_by_cluster_lookup_key()
     historical_by_person_ids = store.get_latest_completed_results_by_person_ids()
     pending_clusters: list[dict[str, Any]] = []
     reused_clusters: list[dict[str, Any]] = []
     for cluster in clusters:
         cluster_id = str(cluster.get("cluster_id") or "")
         cluster_kind = _cluster_kind(cluster_id, cluster.get("cluster_kind"))
+        lookup_key = str(cluster.get("cluster_lookup_key") or cluster_lookup_key(cluster))
         fingerprint = person_ids_fingerprint(cluster.get("person_ids"))
         historical_match = historical_by_cluster_id.get(cluster_id)
+        if historical_match is None and lookup_key:
+            candidate = historical_by_cluster_lookup_key.get(lookup_key)
+            if candidate is not None and _cluster_kind(
+                str(candidate.get("cluster_id") or ""),
+                (candidate.get("result") or {}).get("cluster_kind"),
+            ) == cluster_kind:
+                historical_match = candidate
         if historical_match is None and cluster_kind == "person" and fingerprint:
             candidate = historical_by_person_ids.get(fingerprint)
             if candidate is not None and _cluster_kind(
@@ -970,6 +987,7 @@ def partition_negative_news_clusters_by_history(
                         str(historical_match.get("cluster_id") or ""),
                         (historical_match.get("result") or {}).get("cluster_kind"),
                     ),
+                    "cluster_lookup_key": lookup_key,
                     "person_ids_fingerprint": fingerprint,
                 }
             )
@@ -977,6 +995,7 @@ def partition_negative_news_clusters_by_history(
         pending_clusters.append(
             {
                 **cluster,
+                "cluster_lookup_key": lookup_key,
                 "person_ids_fingerprint": fingerprint,
             }
         )
@@ -1297,9 +1316,11 @@ def run_negative_news_cluster_batch(
         cluster_result = {
             "cluster_id": cluster["cluster_id"],
             "cluster_kind": _cluster_kind(cluster["cluster_id"], cluster.get("cluster_kind")),
+            "cluster_lookup_key": str(cluster.get("cluster_lookup_key") or ""),
             "label": cluster["label"],
             "aliases": english_aliases,
             "arabic_aliases": arabic_aliases,
+            "identity_keys": list(cluster.get("identity_keys") or []),
             "person_ids": cluster["person_ids"],
             "context_terms": context_terms,
             "org_count": cluster["org_count"],

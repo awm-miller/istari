@@ -9,7 +9,7 @@ from typing import Any
 
 from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
-from src.storage.negative_news_store import person_ids_fingerprint
+from src.storage.negative_news_store import cluster_lookup_key, person_ids_fingerprint
 
 
 _CATEGORY_PRIORITY = {
@@ -77,9 +77,13 @@ Headline:
 
 def _latest_cluster_claims(
     database_path: Path,
-) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[
+    dict[str, list[dict[str, Any]]],
+    dict[str, list[dict[str, Any]]],
+    dict[str, list[dict[str, Any]]],
+]:
     if not database_path.exists():
-        return {}, {}
+        return {}, {}, {}
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
@@ -99,11 +103,10 @@ def _latest_cluster_claims(
         connection.close()
 
     claims_by_cluster: dict[str, list[dict[str, Any]]] = {}
+    claims_by_lookup_key: dict[str, list[dict[str, Any]]] = {}
     claims_by_person_ids: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         cluster_id = str(row["cluster_id"] or "").strip()
-        if cluster_id and cluster_id in claims_by_cluster:
-            continue
         try:
             result = json.loads(str(row["result_json"] or "{}"))
         except json.JSONDecodeError:
@@ -113,12 +116,15 @@ def _latest_cluster_claims(
         claims = _extract_claims_from_result(result)
         if not claims:
             continue
-        if cluster_id:
+        if cluster_id and cluster_id not in claims_by_cluster:
             claims_by_cluster[cluster_id] = claims
+        lookup_key = cluster_lookup_key(result)
+        if lookup_key and lookup_key not in claims_by_lookup_key:
+            claims_by_lookup_key[lookup_key] = claims
         fingerprint = person_ids_fingerprint(result.get("person_ids"))
         if fingerprint and fingerprint not in claims_by_person_ids:
             claims_by_person_ids[fingerprint] = claims
-    return claims_by_cluster, claims_by_person_ids
+    return claims_by_cluster, claims_by_lookup_key, claims_by_person_ids
 
 
 def _translate_claim_titles(
@@ -157,18 +163,22 @@ def annotate_graph_with_adverse_media(
     settings: Settings,
     database_path: Path,
 ) -> dict[str, Any]:
-    claims_by_cluster, claims_by_person_ids = _latest_cluster_claims(database_path)
-    if not claims_by_cluster and not claims_by_person_ids:
+    claims_by_cluster, claims_by_lookup_key, claims_by_person_ids = _latest_cluster_claims(database_path)
+    if not claims_by_cluster and not claims_by_lookup_key and not claims_by_person_ids:
         return data
     claims_by_cluster = _translate_claim_titles(claims_by_cluster, settings=settings)
+    claims_by_lookup_key = _translate_claim_titles(claims_by_lookup_key, settings=settings)
     claims_by_person_ids = _translate_claim_titles(claims_by_person_ids, settings=settings)
 
     for node in data.get("nodes", []):
         if not isinstance(node, dict):
             continue
         node_id = str(node.get("id") or "").strip()
+        lookup_key = cluster_lookup_key(node)
         fingerprint = person_ids_fingerprint(node.get("person_ids"))
         claims = claims_by_cluster.get(node_id)
+        if not claims:
+            claims = claims_by_lookup_key.get(lookup_key) if lookup_key else None
         if not claims:
             claims = claims_by_person_ids.get(fingerprint) if fingerprint else None
         if not claims:

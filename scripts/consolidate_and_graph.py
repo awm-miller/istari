@@ -304,14 +304,15 @@ def _pdf_role_evidence(edge) -> dict[str, object] | None:
     if _row_str(edge, "source") != "pdf_gemini_extraction":
         return None
     provenance = _json_dict(edge["provenance_json"])
-    if not isinstance(provenance, dict):
+    source_data = _unwrap_candidate_match_payload(provenance)
+    if not isinstance(source_data, dict):
         return None
-    pdf_entity = provenance.get("pdf_entity", {})
-    document = provenance.get("document", {})
+    pdf_entity = source_data.get("pdf_entity", {})
+    document = source_data.get("document", {})
     if not isinstance(pdf_entity, dict) or not isinstance(document, dict):
         return None
     page_hint = str(pdf_entity.get("source_page_hint") or "").strip()
-    return {
+    evidence = {
         "title": str(document.get("title") or "").strip(),
         "document_url": str(document.get("url") or "").strip(),
         "local_pdf_path": str(document.get("local_pdf_path") or "").strip(),
@@ -319,8 +320,9 @@ def _pdf_role_evidence(edge) -> dict[str, object] | None:
         "page_hint": page_hint,
         "page_number": _parse_page_number(page_hint),
         "notes": str(pdf_entity.get("notes") or "").strip(),
-        "evidence_id": provenance.get("evidence_id"),
+        "evidence_id": source_data.get("evidence_id"),
     }
+    return evidence if _evidence_identity(evidence) != ("", "", "") or str(evidence.get("notes") or "").strip() else None
 
 
 def _pdf_org_evidence(metadata: dict[str, object]) -> dict[str, object] | None:
@@ -344,12 +346,12 @@ def _companies_house_role_evidence(edge) -> dict[str, object] | None:
     if source not in {"companies_house_company_officers", "companies_house_officer_appointments"}:
         return None
     provenance = _json_dict(edge["provenance_json"])
-    if not isinstance(provenance, dict):
+    source_data = _unwrap_candidate_match_payload(provenance)
+    if not isinstance(source_data, dict):
         return None
 
     web_root = "https://find-and-update.company-information.service.gov.uk"
-    candidate_match = provenance.get("candidate_match", {})
-    nested_evidence = candidate_match.get("evidence", {}) if isinstance(candidate_match, dict) else {}
+    nested_evidence = source_data.get("evidence", {}) if isinstance(source_data, dict) else {}
     appointment = nested_evidence.get("appointment", {}) if isinstance(nested_evidence, dict) else {}
     officer_search_item = nested_evidence.get("officer_search_item", {}) if isinstance(nested_evidence, dict) else {}
 
@@ -364,15 +366,15 @@ def _companies_house_role_evidence(edge) -> dict[str, object] | None:
         title = str(officer_search_item.get("title") or "").strip()
         notes = str(officer_search_item.get("description") or "").strip()
 
-    if not url and isinstance(provenance.get("links"), dict):
-        links = provenance.get("links") or {}
+    if not url and isinstance(source_data.get("links"), dict):
+        links = source_data.get("links") or {}
         officer_appointments = str(((links.get("officer") or {}).get("appointments")) or "").strip()
         self_path = str(links.get("self") or "").strip()
         next_path = officer_appointments or self_path
         if next_path:
             url = next_path if next_path.startswith("http") else f"{web_root}{next_path}"
-        title = title or str(provenance.get("name") or "").strip()
-        notes = notes or str(provenance.get("officer_role") or "").strip()
+        title = title or str(source_data.get("name") or "").strip()
+        notes = notes or str(source_data.get("officer_role") or "").strip()
 
     if not url and isinstance(appointment, dict):
         company_number = str((appointment.get("appointed_to") or {}).get("company_number") or "").strip()
@@ -382,8 +384,8 @@ def _companies_house_role_evidence(edge) -> dict[str, object] | None:
     if not url:
         return None
 
-    appointed_on = str(appointment.get("appointed_on") or provenance.get("appointed_on") or "").strip()
-    resigned_on = str(appointment.get("resigned_on") or provenance.get("resigned_on") or "").strip()
+    appointed_on = str(appointment.get("appointed_on") or source_data.get("appointed_on") or "").strip()
+    resigned_on = str(appointment.get("resigned_on") or source_data.get("resigned_on") or "").strip()
     date_bits = [f"Appointed: {appointed_on}" if appointed_on else "", f"Resigned: {resigned_on}" if resigned_on else ""]
     date_note = "; ".join(bit for bit in date_bits if bit)
     if date_note:
@@ -397,6 +399,16 @@ def _companies_house_role_evidence(edge) -> dict[str, object] | None:
         "page_number": None,
         "notes": notes,
     }
+
+
+def _unwrap_candidate_match_payload(payload: object) -> dict[str, object]:
+    current = payload if isinstance(payload, dict) else {}
+    while isinstance(current, dict):
+        nested = current.get("candidate_match")
+        if not isinstance(nested, dict):
+            break
+        current = nested
+    return current if isinstance(current, dict) else {}
 
 
 def _charity_commission_role_evidence(edge) -> dict[str, object] | None:
@@ -596,6 +608,13 @@ def _merge_evidence_lists(*items: object) -> list[dict[str, object]]:
             seen.add(key)
             merged.append(candidate)
     return merged
+
+
+def _edge_evidence_items(edge: dict[str, object]) -> list[dict[str, object]]:
+    return _merge_evidence_lists(
+        edge.get("evidence_items") or [],
+        [edge.get("evidence")] if edge.get("evidence") else [],
+    )
 
 
 def _sanction_warning(matches: list[dict[str, object]]) -> str:
@@ -1690,6 +1709,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "is_former": bool(edge.get("is_former")),
                     "tooltip": edge.get("tooltip", ""),
                     "evidence": edge.get("evidence"),
+                    "evidence_items": _edge_evidence_items(edge),
                 })
                 org_identities[org_id].append({
                     "identity": identity_meta[identity_id]["label"],
@@ -1723,6 +1743,7 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
                     "is_former": bool(edge.get("is_former")),
                     "tooltip": edge.get("tooltip", ""),
                     "evidence": edge.get("evidence"),
+                    "evidence_items": _edge_evidence_items(edge),
                 })
                 person_label = merged_person_nodes[merged_person_id]["label"]
                 org_people[org_id].append({

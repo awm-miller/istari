@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from src.search.queries import normalize_name
+
 
 def person_ids_fingerprint(person_ids: Any) -> str:
     values: set[int] = set()
@@ -23,6 +25,38 @@ def result_person_ids_fingerprint(result: Any) -> str:
     if not isinstance(result, dict):
         return ""
     return person_ids_fingerprint(result.get("person_ids"))
+
+
+def cluster_lookup_key(cluster: Any) -> str:
+    if not isinstance(cluster, dict):
+        return ""
+    cluster_kind = str(cluster.get("cluster_kind") or cluster.get("kind") or "").strip().lower()
+    if cluster_kind != "seed_alias":
+        return ""
+
+    identity_keys = sorted(
+        {
+            str(value).strip()
+            for value in (cluster.get("identity_keys") or [])
+            if str(value).strip()
+        }
+    )
+    if identity_keys:
+        digest = sha256("\n".join(identity_keys).encode("utf-8")).hexdigest()[:16]
+        return f"seed_alias:identity_keys:{digest}"
+
+    names = sorted(
+        {
+            normalize_name(str(value))
+            for value in [cluster.get("label"), *(cluster.get("aliases") or [])]
+            if str(value or "").strip()
+        }
+    )
+    names = [name for name in names if name]
+    if not names:
+        return ""
+    digest = sha256("\n".join(names).encode("utf-8")).hexdigest()[:16]
+    return f"seed_alias:names:{digest}"
 
 
 class NegativeNewsStore:
@@ -214,6 +248,40 @@ class NegativeNewsStore:
             if not fingerprint or fingerprint in results:
                 continue
             results[fingerprint] = {
+                "cluster_id": str(row["cluster_id"] or ""),
+                "label": str(row["label"] or ""),
+                "batch_run_id": int(row["batch_run_id"] or 0),
+                "updated_at": str(row["updated_at"] or ""),
+                "result": result if isinstance(result, dict) else {},
+            }
+        return results
+
+    def get_latest_completed_results_by_cluster_lookup_key(self) -> dict[str, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    cluster_id,
+                    label,
+                    result_json,
+                    batch_run_id,
+                    updated_at,
+                    id
+                FROM negative_news_cluster_results
+                WHERE status = 'completed'
+                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
+                """
+            ).fetchall()
+        results: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                result = json.loads(str(row["result_json"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            lookup_key = cluster_lookup_key(result)
+            if not lookup_key or lookup_key in results:
+                continue
+            results[lookup_key] = {
                 "cluster_id": str(row["cluster_id"] or ""),
                 "label": str(row["label"] or ""),
                 "batch_run_id": int(row["batch_run_id"] or 0),
