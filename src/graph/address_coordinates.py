@@ -166,7 +166,34 @@ def _clean_address_query(query: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
+    parts = [_clean_address_part(part) for part in cleaned.split(",")]
+    return ", ".join(part for part in parts if part).strip(" ,")
+
+
+def _clean_address_part(part: str) -> str:
+    cleaned = str(part or "").strip()
+    if not cleaned:
+        return ""
+    if _is_floor_or_level_text(cleaned):
+        return ""
+    cleaned = re.sub(
+        r"\b(?:level\s+\d+[a-z]?|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|ground|lower ground|upper ground|basement|mezzanine)\s+floor)\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
     return cleaned.strip(" ,")
+
+
+def _is_floor_or_level_text(value: str) -> bool:
+    return bool(
+        re.fullmatch(
+            r"(?:level\s+\d+[a-z]?|(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|ground|lower ground|upper ground|basement|mezzanine)\s+floor)",
+            str(value or "").strip(),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _geocode_postcode(postcode: str, *, user_agent: str) -> dict[str, Any] | None:
