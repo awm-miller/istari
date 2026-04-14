@@ -19,14 +19,15 @@ from src.gemini_api import GeminiClient, extract_gemini_text
 from src.html_plain_text import extract_title_from_html, html_to_plain_text
 from src.openai_api import extract_json_document
 from src.search.queries import generate_name_variants
+from src.storage.negative_news_store import NegativeNewsStore, person_ids_fingerprint
 from src.storage.repository import Repository
-from src.storage.negative_news_store import NegativeNewsStore
 
 log = logging.getLogger("istari.negative_news")
 
 DEFAULT_MAX_EXTRACT_CHARS = 500_000
 DEFAULT_PAGES = 10
 DEFAULT_NUM_PER_PAGE = 10
+_CLUSTER_SOURCE_CACHE_VERSION = 2
 _FETCH_TIMEOUT = 60
 _MAX_PDF_BYTES = 3_000_000
 _SKIP_RESULT_DOMAINS = {
@@ -274,6 +275,18 @@ def _negative_news_db_path(settings: Settings) -> Path:
     return settings.project_root / "data" / "negative_news.sqlite"
 
 
+def _cluster_kind(cluster_id: str, raw_kind: Any = "") -> str:
+    kind = str(raw_kind or "").strip().lower()
+    if kind:
+        return kind
+    cluster_id = str(cluster_id or "").strip().lower()
+    if cluster_id.startswith("merged_person:"):
+        return "person"
+    if cluster_id.startswith("identity:"):
+        return "seed_alias"
+    return ""
+
+
 def _cluster_source_cache_path(repository: Repository) -> Path:
     return repository.database_path.parent / "negative_news_cluster_source_cache.json"
 
@@ -287,6 +300,8 @@ def _load_cluster_source_cache(repository: Repository, *, run_ids: list[int]) ->
     except Exception:
         return None
     if not isinstance(payload, dict):
+        return None
+    if int(payload.get("version") or 0) != _CLUSTER_SOURCE_CACHE_VERSION:
         return None
     cached_run_ids = payload.get("run_ids")
     clusters = payload.get("clusters")
@@ -306,6 +321,7 @@ def _write_cluster_source_cache(
     cache_path.write_text(
         json.dumps(
             {
+                "version": _CLUSTER_SOURCE_CACHE_VERSION,
                 "run_ids": list(run_ids),
                 "total_available": len(clusters),
                 "clusters": clusters,
@@ -907,6 +923,7 @@ def load_negative_news_clusters(
         clusters.append(
             {
                 "cluster_id": str(node.get("id") or ""),
+                "cluster_kind": _cluster_kind(str(node.get("id") or ""), node.get("kind")),
                 "label": str(node.get("label") or ""),
                 "aliases": aliases,
                 "person_ids": person_ids,
@@ -921,6 +938,53 @@ def load_negative_news_clusters(
     end = start + max(0, int(limit))
     log.info("Cluster source build done total_available=%s", len(clusters))
     return {"run_ids": run_ids, "clusters": clusters[start:end], "total_available": len(clusters)}
+
+
+def partition_negative_news_clusters_by_history(
+    store: NegativeNewsStore,
+    clusters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    historical_by_cluster_id = store.get_latest_completed_results_by_cluster_id()
+    historical_by_person_ids = store.get_latest_completed_results_by_person_ids()
+    pending_clusters: list[dict[str, Any]] = []
+    reused_clusters: list[dict[str, Any]] = []
+    for cluster in clusters:
+        cluster_id = str(cluster.get("cluster_id") or "")
+        cluster_kind = _cluster_kind(cluster_id, cluster.get("cluster_kind"))
+        fingerprint = person_ids_fingerprint(cluster.get("person_ids"))
+        historical_match = historical_by_cluster_id.get(cluster_id)
+        if historical_match is None and cluster_kind == "person" and fingerprint:
+            candidate = historical_by_person_ids.get(fingerprint)
+            if candidate is not None and _cluster_kind(
+                str(candidate.get("cluster_id") or ""),
+                (candidate.get("result") or {}).get("cluster_kind"),
+            ) == "person":
+                historical_match = candidate
+        if historical_match:
+            reused_clusters.append(
+                {
+                    **cluster,
+                    "historical_cluster_id": str(historical_match.get("cluster_id") or ""),
+                    "historical_label": str(historical_match.get("label") or ""),
+                    "historical_cluster_kind": _cluster_kind(
+                        str(historical_match.get("cluster_id") or ""),
+                        (historical_match.get("result") or {}).get("cluster_kind"),
+                    ),
+                    "person_ids_fingerprint": fingerprint,
+                }
+            )
+            continue
+        pending_clusters.append(
+            {
+                **cluster,
+                "person_ids_fingerprint": fingerprint,
+            }
+        )
+    return {
+        "pending_clusters": pending_clusters,
+        "reused_clusters": reused_clusters,
+        "historical_match_count": len(reused_clusters),
+    }
 
 
 def run_negative_news_cluster_batch(
@@ -954,14 +1018,47 @@ def run_negative_news_cluster_batch(
 
     log.info("Cluster batch load start offset=%s limit=%s", offset, limit)
     cluster_source = load_negative_news_clusters(repository, offset=offset, limit=limit)
+    current_clusters = list(cluster_source.get("clusters") or [])
+    screening_partition = partition_negative_news_clusters_by_history(store, current_clusters)
+    pending_clusters = list(screening_partition.get("pending_clusters") or [])
+    reused_clusters = list(screening_partition.get("reused_clusters") or [])
+    cluster_ranks = {
+        str(cluster.get("cluster_id") or ""): max(0, int(offset)) + index
+        for index, cluster in enumerate(current_clusters, start=1)
+    }
     log.info(
-        "Cluster batch load done offset=%s limit=%s clusters=%s total_available=%s run_ids=%s",
+        "Cluster batch load done offset=%s limit=%s clusters=%s pending=%s reused=%s total_available=%s run_ids=%s",
         offset,
         limit,
-        len(cluster_source.get("clusters") or []),
+        len(current_clusters),
+        len(pending_clusters),
+        len(reused_clusters),
         int(cluster_source.get("total_available") or 0),
         len(cluster_source.get("run_ids") or []),
     )
+    if not pending_clusters:
+        return {
+            "meta": {
+                "mode": "cluster_batch",
+                "offset": int(offset),
+                "cluster_limit": limit,
+                "run_ids": cluster_source["run_ids"],
+                "total_available": cluster_source["total_available"],
+                "negative_news_db_path": str(_negative_news_db_path(settings)),
+                "batch_run_id": None,
+                "broad_pages": broad_pages,
+                "org_pages": org_pages,
+                "num_per_page": num_per_page,
+                "max_articles_per_cluster": max_articles_per_cluster,
+                "requested_cluster_count": len(current_clusters),
+                "pending_cluster_count": 0,
+                "historically_screened_count": len(reused_clusters),
+            },
+            "clusters": [],
+            "category_counts": {},
+            "interesting": [],
+            "historically_screened_clusters": reused_clusters,
+        }
     output_path = (
         settings.project_root
         / "data"
@@ -983,7 +1080,7 @@ def run_negative_news_cluster_batch(
         config=run_config,
         offset_value=int(offset),
         limit_value=int(limit),
-        total_clusters=len(cluster_source["clusters"]),
+        total_clusters=len(pending_clusters),
         output_path=str(output_path),
     )
     completed_cluster_ids = store.get_completed_cluster_ids(batch_run_id)
@@ -1025,7 +1122,8 @@ def run_negative_news_cluster_batch(
                 }
             )
 
-    for cluster_rank, cluster in enumerate(cluster_source["clusters"], start=max(0, int(offset)) + 1):
+    for cluster in pending_clusters:
+        cluster_rank = cluster_ranks.get(str(cluster.get("cluster_id") or ""), max(0, int(offset)) + 1)
         if cluster["cluster_id"] in completed_cluster_ids:
             continue
         log.info(
@@ -1198,6 +1296,7 @@ def run_negative_news_cluster_batch(
 
         cluster_result = {
             "cluster_id": cluster["cluster_id"],
+            "cluster_kind": _cluster_kind(cluster["cluster_id"], cluster.get("cluster_kind")),
             "label": cluster["label"],
             "aliases": english_aliases,
             "arabic_aliases": arabic_aliases,
@@ -1252,10 +1351,14 @@ def run_negative_news_cluster_batch(
             "org_pages": org_pages,
             "num_per_page": num_per_page,
             "max_articles_per_cluster": max_articles_per_cluster,
+            "requested_cluster_count": len(current_clusters),
+            "pending_cluster_count": len(pending_clusters),
+            "historically_screened_count": len(reused_clusters),
         },
         "clusters": out_clusters,
         "category_counts": category_counts,
         "interesting": interesting,
+        "historically_screened_clusters": reused_clusters,
     }
 
 

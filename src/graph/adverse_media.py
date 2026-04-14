@@ -9,6 +9,7 @@ from typing import Any
 
 from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
+from src.storage.negative_news_store import person_ids_fingerprint
 
 
 _CATEGORY_PRIORITY = {
@@ -74,9 +75,11 @@ Headline:
     return extract_gemini_text(response).strip()
 
 
-def _latest_cluster_claims(database_path: Path) -> dict[str, list[dict[str, Any]]]:
+def _latest_cluster_claims(
+    database_path: Path,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]]]:
     if not database_path.exists():
-        return {}
+        return {}, {}
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
@@ -96,9 +99,10 @@ def _latest_cluster_claims(database_path: Path) -> dict[str, list[dict[str, Any]
         connection.close()
 
     claims_by_cluster: dict[str, list[dict[str, Any]]] = {}
+    claims_by_person_ids: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         cluster_id = str(row["cluster_id"] or "").strip()
-        if not cluster_id or cluster_id in claims_by_cluster:
+        if cluster_id and cluster_id in claims_by_cluster:
             continue
         try:
             result = json.loads(str(row["result_json"] or "{}"))
@@ -107,9 +111,14 @@ def _latest_cluster_claims(database_path: Path) -> dict[str, list[dict[str, Any]
         if not isinstance(result, dict):
             continue
         claims = _extract_claims_from_result(result)
-        if claims:
+        if not claims:
+            continue
+        if cluster_id:
             claims_by_cluster[cluster_id] = claims
-    return claims_by_cluster
+        fingerprint = person_ids_fingerprint(result.get("person_ids"))
+        if fingerprint and fingerprint not in claims_by_person_ids:
+            claims_by_person_ids[fingerprint] = claims
+    return claims_by_cluster, claims_by_person_ids
 
 
 def _translate_claim_titles(
@@ -148,16 +157,20 @@ def annotate_graph_with_adverse_media(
     settings: Settings,
     database_path: Path,
 ) -> dict[str, Any]:
-    claims_by_cluster = _latest_cluster_claims(database_path)
-    if not claims_by_cluster:
+    claims_by_cluster, claims_by_person_ids = _latest_cluster_claims(database_path)
+    if not claims_by_cluster and not claims_by_person_ids:
         return data
     claims_by_cluster = _translate_claim_titles(claims_by_cluster, settings=settings)
+    claims_by_person_ids = _translate_claim_titles(claims_by_person_ids, settings=settings)
 
     for node in data.get("nodes", []):
         if not isinstance(node, dict):
             continue
         node_id = str(node.get("id") or "").strip()
+        fingerprint = person_ids_fingerprint(node.get("person_ids"))
         claims = claims_by_cluster.get(node_id)
+        if not claims:
+            claims = claims_by_person_ids.get(fingerprint) if fingerprint else None
         if not claims:
             continue
         node["adverse_media_hit"] = True

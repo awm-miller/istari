@@ -423,6 +423,8 @@ def _canonical_role_phrase(text: str) -> str:
     lowered = str(text or "").strip().lower()
     if not lowered:
         return ""
+    if "shareholder" in lowered:
+        return "is a shareholder of"
     if "trustee" in lowered:
         return "is a trustee of"
     if "director" in lowered:
@@ -467,7 +469,32 @@ def _sanction_match_has_eu_source(match: dict[str, object]) -> bool:
     source_ids = [*(match.get("source_ids") or []), match.get("source_id")]
     if any(str(source_id or "").strip().upper().startswith("EU ") for source_id in source_ids):
         return True
-    return any("european union" in str(source or "").strip().lower() for source in sources)
+    if any("european union" in str(source or "").strip().lower() for source in sources):
+        return True
+    remarks = str(match.get("remarks") or "").strip()
+    return bool(re.search(r"\bEU\.\d|\(UE\)|R\s*\(UE\)", remarks, re.IGNORECASE))
+
+
+def _sanction_source_label(match: dict[str, object]) -> str:
+    source = str(match.get("source") or "").strip()
+    if source == "Direction Generale du Tresor":
+        return "France Treasury"
+    if source == "Germany Finanzsanktionsliste":
+        return "Germany Sanctions List"
+    return source or "Sanctions list"
+
+
+def _sanction_source_labels(matches: list[dict[str, object]]) -> list[str]:
+    labels = sorted(
+        {
+            _sanction_source_label(match)
+            for match in matches
+            if isinstance(match, dict) and _sanction_source_label(match)
+        }
+    )
+    if any(isinstance(match, dict) and _sanction_match_has_eu_source(match) for match in matches):
+        labels.append("EU-linked")
+    return labels
 
 
 def _extract_org_date(metadata: dict[str, object], *keys: str) -> str:
@@ -529,28 +556,18 @@ def _merge_evidence_lists(*items: object) -> list[dict[str, object]]:
     return merged
 
 
-def _sanction_warning(sanction: dict[str, object]) -> str:
-    matches = sanction.get("matches") or []
-    has_eu_source = any(
-        isinstance(match, dict) and _sanction_match_has_eu_source(match)
-        for match in matches
-    )
-    sources = sorted(
-        {
-            str(source).strip()
-            for match in matches
-            for source in (match.get("sources") or [match.get("source")])
-            if str(source).strip()
-        }
-    )
-    if not sources:
+def _sanction_warning(matches: list[dict[str, object]]) -> str:
+    sources = _sanction_source_labels(matches)
+    has_eu_source = "EU-linked" in sources
+    visible_sources = [source for source in sources if source != "EU-linked"]
+    if not visible_sources:
         return (
             "\u26a0\ufe0f <strong>SANCTIONED (SANCTIONS LIST)</strong>"
             + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
         )
     return (
         "\u26a0\ufe0f <strong>SANCTIONED</strong>: "
-        + ", ".join(sources)
+        + ", ".join(visible_sources)
         + (" <span class=\"dim\">Includes EU listing</span>" if has_eu_source else "")
     )
 
@@ -570,11 +587,12 @@ def _tag_sanctioned_nodes(nodes: list[dict], sanctions_by_person_id: dict[int, d
             continue
         node["sanctioned"] = True
         node["sanction_matches"] = [match for sanction in matched for match in (sanction.get("matches") or [])]
+        node["sanction_sources"] = _sanction_source_labels(node["sanction_matches"])
         node["sanction_has_eu_source"] = any(
             isinstance(match, dict) and _sanction_match_has_eu_source(match)
             for match in node["sanction_matches"]
         )
-        warning = _sanction_warning(matched[0])
+        warning = _sanction_warning(node["sanction_matches"])
         tooltip_lines = list(node.get("tooltip_lines") or [])
         if not tooltip_lines or tooltip_lines[0] != warning:
             node["tooltip_lines"] = [warning, *tooltip_lines]

@@ -7,6 +7,24 @@ from pathlib import Path
 from typing import Any
 
 
+def person_ids_fingerprint(person_ids: Any) -> str:
+    values: set[int] = set()
+    for value in person_ids or []:
+        try:
+            values.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return ""
+    return ",".join(str(value) for value in sorted(values))
+
+
+def result_person_ids_fingerprint(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+    return person_ids_fingerprint(result.get("person_ids"))
+
+
 class NegativeNewsStore:
     def __init__(self, database_path: Path, schema_path: Path) -> None:
         self.database_path = Path(database_path)
@@ -135,6 +153,74 @@ class NegativeNewsStore:
                 """,
                 (batch_run_id,),
             ).fetchall()
+
+    def get_latest_completed_results_by_cluster_id(self) -> dict[str, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    cluster_id,
+                    label,
+                    result_json,
+                    batch_run_id,
+                    updated_at,
+                    id
+                FROM negative_news_cluster_results
+                WHERE status = 'completed'
+                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
+                """
+            ).fetchall()
+        results: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cluster_id = str(row["cluster_id"] or "").strip()
+            if not cluster_id or cluster_id in results:
+                continue
+            try:
+                result = json.loads(str(row["result_json"] or "{}"))
+            except json.JSONDecodeError:
+                result = {}
+            results[cluster_id] = {
+                "cluster_id": cluster_id,
+                "label": str(row["label"] or ""),
+                "batch_run_id": int(row["batch_run_id"] or 0),
+                "updated_at": str(row["updated_at"] or ""),
+                "result": result if isinstance(result, dict) else {},
+            }
+        return results
+
+    def get_latest_completed_results_by_person_ids(self) -> dict[str, dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    cluster_id,
+                    label,
+                    result_json,
+                    batch_run_id,
+                    updated_at,
+                    id
+                FROM negative_news_cluster_results
+                WHERE status = 'completed'
+                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
+                """
+            ).fetchall()
+        results: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            try:
+                result = json.loads(str(row["result_json"] or "{}"))
+            except json.JSONDecodeError:
+                continue
+            fingerprint = result_person_ids_fingerprint(result)
+            if not fingerprint or fingerprint in results:
+                continue
+            results[fingerprint] = {
+                "cluster_id": str(row["cluster_id"] or ""),
+                "label": str(row["label"] or ""),
+                "batch_run_id": int(row["batch_run_id"] or 0),
+                "updated_at": str(row["updated_at"] or ""),
+                "result": result if isinstance(result, dict) else {},
+            }
+        return results
 
     def upsert_cluster_result(
         self,
