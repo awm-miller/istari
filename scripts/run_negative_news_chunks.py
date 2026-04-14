@@ -12,7 +12,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import load_settings
-from src.negative_news import _negative_news_db_path, load_negative_news_clusters
+from src.negative_news import (
+    _negative_news_db_path,
+    load_negative_news_clusters,
+    partition_negative_news_clusters_by_history,
+)
 from src.storage.negative_news_store import NegativeNewsStore
 from src.storage.repository import Repository
 
@@ -138,8 +142,38 @@ def main() -> None:
     )
     store.init_db()
     skip_log_path = settings.project_root / "data" / "negative_news_skipped_clusters.jsonl"
+    full_source = load_negative_news_clusters(repository, offset=0, limit=total_available)
+    all_clusters = list(full_source.get("clusters") or [])
+    pending_cluster_ids = {
+        str(cluster.get("cluster_id") or "")
+        for cluster in (partition_negative_news_clusters_by_history(store, all_clusters).get("pending_clusters") or [])
+    }
+    pending_offsets = [
+        (offset, cluster)
+        for offset, cluster in enumerate(all_clusters)
+        if (
+            offset >= max(0, int(args.start_offset))
+            and offset < stop_offset
+            and str(cluster.get("cluster_id") or "") in pending_cluster_ids
+        )
+    ]
+    print(
+        json.dumps(
+            {
+                "stage": "screening_partition_done",
+                "total_available": total_available,
+                "pending_clusters": len(pending_offsets),
+                "historically_screened": max(0, total_available - len(pending_offsets)),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+    if not pending_offsets:
+        print(json.dumps({"ok": True, "message": "No unscreened merged clusters remain."}, indent=2))
+        return
 
-    for offset in range(max(0, int(args.start_offset)), stop_offset):
+    for offset, cluster in pending_offsets:
         limit = 1
         config = _chunk_config(
             offset=offset,
@@ -189,6 +223,23 @@ def main() -> None:
             row = store.get_batch_run_by_config(config)
             if row is None:
                 final_returncode = int(proc.returncode or 0)
+                if final_returncode == 0:
+                    print(
+                        json.dumps(
+                            {
+                                "chunk_offset": offset,
+                                "chunk_limit": limit,
+                                "attempt": attempt,
+                                "returncode": proc.returncode,
+                                "status": "completed_without_new_batch_row",
+                                "completed_clusters": 1,
+                                "total_clusters": 1,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                    break
                 print(
                     json.dumps(
                         {
@@ -241,7 +292,7 @@ def main() -> None:
         if status == "completed" and completed >= total_clusters:
             continue
 
-        label = _cluster_label(repository, offset=offset)
+        label = str(cluster.get("label") or "") or _cluster_label(repository, offset=offset)
         _append_skip_log(
             skip_log_path,
             offset=offset,
