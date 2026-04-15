@@ -106,26 +106,42 @@ def _mapping_db_has_rows(database_path: Path) -> bool:
         connection.close()
 
 
-def overlay_mapping_source_paths(project_root: Path) -> list[Path]:
-    data_dir = Path(project_root) / "data"
+def overlay_mapping_source_paths(
+    project_root: Path,
+    *,
+    source_directories: list[Path] | None = None,
+) -> list[Path]:
+    candidate_directories: list[Path] = []
+    for directory in source_directories or []:
+        path = Path(directory)
+        if path not in candidate_directories:
+            candidate_directories.append(path)
+    default_data_dir = Path(project_root) / "data"
+    if default_data_dir not in candidate_directories:
+        candidate_directories.append(default_data_dir)
     seen: set[Path] = set()
     paths: list[Path] = []
-    for name in _LOW_CONFIDENCE_OVERLAY_SOURCE_NAMES:
-        path = data_dir / name
-        if path in seen or not _mapping_db_has_rows(path):
-            continue
-        seen.add(path)
-        paths.append(path)
+    for data_dir in candidate_directories:
+        for name in _LOW_CONFIDENCE_OVERLAY_SOURCE_NAMES:
+            path = data_dir / name
+            if path in seen or not _mapping_db_has_rows(path):
+                continue
+            seen.add(path)
+            paths.append(path)
     return paths
 
 
-def rebuild_overlay_mapping_db(project_root: Path) -> Path:
+def rebuild_overlay_mapping_db(
+    project_root: Path,
+    *,
+    source_directories: list[Path] | None = None,
+) -> Path:
     target_path = default_overlay_mapping_db_path(project_root)
     target_store = MappingStore(target_path)
     target_store.init_db()
     target_store.clear_all()
 
-    source_paths = overlay_mapping_source_paths(project_root)
+    source_paths = overlay_mapping_source_paths(project_root, source_directories=source_directories)
     if not source_paths:
         return target_path
 

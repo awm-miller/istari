@@ -49,7 +49,6 @@
   let showIdentitiesInput;
   let showCompaniesInput;
   let showCharitiesInput;
-  let showOrganisationsInput;
   let showPeopleInput;
   let showAddressesInput;
   let showLowConfidenceInput;
@@ -216,7 +215,7 @@
 
   function nodeTypeLabel(node) {
     const kind = normalizeNodeKind(node);
-    if (kind === "seed_alias") return "identity";
+    if (kind === "seed_alias") return "seed";
     if (kind === "organisation") return "organisation";
     return kind || "node";
   }
@@ -300,7 +299,7 @@
   }
 
   function isFilterableType(typeKey) {
-    return ["identity", "company", "charity", "organisation", "address", "person"].includes(typeKey);
+    return ["identity", "company", "charity", "address", "person"].includes(typeKey);
   }
 
   function nodeMatchesQuery(node, query) {
@@ -440,6 +439,7 @@
   }
 
   function nodeColorValue(node) {
+    if (node?.sanctioned) return COLORS.red;
     const kind = normalizeNodeKind(node);
     if (kind === "seed_alias") return COLORS.amber;
     if (kind === "charity" || kind === "company" || kind === "organisation") return COLORS.green;
@@ -480,10 +480,9 @@
 
   function renderLegend() {
     const items = [
-      ["show-identities", "Identity", true],
+      ["show-identities", "Seed", true],
       ["show-charities", "Charity", true],
       ["show-companies", "Company", true],
-      ["show-organisations", "Organisation", true],
       ["show-addresses", "Address", true],
       ["show-people", "Person", true],
       ["show-low-confidence", "Open letters", false],
@@ -500,7 +499,6 @@
     showIdentitiesInput = document.getElementById("show-identities");
     showCompaniesInput = document.getElementById("show-companies");
     showCharitiesInput = document.getElementById("show-charities");
-    showOrganisationsInput = document.getElementById("show-organisations");
     showPeopleInput = document.getElementById("show-people");
     showAddressesInput = document.getElementById("show-addresses");
     showLowConfidenceInput = document.getElementById("show-low-confidence");
@@ -693,7 +691,6 @@
       showIdentitiesInput?.checked ? null : "identity",
       showCompaniesInput?.checked ? null : "company",
       showCharitiesInput?.checked ? null : "charity",
-      showOrganisationsInput?.checked ? null : "organisation",
       showPeopleInput?.checked ? null : "person",
       showAddressesInput?.checked ? null : "address",
     ].filter(Boolean));
@@ -885,6 +882,7 @@
         if (!node) return false;
         if (node.kind === "seed" && !includeLowConfidence && !rootIds.has(id)) return false;
         if (node.is_low_confidence && !includeLowConfidence) return false;
+        if (node.is_low_confidence) return true;
         const typeKey = nodeTypeKey(node);
         if (!isFilterableType(typeKey)) return true;
         return !viewerState.hiddenTypes.has(typeKey);
@@ -2686,7 +2684,7 @@
         if (firstResult) addTreeFromCanvasSearch(firstResult.id);
       }
     });
-    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showOrganisationsInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput]
+    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput]
       .forEach((input) => input.addEventListener("change", applyViewerState));
     showLowConfidenceInput.addEventListener("change", async () => {
       if (showLowConfidenceInput.checked) {

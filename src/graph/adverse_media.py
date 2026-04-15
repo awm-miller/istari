@@ -9,6 +9,7 @@ from typing import Any
 
 from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
+from src.search.queries import normalize_name
 from src.storage.negative_news_store import cluster_lookup_key, person_ids_fingerprint
 
 
@@ -81,9 +82,10 @@ def _latest_cluster_claims(
     dict[str, list[dict[str, Any]]],
     dict[str, list[dict[str, Any]]],
     dict[str, list[dict[str, Any]]],
+    dict[str, list[dict[str, Any]]],
 ]:
     if not database_path.exists():
-        return {}, {}, {}
+        return {}, {}, {}, {}
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
@@ -105,6 +107,9 @@ def _latest_cluster_claims(
     claims_by_cluster: dict[str, list[dict[str, Any]]] = {}
     claims_by_lookup_key: dict[str, list[dict[str, Any]]] = {}
     claims_by_person_ids: dict[str, list[dict[str, Any]]] = {}
+    claims_by_person_name: dict[str, list[dict[str, Any]]] = {}
+    person_name_owner: dict[str, str] = {}
+    ambiguous_person_names: set[str] = set()
     for row in rows:
         cluster_id = str(row["cluster_id"] or "").strip()
         try:
@@ -124,7 +129,41 @@ def _latest_cluster_claims(
         fingerprint = person_ids_fingerprint(result.get("person_ids"))
         if fingerprint and fingerprint not in claims_by_person_ids:
             claims_by_person_ids[fingerprint] = claims
-    return claims_by_cluster, claims_by_lookup_key, claims_by_person_ids
+        if _historical_cluster_kind(cluster_id, result) != "person":
+            continue
+        for name_key in _person_name_keys(result):
+            if name_key in ambiguous_person_names:
+                continue
+            owner = person_name_owner.get(name_key)
+            if owner and owner != cluster_id:
+                ambiguous_person_names.add(name_key)
+                claims_by_person_name.pop(name_key, None)
+                person_name_owner.pop(name_key, None)
+                continue
+            person_name_owner[name_key] = cluster_id
+            claims_by_person_name[name_key] = claims
+    return claims_by_cluster, claims_by_lookup_key, claims_by_person_ids, claims_by_person_name
+
+
+def _historical_cluster_kind(cluster_id: str, result: dict[str, Any]) -> str:
+    cluster_kind = str(result.get("cluster_kind") or result.get("kind") or "").strip().lower()
+    if cluster_kind in {"seed_alias", "person"}:
+        return cluster_kind
+    lowered = str(cluster_id or "").strip().lower()
+    if lowered.startswith("identity:") or lowered.startswith("identity_cluster:"):
+        return "seed_alias"
+    if lowered.startswith("merged_person:") or lowered.startswith("person:"):
+        return "person"
+    return ""
+
+
+def _person_name_keys(payload: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for value in [payload.get("label"), *(payload.get("aliases") or [])]:
+        normalized = normalize_name(str(value or ""))
+        if normalized:
+            keys.add(normalized)
+    return keys
 
 
 def _translate_claim_titles(
@@ -163,12 +202,13 @@ def annotate_graph_with_adverse_media(
     settings: Settings,
     database_path: Path,
 ) -> dict[str, Any]:
-    claims_by_cluster, claims_by_lookup_key, claims_by_person_ids = _latest_cluster_claims(database_path)
-    if not claims_by_cluster and not claims_by_lookup_key and not claims_by_person_ids:
+    claims_by_cluster, claims_by_lookup_key, claims_by_person_ids, claims_by_person_name = _latest_cluster_claims(database_path)
+    if not claims_by_cluster and not claims_by_lookup_key and not claims_by_person_ids and not claims_by_person_name:
         return data
     claims_by_cluster = _translate_claim_titles(claims_by_cluster, settings=settings)
     claims_by_lookup_key = _translate_claim_titles(claims_by_lookup_key, settings=settings)
     claims_by_person_ids = _translate_claim_titles(claims_by_person_ids, settings=settings)
+    claims_by_person_name = _translate_claim_titles(claims_by_person_name, settings=settings)
 
     for node in data.get("nodes", []):
         if not isinstance(node, dict):
@@ -181,6 +221,19 @@ def annotate_graph_with_adverse_media(
             claims = claims_by_lookup_key.get(lookup_key) if lookup_key else None
         if not claims:
             claims = claims_by_person_ids.get(fingerprint) if fingerprint else None
+        if not claims and str(node.get("kind") or "") == "person":
+            candidate_claims: list[dict[str, Any]] | None = None
+            for name_key in sorted(_person_name_keys(node)):
+                current_claims = claims_by_person_name.get(name_key)
+                if not current_claims:
+                    continue
+                if candidate_claims is None:
+                    candidate_claims = current_claims
+                    continue
+                if candidate_claims != current_claims:
+                    candidate_claims = None
+                    break
+            claims = candidate_claims
         if not claims:
             continue
         node["adverse_media_hit"] = True

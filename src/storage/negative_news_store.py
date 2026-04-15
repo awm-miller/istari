@@ -6,7 +6,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-from src.search.queries import normalize_name
+from src.search.queries import generate_name_variants, normalize_name
 
 
 def person_ids_fingerprint(person_ids: Any) -> str:
@@ -31,6 +31,16 @@ def cluster_lookup_key(cluster: Any) -> str:
     if not isinstance(cluster, dict):
         return ""
     cluster_kind = str(cluster.get("cluster_kind") or cluster.get("kind") or "").strip().lower()
+    if not cluster_kind:
+        cluster_id = str(cluster.get("cluster_id") or cluster.get("id") or "").strip().lower()
+        if cluster_id.startswith("identity:") or cluster_id.startswith("identity_cluster:"):
+            cluster_kind = "seed_alias"
+        elif cluster_id.startswith("merged_person:") or cluster_id.startswith("person:"):
+            cluster_kind = "person"
+        elif cluster.get("identity_keys"):
+            cluster_kind = "seed_alias"
+        elif cluster.get("person_ids") or cluster.get("aliases") or cluster.get("label"):
+            cluster_kind = "person"
     if cluster_kind not in {"seed_alias", "person"}:
         return ""
 
@@ -46,13 +56,22 @@ def cluster_lookup_key(cluster: Any) -> str:
             digest = sha256("\n".join(identity_keys).encode("utf-8")).hexdigest()[:16]
             return f"seed_alias:identity_keys:{digest}"
 
-    names = sorted(
-        {
-            normalize_name(str(value))
-            for value in [cluster.get("label"), *(cluster.get("aliases") or [])]
-            if str(value or "").strip()
-        }
-    )
+    raw_names = [
+        str(value).strip()
+        for value in [cluster.get("label"), *(cluster.get("aliases") or [])]
+        if str(value or "").strip()
+    ]
+    names_set: set[str] = set()
+    for value in raw_names:
+        normalized = normalize_name(value)
+        if normalized:
+            names_set.add(normalized)
+        if cluster_kind == "person":
+            for variant in generate_name_variants(value, "balanced"):
+                variant_normalized = normalize_name(str(variant.name or ""))
+                if variant_normalized:
+                    names_set.add(variant_normalized)
+    names = sorted(names_set)
     names = [name for name in names if name]
     if not names:
         return ""

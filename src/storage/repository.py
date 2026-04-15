@@ -609,7 +609,7 @@ class Repository:
                 FROM (
                     SELECT MAX(id) AS id
                     FROM runs
-                    GROUP BY seed_name
+                    GROUP BY TRIM(REPLACE(seed_name, CHAR(65279), ''))
                 ) AS latest
                 ORDER BY latest.id ASC
                 """

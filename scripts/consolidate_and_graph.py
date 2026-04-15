@@ -176,6 +176,10 @@ def _row_str(row, key: str) -> str:
         return ""
 
 
+def _clean_seed_name(value: object) -> str:
+    return str(value or "").replace("\ufeff", "").strip()
+
+
 def _json_dict(raw_value: object) -> dict[str, object]:
     try:
         parsed = json.loads(str(raw_value or "{}"))
@@ -715,7 +719,7 @@ def consolidate_run(run_id: int) -> dict:
     run_org_rows = repository.get_run_organisations(run_id)
     address_rows = repository.get_run_address_edges(run_id)
     run_row = repository.get_run(run_id)
-    seed_name = str(run_row["seed_name"]) if run_row else "Seed"
+    seed_name = _clean_seed_name(run_row["seed_name"]) if run_row else "Seed"
     raw_edges = [edge for edge in raw_edges if not _is_notice_role_edge(edge)]
     run_org_rows = [
         row for row in run_org_rows
@@ -3341,7 +3345,10 @@ def main() -> None:
         print()
 
     project_root = Path(__file__).resolve().parents[1]
-    mapping_db_path = rebuild_overlay_mapping_db(project_root)
+    mapping_db_path = rebuild_overlay_mapping_db(
+        project_root,
+        source_directories=[load_settings().database_path.parent],
+    )
     open_letters_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data["run_id"])}}
     low_confidence_nodes_data = {"nodes": [], "edges": [], "summary": {"run_ids": args.run_ids}}
     if mapping_db_path.exists():

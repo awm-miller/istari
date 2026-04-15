@@ -89,7 +89,10 @@ print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 open_letters_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data.get("run_id", ""))}}
 low_confidence_nodes_data = {"nodes": [], "edges": [], "summary": {"run_ids": run_ids}}
 address_coordinates = {"coordinates": [], "summary": {}}
-mapping_db_path = rebuild_overlay_mapping_db(settings.project_root)
+mapping_db_path = rebuild_overlay_mapping_db(
+    settings.project_root,
+    source_directories=[settings.database_path.parent],
+)
 if mapping_db_path.exists():
     try:
         open_letters_data = build_low_confidence_overlay(

@@ -98,6 +98,83 @@ class AdverseMediaPersonLookupKeyTest(unittest.TestCase):
             self.assertEqual(1, node["adverse_media_count"])
             self.assertEqual("https://www.arabi21.com/story/example", node["adverse_media_claims"][0]["url"])
 
+    def test_person_node_maps_by_name_lookup_when_historical_result_lacks_cluster_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            database_path = temp_path / "negative_news.sqlite"
+            schema_path = Path("src/storage/negative_news_schema.sql")
+
+            connection = sqlite3.connect(database_path)
+            connection.executescript(schema_path.read_text(encoding="utf-8"))
+            result = {
+                "cluster_id": "merged_person:23",
+                "label": "SAFFOUR, Walid",
+                "aliases": ["SAFFOUR, Walid"],
+                "person_ids": [294],
+                "articles": [
+                    {
+                        "search": {
+                            "title": "Example article",
+                            "url": "https://example.com/walid",
+                        },
+                        "classification": {
+                            "category": "other_mb_alignment",
+                            "confidence": 0.82,
+                            "short_rationale": "Example adverse-media hit",
+                            "evidence_quote": "Example quote",
+                        },
+                    }
+                ],
+            }
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO negative_news_batch_runs(
+                        config_hash, config_json, status, offset_value, limit_value, total_clusters, completed_clusters, output_path
+                    ) VALUES(?, ?, 'completed', 0, 1, 1, 1, '')
+                    """,
+                    ("test", "{}",),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO negative_news_cluster_results(
+                        batch_run_id, cluster_rank, cluster_id, label, status, interesting_count,
+                        category_counts_json, result_json, error_text
+                    ) VALUES(1, 1, ?, ?, 'completed', 1, ?, ?, '')
+                    """,
+                    (
+                        "merged_person:23",
+                        "SAFFOUR, Walid",
+                        json.dumps({"other_mb_alignment": 1}),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+            connection.close()
+
+            data = {
+                "nodes": [
+                    {
+                        "id": "merged_person:182",
+                        "kind": "person",
+                        "label": "SAFFOUR, Walid",
+                        "aliases": ["Walid Saffour"],
+                        "person_ids": [294, 5466],
+                    }
+                ],
+                "edges": [],
+            }
+
+            annotated = annotate_graph_with_adverse_media(
+                data,
+                settings=load_settings(Path(".").resolve()),
+                database_path=database_path,
+            )
+
+            node = annotated["nodes"][0]
+            self.assertTrue(node["adverse_media_hit"])
+            self.assertEqual(1, node["adverse_media_count"])
+            self.assertEqual("https://example.com/walid", node["adverse_media_claims"][0]["url"])
+
 
 if __name__ == "__main__":
     unittest.main()
