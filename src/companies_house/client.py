@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import socket
 import time
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -15,6 +16,7 @@ from src.config import Settings
 log = logging.getLogger("istari.companies_house")
 
 _MIN_REQUEST_INTERVAL_SECONDS = 0.5
+_TRANSIENT_ERROR_RETRY_DELAYS_SECONDS = (1.0, 2.0, 5.0)
 _last_request_at = 0.0
 
 
@@ -106,17 +108,53 @@ class CompaniesHouseClient:
             },
             method="GET",
         )
-        try:
-            with request.urlopen(req) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+
+        for attempt, delay_seconds in enumerate((0.0, *_TRANSIENT_ERROR_RETRY_DELAYS_SECONDS), start=1):
+            try:
+                with request.urlopen(req) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                    _last_request_at = time.monotonic()
+                    break
+            except error.HTTPError as exc:
                 _last_request_at = time.monotonic()
-        except error.HTTPError as exc:
-            _last_request_at = time.monotonic()
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Companies House request failed: {exc.code} {body}") from exc
+                body = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"Companies House request failed: {exc.code} {body}") from exc
+            except error.URLError as exc:
+                _last_request_at = time.monotonic()
+                if not self._is_transient_network_error(exc) or attempt > len(_TRANSIENT_ERROR_RETRY_DELAYS_SECONDS):
+                    raise RuntimeError(f"Companies House request failed: {exc}") from exc
+                log.warning(
+                    "Companies House request transient failure (attempt %d/%d): %s",
+                    attempt,
+                    len(_TRANSIENT_ERROR_RETRY_DELAYS_SECONDS) + 1,
+                    exc,
+                )
+                time.sleep(delay_seconds)
+        else:
+            raise RuntimeError("Companies House request failed after retries.")
 
         cache_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return payload
+
+    @staticmethod
+    def _is_transient_network_error(exc: error.URLError) -> bool:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, socket.gaierror):
+            return True
+        if isinstance(reason, TimeoutError):
+            return True
+        message = str(reason or exc).lower()
+        transient_markers = (
+            "getaddrinfo failed",
+            "temporary failure in name resolution",
+            "timed out",
+            "timeout",
+            "connection reset",
+            "connection aborted",
+            "connection refused",
+            "network is unreachable",
+        )
+        return any(marker in message for marker in transient_markers)
 
     def _ensure_api_key(self) -> None:
         if not self.settings.companies_house_api_key:

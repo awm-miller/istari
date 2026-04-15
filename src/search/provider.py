@@ -273,12 +273,20 @@ class CompaniesHouseSearchProvider(SearchProvider):
         evidence: list[EvidenceItem] = []
         for vi, variant in enumerate(variants, 1):
             log.info("  CH officer search [%d/%d] '%s'", vi, len(variants), variant.name)
-            officer_search = self.client.search_officers(variant.name)
+            try:
+                officer_search = self.client.search_officers(variant.name)
+            except RuntimeError as exc:
+                log.warning("  CH officer search skipped for '%s': %s", variant.name, exc)
+                continue
             for item in officer_search.get("items", []):
                 officer_id = extract_officer_id(item)
                 if not officer_id:
                     continue
-                appointments = self.client.get_officer_appointments(officer_id)
+                try:
+                    appointments = self.client.get_officer_appointments(officer_id)
+                except RuntimeError as exc:
+                    log.warning("  CH appointments skipped for officer '%s': %s", officer_id, exc)
+                    continue
                 officer_name = item.get("title") or variant.name
                 for appointment in appointments.get("items", []):
                     appointed_to = appointment.get("appointed_to", {})
