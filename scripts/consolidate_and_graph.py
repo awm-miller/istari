@@ -1285,6 +1285,13 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
             f"[graph] Loaded run {rid}: {len(run['nodes'])} nodes, {len(run['edges'])} edges",
             flush=True,
         )
+        non_seed_nodes = [node for node in run["nodes"] if str(node.get("kind") or "") != "seed"]
+        if not non_seed_nodes and not run["edges"]:
+            print(
+                f"[graph] Skipping run {rid}: only a seed node was produced",
+                flush=True,
+            )
+            continue
         runs.append(run)
     seed_names = [r["seed_name"] for r in runs]
 
