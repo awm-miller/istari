@@ -27,8 +27,12 @@ class Repository:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
+        connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 
     def init_db(self) -> None:
@@ -85,6 +89,11 @@ class Repository:
                 (run_id, seed_name),
             )
             return run_id
+
+    def delete_run(self, run_id: int) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM runs WHERE id = ?", (int(run_id),))
+            return int(cursor.rowcount or 0) > 0
 
     def insert_name_variants(self, run_id: int, variants: list[dict[str, Any]]) -> None:
         with self.connect() as connection:

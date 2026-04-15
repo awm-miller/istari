@@ -926,6 +926,46 @@ def run_registry_only_mvp(
     }
 
 
+def resume_registry_only_mvp(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    run_id: int,
+    limit: int,
+) -> dict[str, Any]:
+    run_row = repository.get_run(run_id)
+    if run_row is None:
+        raise ValueError(f"Run {run_id} does not exist.")
+
+    discovery = run_recursive_network_discovery(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
+        run_id=run_id,
+        limit=limit,
+    )
+    ranking = discovery["ranking"]
+    step4 = step4_ofac_screening(repository=repository, settings=settings, ranking=ranking)
+
+    return {
+        "mode": "resume_registry_only_mvp",
+        "run_id": run_id,
+        "seed_name": str(run_row["seed_name"] or ""),
+        "step2": discovery["step2"],
+        "step2b": discovery["step2b"],
+        "discovery_rounds": discovery["rounds"],
+        "step3": discovery["step3"],
+        "recursive_person_search": discovery["recursive_person_search"],
+        "step4": step4,
+        "ranking": ranking,
+    }
+
+
 def add_organisation_to_run(
     *,
     repository: Repository,

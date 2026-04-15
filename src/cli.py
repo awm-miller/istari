@@ -16,6 +16,7 @@ from src.gemini_api import GeminiClient, extract_gemini_text
 from src.graph_export import export_network_payload
 from src.pipeline import (
     add_organisation_to_run,
+    resume_run_pipeline,
     run_name_pipeline,
     run_seed_batch_pipeline,
     step1_expand_seed,
@@ -103,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="balanced",
     )
     run_parser.add_argument("--limit", type=int, default=25)
+
+    resume_parser = subparsers.add_parser(
+        "resume-run",
+        help="Resume downstream discovery and sanctions for an existing run.",
+    )
+    resume_parser.add_argument("run_id", type=int)
+    resume_parser.add_argument("--limit", type=int, default=25)
+
+    delete_run_parser = subparsers.add_parser(
+        "delete-run",
+        help="Delete one run and its run-scoped rows.",
+    )
+    delete_run_parser.add_argument("run_id", type=int)
 
     run_seeds_parser = subparsers.add_parser(
         "run-seeds",
@@ -298,7 +312,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
-    if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-seeds"}:
+    if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-seeds", "resume-run"}:
         _startup_stop_other_pipeline_processes()
 
     repository = Repository(
@@ -350,6 +364,11 @@ def main() -> None:
         print(json.dumps(result, indent=2))
         return
 
+    if args.command == "delete-run":
+        deleted = repository.delete_run(int(args.run_id))
+        print(json.dumps({"ok": deleted, "run_id": int(args.run_id)}, indent=2))
+        return
+
     if args.command == "pdf-enrich":
         result = step2b_enrich_from_pdfs(
             repository=repository,
@@ -395,6 +414,19 @@ def main() -> None:
             matcher=matcher,
             seed_name=args.name,
             creativity_level=args.creativity,
+            limit=int(args.limit),
+        )
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == "resume-run":
+        result = resume_run_pipeline(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            search_providers=build_search_providers(settings, include_web_dork=False),
+            matcher=matcher,
+            run_id=int(args.run_id),
             limit=int(args.limit),
         )
         print(json.dumps(result, indent=2))

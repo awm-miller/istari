@@ -7,6 +7,7 @@ from src.resolution.matcher import HybridMatcher
 from src.search.provider import SearchProvider
 from src.services.mvp_pipeline import (
     add_organisation_to_run,
+    resume_registry_only_mvp,
     run_registry_only_mvp,
     step1_expand_seed,
     step2_expand_connected_organisations,
@@ -107,6 +108,27 @@ def run_seed_batch_pipeline(
     }
 
 
+def resume_run_pipeline(
+    *,
+    repository: Repository,
+    settings: Any,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    run_id: int,
+    limit: int,
+) -> dict[str, Any]:
+    return resume_registry_only_mvp(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
+        run_id=run_id,
+        limit=limit,
+    )
+
+
 def _decorate_overlap_people(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for rank, row in enumerate(rows, 1):
@@ -134,6 +156,7 @@ def _decorate_overlap_organisations(rows: list[dict[str, Any]]) -> list[dict[str
 __all__ = [
     "run_name_pipeline",
     "run_seed_batch_pipeline",
+    "resume_run_pipeline",
     "add_organisation_to_run",
     "step1_expand_seed",
     "step2_expand_connected_organisations",
