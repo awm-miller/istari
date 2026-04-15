@@ -1391,10 +1391,16 @@
 
   function tooltipLinesForEdge(edge) {
     if (!edge?.is_low_confidence) {
+      const explicitTooltipLines = Array.isArray(edge?.tooltip_lines)
+        ? edge.tooltip_lines.filter((value) => String(value || "").trim())
+        : [];
+      if (explicitTooltipLines.length) return explicitTooltipLines.slice();
+      const explicitTooltip = String(edge?.tooltip || "").trim();
+      if (explicitTooltip) return [explicitTooltip];
       const displayPersonLabels = Array.isArray(edge?.display_person_labels)
         ? edge.display_person_labels.map((value) => String(value || "").trim()).filter(Boolean)
         : [];
-      if (edge?.kind === "role" && displayPersonLabels.length && !Array.isArray(edge?.tooltip_lines)) {
+      if (edge?.kind === "role" && displayPersonLabels.length) {
         const sourceNode = nodeById.get(edge?.source) || null;
         const targetNode = nodeById.get(edge?.target) || null;
         const sourceKind = String(sourceNode?.kind || "");
@@ -1408,7 +1414,7 @@
           : summarizeLabelList(displayPersonLabels);
         return [`${escapeHtml(personLabel)} ${escapeHtml(phrase)} ${escapeHtml(orgLabel)}.`];
       }
-      return Array.isArray(edge?.tooltip_lines) ? edge.tooltip_lines.slice() : [edge?.tooltip || "link"];
+      return ["link"];
     }
     const sourceLabel = String(nodeById.get(edge?.source)?.label || edge?.source || "Source");
     const targetLabel = String(nodeById.get(edge?.target)?.label || edge?.target || "Target");
