@@ -589,6 +589,19 @@ def _org_date_fields(registry_type: str, metadata: dict[str, object]) -> dict[st
     return {"incorporation_date": "", "registration_date": ""}
 
 
+def _is_removed_charity(registry_type: str, status: object) -> bool:
+    if str(registry_type or "").strip().lower() != "charity":
+        return False
+    return str(status or "").strip().lower() in {"rm", "removed"}
+
+
+def _viewer_org_label(name: str, *, registry_type: str, status: object) -> str:
+    label = str(name or "").strip()
+    if _is_removed_charity(registry_type, status):
+        return f"{label} [RM]"
+    return label
+
+
 def _evidence_identity(evidence: dict[str, object] | None) -> tuple[str, str, str]:
     if not evidence:
         return ("", "", "")
@@ -865,12 +878,16 @@ def consolidate_run(run_id: int) -> dict:
     for row in scoped_org_rows:
         oid = int(row["id"])
         metadata = _json_dict(row["metadata_json"])
+        registry_type = str(row["registry_type"] or "")
+        status = str(row["status"] or "")
         date_fields = _org_date_fields(str(row["registry_type"] or ""), metadata)
         org_map[oid] = {
             "id": f"org:{oid}",
-            "label": str(row["name"] or ""),
-            "registry_type": str(row["registry_type"] or ""),
+            "label": _viewer_org_label(str(row["name"] or ""), registry_type=registry_type, status=status),
+            "registry_type": registry_type,
             "registry_number": str(row["registry_number"] or ""),
+            "status": status,
+            "is_removed_charity": _is_removed_charity(registry_type, status),
             "incorporation_date": date_fields["incorporation_date"],
             "registration_date": date_fields["registration_date"],
         }
@@ -1126,6 +1143,8 @@ def consolidate_run(run_id: int) -> dict:
         people_list = org_people.get(info["id"], [])
         tooltip = [f"<strong>{info['label']}</strong>"]
         tooltip.append(f"{info['registry_type']} {info['registry_number']}")
+        if info.get("is_removed_charity"):
+            tooltip.append("Status: removed charity")
         if info.get("registration_date"):
             tooltip.append(f"Charity registered: {info['registration_date']}")
         if info.get("incorporation_date"):
@@ -1148,6 +1167,8 @@ def consolidate_run(run_id: int) -> dict:
             "lane": 2,
             "registry_type": info["registry_type"],
             "registry_number": info["registry_number"],
+            "status": info.get("status", ""),
+            "is_removed_charity": bool(info.get("is_removed_charity")),
             "seed_names": [seed_name],
             "people_count": len(people_list),
             "registration_date": info.get("registration_date", ""),
@@ -1846,6 +1867,8 @@ def consolidate_multi_run(run_ids: list[int]) -> dict:
         tooltip = [f"<strong>{node['label']}</strong>"]
         if node.get("registry_type") or node.get("registry_number"):
             tooltip.append(f"{node.get('registry_type', '')} {node.get('registry_number', '')}".strip())
+        if node.get("is_removed_charity"):
+            tooltip.append("Status: removed charity")
         if node.get("registration_date"):
             tooltip.append(f"Charity registered: {node['registration_date']}")
         if node.get("incorporation_date"):
