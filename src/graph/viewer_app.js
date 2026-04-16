@@ -829,15 +829,7 @@
     return true;
   }
 
-  function averageLaneY(nodes, lane) {
-    const values = nodes
-      .filter((node) => Number(node?.lane || 0) === Number(lane || 0) && Number.isFinite(Number(node?.y)))
-      .map((node) => Number(node.y));
-    if (!values.length) return null;
-    return values.reduce((sum, value) => sum + value, 0) / values.length;
-  }
-
-  function applyExpandedHiddenConnectionsToScene(scene) {
+  function applyExpandedHiddenConnectionsToScene(scene, bounds) {
     if (!viewerState.expandedHiddenConnections.length) return scene;
     const sceneNodes = scene.nodes.slice();
     const sceneEdges = scene.edges.slice();
@@ -852,20 +844,12 @@
       const steps = [sourceNode, ...hiddenIds.map((id) => nodeById.get(id)).filter(Boolean), targetNode];
       if (steps.length < 2 || !pathEdges.length) return;
       edgeKeysToHide.add(hiddenConnectionExpansionKey(expansion.source, expansion.target, hiddenIds));
-      hiddenIds.forEach((hiddenId, index) => {
+      hiddenIds.forEach((hiddenId) => {
         const key = String(hiddenId);
         if (nodeLookup.has(key)) return;
         const hiddenNode = nodeById.get(key);
         if (!hiddenNode) return;
         const clone = { ...hiddenNode };
-        const ratio = (index + 1) / (hiddenIds.length + 1);
-        const laneY = averageLaneY(sceneNodes, clone.lane);
-        clone.x = Number(sourceNode.x) + ((Number(targetNode.x) - Number(sourceNode.x)) * ratio);
-        clone.y = laneY ?? (Number(sourceNode.y) + ((Number(targetNode.y) - Number(sourceNode.y)) * ratio));
-        clone._pillWidth = pillWidth(clone);
-        clone._pillHeight = pillHeight(clone);
-        clone._focused = false;
-        clone._searchHit = false;
         clone._expandedIndirect = true;
         sceneNodes.push(clone);
         nodeLookup.set(key, clone);
@@ -887,6 +871,9 @@
       }),
       rootIds: scene.rootIds,
     };
+    if (bounds) {
+      layoutNodesInBounds(expandedScene.nodes, expandedScene.edges, new Set(expandedScene.rootIds || []), bounds);
+    }
     ensureSceneMetadata(expandedScene.nodes, expandedScene.edges);
     return expandedScene;
   }
@@ -1420,12 +1407,13 @@
       scenes.push({ projection: buildSearchProjection(new Set([nodeId])) });
     });
     if (scenes.length === 1) {
-      const fullScene = buildSceneForProjection(baseProjection, { left: 0, right: width, top: 0 });
+      const fullBounds = { left: 0, right: width, top: 0 };
+      const fullScene = buildSceneForProjection(baseProjection, fullBounds);
       return applyExpandedHiddenConnectionsToScene({
         nodes: fullScene.nodes,
         edges: fullScene.edges,
         rootIds: fullScene.rootIds,
-      });
+      }, fullBounds);
     }
     const columns = scenes.length === 2 ? 2 : Math.min(scenes.length, 3);
     const outerPad = 18;
@@ -1441,7 +1429,11 @@
       let rowBottom = rowTop;
       rowScenes.forEach((entry, offset) => {
         const left = outerPad + (offset * (columnWidth + gutter));
-        const scene = buildSceneForProjection(entry.projection, { left, right: left + columnWidth, top: rowTop });
+        const bounds = { left, right: left + columnWidth, top: rowTop };
+        const scene = applyExpandedHiddenConnectionsToScene(
+          buildSceneForProjection(entry.projection, bounds),
+          bounds,
+        );
         combinedNodes.push(...scene.nodes);
         combinedEdges.push(...scene.edges);
         combinedRootIds.push(...scene.rootIds);
@@ -1452,7 +1444,7 @@
       });
       rowTop = rowBottom + 120;
     }
-    return applyExpandedHiddenConnectionsToScene({ nodes: combinedNodes, edges: combinedEdges, rootIds: combinedRootIds });
+    return { nodes: combinedNodes, edges: combinedEdges, rootIds: combinedRootIds };
   }
 
   function showTooltip(event, lines) {
