@@ -497,7 +497,7 @@
       ["show-low-confidence-nodes", "Low confidence nodes", false],
     ];
     legendEl.innerHTML = items.map(([id, label, checked]) => `
-      <label class="row filter-toggle">
+      <label class="row">
         <span class="legend-key">${escapeHtml(label)}</span>
         <input class="legend-toggle" id="${id}" type="checkbox" ${checked ? "checked" : ""} />
       </label>
@@ -1187,6 +1187,56 @@
     return { projectionType: "focused", includeLowConfidence, rootIds: [...rootIds], visibleIds, edgeIds };
   }
 
+  function applyHighlightOnlyFilters(projection, options = {}) {
+    const showSanctionedOnly = options.showSanctionedOnly ?? viewerState.showSanctionedOnly;
+    const showNegativeNewsOnly = options.showNegativeNewsOnly ?? viewerState.showNegativeNewsOnly;
+    const baseProjection = {
+      ...projection,
+      showSanctionedOnly,
+      showNegativeNewsOnly,
+    };
+    if (!showSanctionedOnly && !showNegativeNewsOnly) return baseProjection;
+    const projectionVisibleIds = new Set(baseProjection.visibleIds || []);
+    const focusIds = new Set(
+      [...projectionVisibleIds].filter((nodeId) => {
+        const node = nodeById.get(nodeId);
+        if (!node || node.kind === "seed") return false;
+        return (showSanctionedOnly && !!node.sanctioned)
+          || (showNegativeNewsOnly && !!node.adverse_media_hit);
+      }),
+    );
+    if (!focusIds.size) {
+      return {
+        ...baseProjection,
+        rootIds: [],
+        visibleIds: new Set(),
+        edgeIds: [],
+      };
+    }
+    const filteredVisibleIds = new Set(focusIds);
+    focusIds.forEach((nodeId) => {
+      (edgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        const otherId = edge.source === nodeId ? edge.target : edge.source;
+        if (!projectionVisibleIds.has(otherId)) return;
+        const otherNode = nodeById.get(otherId);
+        if (!otherNode || otherNode.kind === "seed") return;
+        filteredVisibleIds.add(otherId);
+      });
+    });
+    const restrictedVisibleIds = new Set(
+      [...expandRelatedAddresses(filteredVisibleIds)].filter((nodeId) => projectionVisibleIds.has(nodeId)),
+    );
+    const edgeIds = (baseProjection.edgeIds || [])
+      .filter((edge) => edge.kind !== "hidden_connection")
+      .filter((edge) => restrictedVisibleIds.has(edge.source) && restrictedVisibleIds.has(edge.target));
+    return {
+      ...baseProjection,
+      rootIds: [...focusIds],
+      visibleIds: restrictedVisibleIds,
+      edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(restrictedVisibleIds)),
+    };
+  }
+
   function lowConfidenceOnlyVisibleNodeIdsForProjection(projection) {
     if (!projection?.includeLowConfidence) return new Set();
     let baseline = null;
@@ -1201,6 +1251,10 @@
     } else {
       baseline = buildFocusedProjection(new Set(projection.rootIds || []), { includeLowConfidence: false });
     }
+    baseline = applyHighlightOnlyFilters(baseline, {
+      showSanctionedOnly: !!projection.showSanctionedOnly,
+      showNegativeNewsOnly: !!projection.showNegativeNewsOnly,
+    });
     return new Set(
       [...projection.visibleIds].filter((nodeId) => {
         if (baseline.visibleIds.has(nodeId)) return false;
@@ -1213,11 +1267,11 @@
   function projectVisibleGraph() {
     const matchedIds = getMatchedNodeIds(viewerState.searchQuery);
     const rootIds = matchedIds.size ? matchedIds : new Set(viewerState.focusedNodeIds);
-    if (matchedIds.size) return buildSearchProjection(matchedIds);
-    if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
-    if (viewerState.showSanctionedOnly) return buildSanctionedProjection();
-    if (viewerState.showNegativeNewsOnly) return buildNegativeNewsProjection();
-    return buildFocusedProjection(rootIds);
+    let projection;
+    if (matchedIds.size) projection = buildSearchProjection(matchedIds);
+    else if (viewerState.showIndirectOnly) projection = buildIndirectOrgProjection();
+    else projection = buildFocusedProjection(rootIds);
+    return applyHighlightOnlyFilters(projection);
   }
 
   function textWidth(text, bold = false) {
@@ -1404,7 +1458,7 @@
     const width = container.clientWidth || window.innerWidth;
     const scenes = [{ projection: baseProjection }];
     viewerState.extraRootIds.forEach((nodeId) => {
-      scenes.push({ projection: buildSearchProjection(new Set([nodeId])) });
+      scenes.push({ projection: applyHighlightOnlyFilters(buildSearchProjection(new Set([nodeId]))) });
     });
     if (scenes.length === 1) {
       const fullBounds = { left: 0, right: width, top: 0 };
