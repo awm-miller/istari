@@ -248,6 +248,31 @@ body {{
   color: var(--text-bright);
   margin-bottom: 6px;
 }}
+.score-type-tabs {{
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}}
+.score-type-tab {{
+  flex: 1 1 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 8px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}}
+.score-type-tab:hover {{
+  color: var(--text-bright);
+  border-color: rgba(88,166,255,0.3);
+}}
+.score-type-tab.active {{
+  color: var(--text-bright);
+  background: rgba(88,166,255,0.12);
+  border-color: rgba(88,166,255,0.45);
+}}
 .score-panel p {{
   font-size: 11px;
   color: var(--text-dim);

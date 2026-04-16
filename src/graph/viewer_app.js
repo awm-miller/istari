@@ -105,6 +105,7 @@
     analysisNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
+    rankedCategory: "people",
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
@@ -1462,27 +1463,94 @@
     renderExtraTreeSummary();
   }
 
+  function rankedCategoryForNode(node) {
+    if (!node) return "";
+    if (node.kind === "address") return "addresses";
+    if (node.kind === "organisation") return "orgs";
+    if (node.kind === "seed_alias" || node.kind === "person") return "people";
+    return "";
+  }
+
+  function rankedEdgeCounts() {
+    const counts = new Map();
+    visibleEdges.forEach((edge) => {
+      counts.set(edge.source, Number(counts.get(edge.source) || 0) + 1);
+      counts.set(edge.target, Number(counts.get(edge.target) || 0) + 1);
+    });
+    return counts;
+  }
+
+  function rankedNodeScore(node, category, edgeCounts) {
+    if (category === "people") return nodeRankScore(node);
+    const visibleLinks = Number(edgeCounts.get(node.id) || 0);
+    const seedRefs = Array.isArray(node.seed_names) ? node.seed_names.length : 0;
+    if (category === "orgs") {
+      return (Number(node.people_count || 0) * 3.2)
+        + (visibleLinks * 1.4)
+        + (seedRefs * 0.8)
+        + (node.shared ? 1.5 : 0);
+    }
+    if (category === "addresses") {
+      return (visibleLinks * 2)
+        + (seedRefs * 0.8)
+        + (node.shared ? 1.2 : 0);
+    }
+    return 0;
+  }
+
+  function rankedNodeMeta(node, category, edgeCounts) {
+    const visibleLinks = Number(edgeCounts.get(node.id) || 0);
+    if (category === "people") {
+      return `${Number(node.org_count || 0)} orgs, ${Number(node.role_count || 0)} roles`;
+    }
+    if (category === "orgs") {
+      const seedRefs = Array.isArray(node.seed_names) ? node.seed_names.length : 0;
+      return `${Number(node.people_count || 0)} people, ${visibleLinks} visible links${seedRefs ? `, ${seedRefs} seeds` : ""}`;
+    }
+    return [
+      `${visibleLinks} visible links`,
+      String(node.postcode || "").trim(),
+      String(node.country || "").trim(),
+    ].filter(Boolean).join(", ");
+  }
+
   function renderScorePanel() {
+    const category = ["people", "orgs", "addresses"].includes(viewerState.rankedCategory)
+      ? viewerState.rankedCategory
+      : "people";
+    const edgeCounts = rankedEdgeCounts();
+    const tabButtons = `
+      <div class="score-type-tabs">
+        <button type="button" class="score-type-tab ${category === "people" ? "active" : ""}" data-ranked-type="people">People</button>
+        <button type="button" class="score-type-tab ${category === "orgs" ? "active" : ""}" data-ranked-type="orgs">Orgs</button>
+        <button type="button" class="score-type-tab ${category === "addresses" ? "active" : ""}" data-ranked-type="addresses">Addresses</button>
+      </div>
+    `;
     const rankedNodes = visibleNodes
-      .filter((node) => nodeRankScore(node) > 0 && (node.lane === 1 || node.lane === 4))
-      .sort((left, right) => nodeRankScore(right) - nodeRankScore(left))
+      .filter((node) => rankedCategoryForNode(node) === category)
+      .sort((left, right) => {
+        const scoreDiff = rankedNodeScore(right, category, edgeCounts) - rankedNodeScore(left, category, edgeCounts);
+        if (scoreDiff !== 0) return scoreDiff;
+        return String(left.label || "").localeCompare(String(right.label || ""));
+      })
       .slice(0, 12);
     scorePanelEl.innerHTML = rankedNodes.length
       ? `
+        ${tabButtons}
         <h2>Top ranked on screen</h2>
         <div class="score-list">
           ${rankedNodes.map((node) => `
             <div class="score-item">
               <div class="score-item-title">
                 <strong>${escapeHtml(node.label || "Unknown")}</strong>
-                <span>${nodeRankScore(node).toFixed(2)}</span>
+                <span>${rankedNodeScore(node, category, edgeCounts).toFixed(2)}</span>
               </div>
-              <div class="score-item-meta">${Number(node.org_count || 0)} orgs, ${Number(node.role_count || 0)} roles</div>
+              <div class="score-item-meta">${escapeHtml(rankedNodeMeta(node, category, edgeCounts))}</div>
             </div>
           `).join("")}
         </div>
       `
-      : '<div class="score-empty">No scored identity or person nodes are currently visible.</div>';
+      : `${tabButtons}<div class="score-empty">No visible ${category === "orgs" ? "organisations" : category} are currently on screen.</div>`;
   }
 
   async function ensureLowConfidenceLoaded() {
@@ -2710,6 +2778,15 @@
     detailsModalCloseEl.addEventListener("click", closeDetailsModal);
     detailsModalEl.addEventListener("click", (event) => {
       if (event.target === detailsModalEl) closeDetailsModal();
+    });
+    scorePanelEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-ranked-type]");
+      if (!button) return;
+      const nextCategory = String(button.dataset.rankedType || "");
+      if (!["people", "orgs", "addresses"].includes(nextCategory)) return;
+      if (viewerState.rankedCategory === nextCategory) return;
+      viewerState.rankedCategory = nextCategory;
+      renderScorePanel();
     });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
