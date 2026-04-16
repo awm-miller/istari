@@ -39,6 +39,7 @@
   const scorePanelEl = document.getElementById("score-panel");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
+  const negativeNewsOnlyInput = document.getElementById("negative-news-only");
   const detailsModalEl = document.getElementById("details-modal");
   const detailsModalTitleEl = document.getElementById("details-modal-title");
   const detailsModalStatusEl = document.getElementById("details-modal-status");
@@ -97,11 +98,13 @@
     searchQuery: "",
     focusedNodeIds: new Set(),
     extraRootIds: [],
+    expandedHiddenConnections: [],
     hiddenTypes: new Set(),
     showLowConfidence: false,
     showLowConfidenceNodes: false,
     showIndirectOnly: false,
     showSanctionedOnly: false,
+    showNegativeNewsOnly: false,
     analysisNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
@@ -288,7 +291,11 @@
 
   function addTreeFromCanvasSearch(nodeId) {
     hideCanvasSearchPopover();
-    const hasBaseTree = !!viewerState.searchQuery || viewerState.focusedNodeIds.size > 0 || viewerState.showIndirectOnly || viewerState.showSanctionedOnly;
+    const hasBaseTree = !!viewerState.searchQuery
+      || viewerState.focusedNodeIds.size > 0
+      || viewerState.showIndirectOnly
+      || viewerState.showSanctionedOnly
+      || viewerState.showNegativeNewsOnly;
     if (!hasBaseTree && !viewerState.extraRootIds.length) {
       setSingleFocus(nodeId);
       applyViewerState();
@@ -490,7 +497,7 @@
       ["show-low-confidence-nodes", "Low confidence nodes", false],
     ];
     legendEl.innerHTML = items.map(([id, label, checked]) => `
-      <label class="row">
+      <label class="row filter-toggle">
         <span class="legend-key">${escapeHtml(label)}</span>
         <input class="legend-toggle" id="${id}" type="checkbox" ${checked ? "checked" : ""} />
       </label>
@@ -699,6 +706,7 @@
     viewerState.showLowConfidenceNodes = !!showLowConfidenceNodesInput?.checked;
     viewerState.showIndirectOnly = !!indirectOnlyInput?.checked;
     viewerState.showSanctionedOnly = !!sanctionedOnlyInput?.checked;
+    viewerState.showNegativeNewsOnly = !!negativeNewsOnlyInput?.checked;
   }
 
   function getMatchedNodeIds(query) {
@@ -740,6 +748,10 @@
 
   function edgePairKey(a, b) {
     return a < b ? `${a}||${b}` : `${b}||${a}`;
+  }
+
+  function hiddenConnectionExpansionKey(sourceId, targetId, hiddenNodeIds = []) {
+    return `${sourceId}=>${(Array.isArray(hiddenNodeIds) ? hiddenNodeIds : []).join("=>")}=>${targetId}`;
   }
 
   function isBridgeStartNode(node) {
@@ -799,6 +811,84 @@
       if (edge) pathEdges.push(edge);
     }
     return pathEdges;
+  }
+
+  function setExpandedHiddenConnection(edge) {
+    if (!edge || edge.kind !== "hidden_connection") return false;
+    const hiddenNodeIds = Array.isArray(edge.hiddenNodeIds) ? edge.hiddenNodeIds.map((id) => String(id)) : [];
+    const expansion = {
+      source: String(edge.source),
+      target: String(edge.target),
+      hiddenNodeIds,
+    };
+    const nextKey = hiddenConnectionExpansionKey(expansion.source, expansion.target, expansion.hiddenNodeIds);
+    if (viewerState.expandedHiddenConnections.some((item) => (
+      hiddenConnectionExpansionKey(item.source, item.target, item.hiddenNodeIds) === nextKey
+    ))) return false;
+    viewerState.expandedHiddenConnections = [...viewerState.expandedHiddenConnections, expansion];
+    return true;
+  }
+
+  function averageLaneY(nodes, lane) {
+    const values = nodes
+      .filter((node) => Number(node?.lane || 0) === Number(lane || 0) && Number.isFinite(Number(node?.y)))
+      .map((node) => Number(node.y));
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  function applyExpandedHiddenConnectionsToScene(scene) {
+    if (!viewerState.expandedHiddenConnections.length) return scene;
+    const sceneNodes = scene.nodes.slice();
+    const sceneEdges = scene.edges.slice();
+    const nodeLookup = new Map(sceneNodes.map((node) => [String(node.id), node]));
+    const edgeKeysToHide = new Set();
+    viewerState.expandedHiddenConnections.forEach((expansion) => {
+      const sourceNode = nodeLookup.get(String(expansion.source));
+      const targetNode = nodeLookup.get(String(expansion.target));
+      if (!sourceNode || !targetNode) return;
+      const hiddenIds = Array.isArray(expansion.hiddenNodeIds) ? expansion.hiddenNodeIds : [];
+      const pathEdges = pathEdgesFromHiddenChain(expansion.source, expansion.target, hiddenIds);
+      const steps = [sourceNode, ...hiddenIds.map((id) => nodeById.get(id)).filter(Boolean), targetNode];
+      if (steps.length < 2 || !pathEdges.length) return;
+      edgeKeysToHide.add(hiddenConnectionExpansionKey(expansion.source, expansion.target, hiddenIds));
+      hiddenIds.forEach((hiddenId, index) => {
+        const key = String(hiddenId);
+        if (nodeLookup.has(key)) return;
+        const hiddenNode = nodeById.get(key);
+        if (!hiddenNode) return;
+        const clone = { ...hiddenNode };
+        const ratio = (index + 1) / (hiddenIds.length + 1);
+        const laneY = averageLaneY(sceneNodes, clone.lane);
+        clone.x = Number(sourceNode.x) + ((Number(targetNode.x) - Number(sourceNode.x)) * ratio);
+        clone.y = laneY ?? (Number(sourceNode.y) + ((Number(targetNode.y) - Number(sourceNode.y)) * ratio));
+        clone._pillWidth = pillWidth(clone);
+        clone._pillHeight = pillHeight(clone);
+        clone._focused = false;
+        clone._searchHit = false;
+        clone._expandedIndirect = true;
+        sceneNodes.push(clone);
+        nodeLookup.set(key, clone);
+      });
+      pathEdges.forEach((pathEdge) => {
+        const pathKey = `${pathEdge.kind}:${pathEdge.source}:${pathEdge.target}:${String(pathEdge.tooltip || "")}:${String(pathEdge.role_type || "")}`;
+        if (sceneEdges.some((edge) => (
+          `${edge.kind}:${edge.source}:${edge.target}:${String(edge.tooltip || "")}:${String(edge.role_type || "")}` === pathKey
+        ))) return;
+        sceneEdges.push({ ...pathEdge, _expandedIndirect: true });
+      });
+    });
+    const expandedScene = {
+      nodes: sceneNodes,
+      edges: sceneEdges.filter((edge) => {
+        if (edge.kind !== "hidden_connection") return true;
+        const hiddenIds = Array.isArray(edge.hiddenNodeIds) ? edge.hiddenNodeIds.map((id) => String(id)) : [];
+        return !edgeKeysToHide.has(hiddenConnectionExpansionKey(edge.source, edge.target, hiddenIds));
+      }),
+      rootIds: scene.rootIds,
+    };
+    ensureSceneMetadata(expandedScene.nodes, expandedScene.edges);
+    return expandedScene;
   }
 
   function findBridgeConnections(startId) {
@@ -1064,6 +1154,33 @@
     };
   }
 
+  function buildNegativeNewsProjection(options = {}) {
+    const includeLowConfidence = options.includeLowConfidence ?? (viewerState.showLowConfidence || viewerState.showLowConfidenceNodes);
+    const adverseMediaIds = new Set(
+      allNodes
+        .filter((node) => node.kind !== "seed" && node.adverse_media_hit)
+        .map((node) => node.id),
+    );
+    const visibleIds = new Set(adverseMediaIds);
+    adverseMediaIds.forEach((nodeId) => {
+      (edgesByNodeId.get(nodeId) || []).forEach((edge) => {
+        const otherId = edge.source === nodeId ? edge.target : edge.source;
+        const otherNode = nodeById.get(otherId);
+        if (!otherNode || otherNode.kind === "seed") return;
+        visibleIds.add(otherId);
+      });
+    });
+    const filteredVisibleIds = applyTypeFilters(expandRelatedAddresses(visibleIds), adverseMediaIds, { keepDisconnectedIdentities: true, includeLowConfidence });
+    const edgeIds = allEdges.filter((edge) => filteredVisibleIds.has(edge.source) && filteredVisibleIds.has(edge.target) && (includeLowConfidence || !edge.is_low_confidence));
+    return {
+      projectionType: "negative_news",
+      includeLowConfidence,
+      rootIds: [...adverseMediaIds],
+      visibleIds: filteredVisibleIds,
+      edgeIds: edgeIds.concat(deriveVisibleBridgeEdges(filteredVisibleIds)),
+    };
+  }
+
   function buildFocusedProjection(rootIds, options = {}) {
     const includeLowConfidence = options.includeLowConfidence ?? viewerState.showLowConfidence;
     if (!rootIds.size) {
@@ -1092,6 +1209,8 @@
       baseline = buildIndirectOrgProjection({ includeLowConfidence: false });
     } else if (projection.projectionType === "sanctioned") {
       baseline = buildSanctionedProjection({ includeLowConfidence: false });
+    } else if (projection.projectionType === "negative_news") {
+      baseline = buildNegativeNewsProjection({ includeLowConfidence: false });
     } else {
       baseline = buildFocusedProjection(new Set(projection.rootIds || []), { includeLowConfidence: false });
     }
@@ -1110,6 +1229,7 @@
     if (matchedIds.size) return buildSearchProjection(matchedIds);
     if (viewerState.showIndirectOnly) return buildIndirectOrgProjection();
     if (viewerState.showSanctionedOnly) return buildSanctionedProjection();
+    if (viewerState.showNegativeNewsOnly) return buildNegativeNewsProjection();
     return buildFocusedProjection(rootIds);
   }
 
@@ -1301,11 +1421,11 @@
     });
     if (scenes.length === 1) {
       const fullScene = buildSceneForProjection(baseProjection, { left: 0, right: width, top: 0 });
-      return {
+      return applyExpandedHiddenConnectionsToScene({
         nodes: fullScene.nodes,
         edges: fullScene.edges,
         rootIds: fullScene.rootIds,
-      };
+      });
     }
     const columns = scenes.length === 2 ? 2 : Math.min(scenes.length, 3);
     const outerPad = 18;
@@ -1332,7 +1452,7 @@
       });
       rowTop = rowBottom + 120;
     }
-    return { nodes: combinedNodes, edges: combinedEdges, rootIds: combinedRootIds };
+    return applyExpandedHiddenConnectionsToScene({ nodes: combinedNodes, edges: combinedEdges, rootIds: combinedRootIds });
   }
 
   function showTooltip(event, lines) {
@@ -2503,7 +2623,12 @@
     hideTooltip();
     const sourceNode = nodeById.get(edge.source);
     const targetNode = nodeById.get(edge.target);
-    const actions = evidenceActionsForEdge(edge);
+    const actions = [
+      ...(edge?.kind === "hidden_connection"
+        ? [{ type: "hidden_connection_expand", label: "Expand indirect path", edge }]
+        : []),
+      ...evidenceActionsForEdge(edge),
+    ];
     contextMenuEl._actions = actions;
     contextMenuEl.innerHTML = [
       `<div class="context-menu-title">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>`,
@@ -2695,7 +2820,10 @@
     syncVisibleAddressMarkers();
   }
 
-  async function applyViewerState() {
+  async function applyViewerState(options = {}) {
+    if (!options?.preserveExpandedHiddenConnections) {
+      viewerState.expandedHiddenConnections = [];
+    }
     syncHiddenTypeState();
     rebuildActiveGraph();
     sanitizeSelectionState();
@@ -2758,7 +2886,7 @@
         if (firstResult) addTreeFromCanvasSearch(firstResult.id);
       }
     });
-    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput]
+    [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput, negativeNewsOnlyInput]
       .forEach((input) => input.addEventListener("change", applyViewerState));
     showLowConfidenceInput.addEventListener("change", async () => {
       if (showLowConfidenceInput.checked) {
@@ -2803,6 +2931,11 @@
       const action = (contextMenuEl._actions || [])[Number(button.dataset.actionIndex || -1)];
       closeContextMenu();
       if (!action) return;
+      if (action.type === "hidden_connection_expand") {
+        if (setExpandedHiddenConnection(action.edge)) {
+          applyViewerState({ preserveExpandedHiddenConnections: true });
+        }
+      } else
       if (action.type === "open_url" && action.url) {
         window.open(action.url, "_blank", "noopener,noreferrer");
       } else if (action.type === "node_claims") {
