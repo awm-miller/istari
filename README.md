@@ -47,18 +47,17 @@ That means:
 - trustees for charities
 - officers, directors, and similar roles for companies
 
-Then it does something important: it feeds newly found people back into the same search process.
+Then it keeps looping only through organisations.
 
-In other words, if a newly discovered trustee or officer looks important, Istari can search that person too. If that search finds more organisations, those organisations get pulled into the run, and the process repeats for a limited number of rounds.
+In practice, that means newly discovered trustees or officers are kept as graph people and used for ranking, sanctions, and review, but they do not become fresh external search seeds inside the same run.
 
 So the real discovery loop is:
 
 1. find initial organisations from the seed
 2. expand connected organisations
 3. expand people from those organisations
-4. search those newly found people
-5. pull in any new organisations they reveal
-6. repeat until the run stops growing or hits its round limit
+4. run PDF enrichment across in-scope organisations
+5. repeat organisation and address expansion until the run stops growing or hits its round limit
 
 That is the core of the pipeline.
 
@@ -109,27 +108,37 @@ That usually means:
 
 These people are stored as graph nodes and role edges.
 
-### 5. Recursive person search
+### 5. PDF enrichment
 
-People discovered from those organisations can themselves become new search frontiers.
+Once an organisation is already in scope and already has people linked to it, Istari can run PDF enrichment over filings, annual reports, and similar documents for that organisation.
 
-That means the pipeline does not stop at:
+This can add:
 
-"seed -> organisation -> trustee"
+- extra person evidence
+- resolved organisation mentions
+- unresolved organisation mentions that stay visible as low-confidence review nodes
 
-It can continue to:
+### 6. Bounded recursion
 
-"seed -> organisation -> trustee -> another organisation -> more people"
+Discovery is recursive, but only on the organisation side.
 
-This is why discovery can uncover a wider network instead of just a first ring of connections.
+That means the pipeline can keep doing this:
 
-### 6. Ranking
+"seed -> organisation -> linked organisation -> address-shared organisation"
+
+But it does not do this anymore:
+
+"seed -> organisation -> trustee -> fresh external people search -> another organisation"
+
+This keeps the run bounded while still letting it pivot fully through connected organisations, registry counterparts, linked charities, address matches, and PDF-derived organisation mentions.
+
+### 7. Ranking
 
 At the end of a run, people are ranked by how strongly they connect into the discovered organisation network.
 
 In simple terms, people rise higher when they connect to more important or more numerous organisations in that seed's run.
 
-### 7. Sanctions screening
+### 8. Sanctions screening
 
 The ranked people are screened against sanctions data.
 
@@ -302,4 +311,5 @@ That cluster workflow:
 - Sanctions are cached and reused where possible.
 - Egypt judgments and negative news are both attached after graph consolidation.
 - The negative-news store is separate from the main discovery database.
+- Recursive widening now happens through organisations, registry counterparts, linked charities, addresses, and PDF-derived organisation mentions, not through downstream external searches on newly discovered people.
 - The architecture image above is meant to reflect the code path in `src/services/mvp_pipeline.py`, `scripts/rebuild_graph.py`, `src/graph/egypt_judgments.py`, and `src/graph/adverse_media.py`.

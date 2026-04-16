@@ -667,10 +667,6 @@ def run_recursive_network_discovery(
     run = repository.get_run(run_id)
     if run is None:
         raise RuntimeError(f"Run {run_id} does not exist.")
-    creativity_level = str(run["creativity_level"] or "balanced")
-    searched_people = {
-        normalize_name(str(run["seed_name"] or "")),
-    }
     rounds: list[dict[str, Any]] = []
     step2_totals: dict[str, Any] = {
         "run_id": run_id,
@@ -692,6 +688,12 @@ def run_recursive_network_discovery(
         "warnings": [],
     }
     total_person_search = {
+        "enabled": False,
+        "reason": (
+            "Downstream person frontier expansion is disabled. "
+            "The pipeline now stops after organisation discovery, in-scope people expansion, "
+            "and PDF enrichment."
+        ),
         "searched_people_count": 0,
         "linked_organisation_count": 0,
         "decision_count": 0,
@@ -725,22 +727,6 @@ def run_recursive_network_discovery(
             charity_client=charity_client,
             run_id=run_id,
         )
-        frontier_people = _collect_frontier_people(
-            repository=repository,
-            run_id=run_id,
-            searched_people=searched_people,
-        )
-        person_search = _search_people_frontier(
-            repository=repository,
-            charity_client=charity_client,
-            search_providers=search_providers,
-            matcher=matcher,
-            run_id=run_id,
-            creativity_level=creativity_level,
-            frontier_people=frontier_people,
-        )
-        for person_name in person_search["searched_people"]:
-            searched_people.add(normalize_name(str(person_name)))
         after_count = _scoped_org_count(repository, run_id)
 
         step2 = dict(discovery["step2"])
@@ -760,16 +746,21 @@ def run_recursive_network_discovery(
         step2b_totals["organisation_mentions_seen"] += int(step2b.get("organisation_mentions_seen") or 0)
         step2b_totals["warnings"].extend(step2b.get("warnings") or [])
 
-        total_person_search["searched_people_count"] += int(person_search.get("searched_people_count") or 0)
-        total_person_search["linked_organisation_count"] += int(person_search.get("linked_organisation_count") or 0)
-        total_person_search["decision_count"] += int(person_search.get("decision_count") or 0)
-        total_person_search["search_summary"]["evidence_count"] += int(person_search["search_summary"].get("evidence_count") or 0)
-        total_person_search["search_summary"]["candidate_count"] += int(person_search["search_summary"].get("candidate_count") or 0)
-        for provider_name, metrics in (person_search["search_summary"].get("provider_metrics") or {}).items():
-            bucket = total_person_search["search_summary"]["provider_metrics"].setdefault(str(provider_name), {})
-            for key, value in metrics.items():
-                bucket[str(key)] = int(bucket.get(str(key), 0)) + int(value)
-        total_person_search["resolution_metrics"] = dict(person_search.get("resolution_metrics") or {})
+        frontier_people: list[str] = []
+        person_search = {
+            "enabled": False,
+            "reason": total_person_search["reason"],
+            "searched_people": [],
+            "searched_people_count": 0,
+            "linked_organisation_count": 0,
+            "decision_count": 0,
+            "search_summary": {
+                "evidence_count": 0,
+                "candidate_count": 0,
+                "provider_metrics": {},
+            },
+            "resolution_metrics": {},
+        }
 
         rounds.append(
             {
@@ -783,7 +774,7 @@ def run_recursive_network_discovery(
             }
         )
         latest_step3 = step3
-        if after_count <= before_count and not frontier_people:
+        if after_count <= before_count:
             break
 
     return {

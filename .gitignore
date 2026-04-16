@@ -30,6 +30,7 @@ netlify_graph_viewer/
 
 Mapping/
 changes.md
+LOCAL_BUILD.md
 node_modules/
 # Local Netlify folder
 .netlify
