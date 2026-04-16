@@ -639,6 +639,30 @@ def _edge_display_person_labels(*values: object) -> list[str]:
     return labels
 
 
+def _display_person_tooltip_label(*values: object) -> str:
+    labels = _edge_display_person_labels(*values)
+    if not labels:
+        return ""
+    preferred = next((label for label in labels if "," not in label), labels[0])
+
+    def _format_part(part: str) -> str:
+        return "-".join(segment[:1] + segment[1:].lower() for segment in part.split("-") if segment)
+
+    pieces = re.split(r"(\s+)", preferred)
+    formatted: list[str] = []
+    for piece in pieces:
+        if not piece or piece.isspace():
+            formatted.append(piece)
+            continue
+        match = re.match(r"^([^A-Za-z]*)([A-Z][A-Z'`-]*)([^A-Za-z]*)$", piece)
+        if not match:
+            formatted.append(piece)
+            continue
+        prefix, word, suffix = match.groups()
+        formatted.append(f"{prefix}{_format_part(word)}{suffix}")
+    return "".join(formatted)
+
+
 def _sanction_warning(matches: list[dict[str, object]]) -> str:
     sources = _sanction_source_labels(matches)
     has_eu_source = "EU-linked" in sources
@@ -1189,7 +1213,9 @@ def consolidate_run(run_id: int) -> dict:
     for pe in person_org_edges:
         person_node = next((n for n in nodes if n["id"] == pe["source"]), None)
         org_node = next((n for n in nodes if n["id"] == pe["target"]), None)
-        p_label = person_node["label"] if person_node else pe["source"]
+        p_label = _display_person_tooltip_label(pe.get("display_person_labels") or []) or (
+            person_node["label"] if person_node else pe["source"]
+        )
         o_label = org_node["label"] if org_node else pe["target"]
         graph_edges.append({
             "source": pe["source"],
