@@ -829,6 +829,112 @@
     return true;
   }
 
+  function nodeRect(node, x = Number(node?.x || 0), y = Number(node?.y || 0)) {
+    const width = Number(node?._pillWidth || pillWidth(node));
+    const height = Number(node?._pillHeight || pillHeight(node));
+    return {
+      left: x - (width / 2),
+      right: x + (width / 2),
+      top: y - (height / 2),
+      bottom: y + (height / 2),
+    };
+  }
+
+  function rectsOverlap(left, right, margin = 12) {
+    return !(
+      (left.right + margin) < right.left
+      || (right.right + margin) < left.left
+      || (left.bottom + margin) < right.top
+      || (right.bottom + margin) < left.top
+    );
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function placeExpandedHiddenNodesAlongConnection(hiddenNodes, sourceNode, targetNode, existingNodes, bounds) {
+    if (!hiddenNodes.length) return;
+    const pathNodes = [sourceNode, ...hiddenNodes, targetNode];
+    const sourceX = Number(sourceNode.x || 0);
+    const sourceY = Number(sourceNode.y || 0);
+    const targetX = Number(targetNode.x || 0);
+    const targetY = Number(targetNode.y || 0);
+    hiddenNodes.forEach((node, index) => {
+      const t = (index + 1) / (hiddenNodes.length + 1);
+      node.x = sourceX + ((targetX - sourceX) * t);
+      node.y = sourceY + ((targetY - sourceY) * t);
+    });
+    for (let pass = 0; pass < 3; pass += 1) {
+      for (let index = 1; index < pathNodes.length - 1; index += 1) {
+        const node = pathNodes[index];
+        const prev = pathNodes[index - 1];
+        const next = pathNodes[index + 1];
+        node.x = (Number(prev.x || 0) + Number(next.x || 0)) / 2;
+        node.y = (Number(prev.y || 0) + Number(next.y || 0)) / 2;
+      }
+    }
+    const lineStep = 26;
+    const perpendicularStep = 28;
+    const offsetRanks = [0, 1, -1, 2, -2, 3, -3, 4, -4];
+    const alongRanks = [0, 1, -1, 2, -2];
+    const paddedBounds = bounds
+      ? {
+          left: Number(bounds.left || 0) + 12,
+          right: Number(bounds.right || 0) - 12,
+          top: Number(bounds.top || 0) + 12,
+          bottom: Number(bounds.bottom || 0) - 12,
+        }
+      : null;
+    hiddenNodes.forEach((node, index) => {
+      const prev = pathNodes[index];
+      const next = pathNodes[index + 2];
+      const baseX = Number(node.x || 0);
+      const baseY = Number(node.y || 0);
+      const dx = Number(next?.x || 0) - Number(prev?.x || 0);
+      const dy = Number(next?.y || 0) - Number(prev?.y || 0);
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const ux = dx / distance;
+      const uy = dy / distance;
+      const px = -uy;
+      const py = ux;
+      node._pillWidth = pillWidth(node);
+      node._pillHeight = pillHeight(node);
+      node._focused = false;
+      node._searchHit = false;
+      let chosen = null;
+      for (const perpRank of offsetRanks) {
+        for (const alongRank of alongRanks) {
+          const rawX = baseX + (px * perpendicularStep * perpRank) + (ux * lineStep * alongRank);
+          const rawY = baseY + (py * perpendicularStep * perpRank) + (uy * lineStep * alongRank);
+          const halfW = node._pillWidth / 2;
+          const halfH = node._pillHeight / 2;
+          const candidateX = paddedBounds
+            ? clamp(rawX, paddedBounds.left + halfW, paddedBounds.right - halfW)
+            : rawX;
+          const candidateY = paddedBounds
+            ? clamp(rawY, paddedBounds.top + halfH, paddedBounds.bottom - halfH)
+            : rawY;
+          const candidateRect = nodeRect(node, candidateX, candidateY);
+          const collision = existingNodes.some((other) => rectsOverlap(candidateRect, nodeRect(other)));
+          if (collision) continue;
+          chosen = { x: candidateX, y: candidateY };
+          break;
+        }
+        if (chosen) break;
+      }
+      if (!chosen) {
+        chosen = {
+          x: baseX + (px * perpendicularStep * ((index % 2 === 0 ? 1 : -1) * (Math.floor(index / 2) + 1))),
+          y: baseY + (py * perpendicularStep * ((index % 2 === 0 ? 1 : -1) * (Math.floor(index / 2) + 1))),
+        };
+      }
+      node.x = chosen.x;
+      node.y = chosen.y;
+      existingNodes.push(node);
+    });
+  }
+
   function applyExpandedHiddenConnectionsToScene(scene, bounds) {
     if (!viewerState.expandedHiddenConnections.length) return scene;
     const sceneNodes = scene.nodes.slice();
@@ -844,6 +950,7 @@
       const steps = [sourceNode, ...hiddenIds.map((id) => nodeById.get(id)).filter(Boolean), targetNode];
       if (steps.length < 2 || !pathEdges.length) return;
       edgeKeysToHide.add(hiddenConnectionExpansionKey(expansion.source, expansion.target, hiddenIds));
+      const insertedHiddenNodes = [];
       hiddenIds.forEach((hiddenId) => {
         const key = String(hiddenId);
         if (nodeLookup.has(key)) return;
@@ -851,9 +958,17 @@
         if (!hiddenNode) return;
         const clone = { ...hiddenNode };
         clone._expandedIndirect = true;
-        sceneNodes.push(clone);
+        insertedHiddenNodes.push(clone);
         nodeLookup.set(key, clone);
       });
+      placeExpandedHiddenNodesAlongConnection(
+        insertedHiddenNodes,
+        sourceNode,
+        targetNode,
+        sceneNodes,
+        bounds,
+      );
+      sceneNodes.push(...insertedHiddenNodes.filter((node) => !sceneNodes.includes(node)));
       pathEdges.forEach((pathEdge) => {
         const pathKey = `${pathEdge.kind}:${pathEdge.source}:${pathEdge.target}:${String(pathEdge.tooltip || "")}:${String(pathEdge.role_type || "")}`;
         if (sceneEdges.some((edge) => (
@@ -871,9 +986,6 @@
       }),
       rootIds: scene.rootIds,
     };
-    if (bounds) {
-      layoutNodesInBounds(expandedScene.nodes, expandedScene.edges, new Set(expandedScene.rootIds || []), bounds);
-    }
     ensureSceneMetadata(expandedScene.nodes, expandedScene.edges);
     return expandedScene;
   }
