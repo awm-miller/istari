@@ -166,6 +166,16 @@ def _person_name_keys(payload: dict[str, Any]) -> set[str]:
     return keys
 
 
+def _can_use_direct_cluster_match(node: dict[str, Any]) -> bool:
+    node_id = str(node.get("id") or "").strip().lower()
+    node_kind = str(node.get("kind") or "").strip().lower()
+    if node_kind == "person":
+        return False
+    if node_id.startswith("merged_person:") or node_id.startswith("person:"):
+        return False
+    return True
+
+
 def _translate_claim_titles(
     claims_by_cluster: dict[str, list[dict[str, Any]]],
     *,
@@ -216,7 +226,7 @@ def annotate_graph_with_adverse_media(
         node_id = str(node.get("id") or "").strip()
         lookup_key = cluster_lookup_key(node)
         fingerprint = person_ids_fingerprint(node.get("person_ids"))
-        claims = claims_by_cluster.get(node_id)
+        claims = claims_by_cluster.get(node_id) if _can_use_direct_cluster_match(node) else None
         if not claims:
             claims = claims_by_lookup_key.get(lookup_key) if lookup_key else None
         if not claims:
