@@ -668,43 +668,79 @@ class PdfEnrichmentService:
     def _find_cc_accounts_documents(
         self, organisation_name: str, charity_number: str,
     ) -> list[PdfSourceDocument]:
-        accounts_url = (
-            f"{_CHARITY_COMMISSION_REGISTER_BASE_URL}/en/charity-search/-/charity-details/"
-            f"{charity_number}/accounts-and-annual-returns"
-        )
-        try:
-            html_text = self._fetch_text(accounts_url)
-        except RuntimeError as exc:
-            log.warning("CC accounts page fetch failed for %s: %s", charity_number, exc)
-            return []
-
         documents: list[PdfSourceDocument] = []
         seen_urls: set[str] = set()
-        for row_html in re.findall(r"<tr[^>]*>.*?</tr>", html_text, flags=re.IGNORECASE | re.DOTALL):
-            if "accounts-resource" not in row_html or "Accounts and TAR" not in row_html:
-                continue
-            href_match = re.search(r'href="([^"]+)"', row_html, flags=re.IGNORECASE)
-            if not href_match:
-                continue
-            href = html.unescape(href_match.group(1))
-            doc_url = urljoin(_CHARITY_COMMISSION_REGISTER_BASE_URL, href)
-            if doc_url in seen_urls:
-                continue
-            seen_urls.add(doc_url)
+        organisation_number = ""
+        try:
+            resolved = search_name_to_organisation(self.charity_client, organisation_name) if self.charity_client else None
+        except Exception:
+            resolved = None
+        if resolved and resolved.organisation_number:
+            organisation_number = str(resolved.organisation_number).strip()
 
-            row_text = _clean_text(re.sub(r"<[^>]+>", " ", html.unescape(row_html)))
-            year_match = re.search(r"\b(19|20)\d{2}\b", row_text)
-            reporting_year = year_match.group(0) if year_match else ""
-            filing_desc = f"Accounts and TAR ({reporting_year})" if reporting_year else "Accounts and TAR"
-            documents.append(
-                PdfSourceDocument(
-                    organisation_name=organisation_name,
-                    document_url=doc_url,
-                    title=f"{organisation_name} - {filing_desc}",
-                    source_provider="charity_commission_accounts_tar",
-                    filing_description=filing_desc,
-                )
+        page_keys: list[str] = []
+        if organisation_number:
+            page_keys.append(organisation_number)
+        if charity_number and charity_number not in page_keys:
+            page_keys.append(charity_number)
+
+        for page_key in page_keys:
+            accounts_url = (
+                f"{_CHARITY_COMMISSION_REGISTER_BASE_URL}/en/charity-search/-/charity-details/"
+                f"{page_key}/accounts-and-annual-returns"
             )
+            try:
+                html_text = self._fetch_text(accounts_url)
+            except RuntimeError as exc:
+                log.warning("CC accounts page fetch failed for %s via %s: %s", charity_number, page_key, exc)
+                continue
+
+            for row_html in re.findall(r"<tr[^>]*>.*?</tr>", html_text, flags=re.IGNORECASE | re.DOTALL):
+                if "accounts-resource" not in row_html:
+                    continue
+                href_match = re.search(r'href="([^"]+)"', row_html, flags=re.IGNORECASE)
+                if not href_match:
+                    continue
+                href = html.unescape(href_match.group(1))
+                doc_url = urljoin(_CHARITY_COMMISSION_REGISTER_BASE_URL, href)
+                if doc_url in seen_urls:
+                    continue
+                seen_urls.add(doc_url)
+
+                row_text = _clean_text(re.sub(r"<[^>]+>", " ", html.unescape(row_html)))
+                year_match = re.search(r"\b(19|20)\d{2}\b", row_text)
+                reporting_year = year_match.group(0) if year_match else ""
+                filing_desc = f"Accounts and TAR ({reporting_year})" if reporting_year else "Accounts and TAR"
+                documents.append(
+                    PdfSourceDocument(
+                        organisation_name=organisation_name,
+                        document_url=doc_url,
+                        title=f"{organisation_name} - {filing_desc}",
+                        source_provider="charity_commission_accounts_tar",
+                        filing_description=filing_desc,
+                    )
+                )
+
+            if documents:
+                continue
+
+            for href in re.findall(r'href="([^"]+)"', html_text, flags=re.IGNORECASE):
+                href = html.unescape(href)
+                if "accounts-resource" not in href:
+                    continue
+                doc_url = urljoin(_CHARITY_COMMISSION_REGISTER_BASE_URL, href)
+                if doc_url in seen_urls:
+                    continue
+                seen_urls.add(doc_url)
+                documents.append(
+                    PdfSourceDocument(
+                        organisation_name=organisation_name,
+                        document_url=doc_url,
+                        title=f"{organisation_name} - Accounts and TAR",
+                        source_provider="charity_commission_accounts_tar",
+                        filing_description="Accounts and TAR",
+                    )
+                )
         return documents
 
     def _fetch_text(self, url: str) -> str:

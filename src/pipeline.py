@@ -18,6 +18,10 @@ from src.services.mvp_pipeline import (
 from src.storage.repository import Repository
 
 
+def _seed_key(value: str) -> str:
+    return " ".join(str(value or "").replace("\ufeff", "").split()).strip().lower()
+
+
 def run_name_pipeline(
     *,
     repository: Repository,
@@ -52,6 +56,7 @@ def run_seed_batch_pipeline(
     creativity_level: str,
     limit: int,
     overlap_limit: int = 25,
+    resume_existing: bool = False,
 ) -> dict[str, Any]:
     cleaned_seeds: list[str] = []
     seen: set[str] = set()
@@ -68,17 +73,39 @@ def run_seed_batch_pipeline(
     runs: list[dict[str, Any]] = []
     run_ids: list[int] = []
     resolution_metrics_total: dict[str, int] = {}
+    latest_runs_by_seed: dict[str, int] = {}
+    if resume_existing:
+        for existing_run_id in repository.get_latest_unique_run_ids():
+            run_row = repository.get_run(existing_run_id)
+            if run_row is None:
+                continue
+            latest_runs_by_seed[_seed_key(str(run_row["seed_name"] or ""))] = int(existing_run_id)
     for seed in cleaned_seeds:
-        result = run_name_pipeline(
-            repository=repository,
-            settings=settings,
-            charity_client=charity_client,
-            search_providers=search_providers,
-            matcher=matcher,
-            seed_name=seed,
-            creativity_level=creativity_level,
-            limit=limit,
-        )
+        existing_run_id = latest_runs_by_seed.get(_seed_key(seed))
+        if existing_run_id:
+            result = resume_run_pipeline(
+                repository=repository,
+                settings=settings,
+                charity_client=charity_client,
+                search_providers=search_providers,
+                matcher=matcher,
+                run_id=existing_run_id,
+                limit=limit,
+            )
+            result["seed_name"] = seed
+            result["resumed_existing_run"] = True
+        else:
+            result = run_name_pipeline(
+                repository=repository,
+                settings=settings,
+                charity_client=charity_client,
+                search_providers=search_providers,
+                matcher=matcher,
+                seed_name=seed,
+                creativity_level=creativity_level,
+                limit=limit,
+            )
+            result["resumed_existing_run"] = False
         run_id = int(result["run_id"])
         run_ids.append(run_id)
         metrics = result.get("resolution_metrics", {})
@@ -88,6 +115,7 @@ def run_seed_batch_pipeline(
             {
                 "seed_name": seed,
                 "run_id": run_id,
+                "resumed_existing_run": bool(result.get("resumed_existing_run")),
                 "decision_count": int(result.get("decision_count", 0)),
                 "search_summary": result.get("search_summary", {}),
                 "resolution_metrics": metrics,
@@ -101,6 +129,7 @@ def run_seed_batch_pipeline(
         "mode": "multi_seed",
         "seed_names": cleaned_seeds,
         "run_ids": run_ids,
+        "resume_existing": bool(resume_existing),
         "runs": runs,
         "overlap_people": _decorate_overlap_people([dict(row) for row in overlap_people]),
         "overlap_organisations": _decorate_overlap_organisations([dict(row) for row in overlap_orgs]),

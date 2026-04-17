@@ -131,6 +131,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_seeds_parser.add_argument("--limit", type=int, default=25)
     run_seeds_parser.add_argument("--overlap-limit", type=int, default=25)
+    run_seeds_parser.add_argument(
+        "--resume-existing",
+        action="store_true",
+        help="Resume the latest existing run for each seed instead of always creating a new run.",
+    )
 
     rank_parser = subparsers.add_parser("rank", help="Rank people by connected organisations.")
     rank_parser.add_argument("--limit", type=int, default=25)
@@ -446,6 +451,7 @@ def main() -> None:
             creativity_level=args.creativity,
             limit=int(args.limit),
             overlap_limit=int(args.overlap_limit),
+            resume_existing=bool(getattr(args, "resume_existing", False)),
         )
         print(json.dumps(result, indent=2))
         return
