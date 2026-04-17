@@ -754,6 +754,10 @@
     return `${sourceId}=>${(Array.isArray(hiddenNodeIds) ? hiddenNodeIds : []).join("=>")}=>${targetId}`;
   }
 
+  function expandedHiddenCloneId(expansionKey, nodeId) {
+    return `expanded:${expansionKey}:${nodeId}`;
+  }
+
   function isBridgeStartNode(node) {
     return !!node && node.kind === "organisation";
   }
@@ -853,85 +857,72 @@
     return Math.min(max, Math.max(min, value));
   }
 
-  function placeExpandedHiddenNodesAlongConnection(hiddenNodes, sourceNode, targetNode, existingNodes, bounds) {
-    if (!hiddenNodes.length) return;
-    const pathNodes = [sourceNode, ...hiddenNodes, targetNode];
-    const sourceX = Number(sourceNode.x || 0);
-    const sourceY = Number(sourceNode.y || 0);
-    const targetX = Number(targetNode.x || 0);
-    const targetY = Number(targetNode.y || 0);
-    hiddenNodes.forEach((node, index) => {
-      const t = (index + 1) / (hiddenNodes.length + 1);
-      node.x = sourceX + ((targetX - sourceX) * t);
-      node.y = sourceY + ((targetY - sourceY) * t);
+  function expandedHiddenLaneFor(node) {
+    if (!node) return 2;
+    const declared = Number(node.lane || 0);
+    if (declared >= 1 && declared <= 4) return declared;
+    if (node.kind === "address") return 3;
+    if (node.kind === "person") return 4;
+    if (node.kind === "seed" || node.kind === "seed_alias") return 1;
+    return 2;
+  }
+
+  function computeExpandedHiddenLaneCenters(sceneNodes) {
+    const buckets = new Map();
+    sceneNodes.forEach((node) => {
+      const lane = expandedHiddenLaneFor(node);
+      if (!buckets.has(lane)) buckets.set(lane, []);
+      buckets.get(lane).push(Number(node.y || 0));
     });
-    for (let pass = 0; pass < 3; pass += 1) {
-      for (let index = 1; index < pathNodes.length - 1; index += 1) {
-        const node = pathNodes[index];
-        const prev = pathNodes[index - 1];
-        const next = pathNodes[index + 1];
-        node.x = (Number(prev.x || 0) + Number(next.x || 0)) / 2;
-        node.y = (Number(prev.y || 0) + Number(next.y || 0)) / 2;
-      }
-    }
-    const lineStep = 26;
-    const perpendicularStep = 28;
-    const offsetRanks = [0, 1, -1, 2, -2, 3, -3, 4, -4];
-    const alongRanks = [0, 1, -1, 2, -2];
-    const paddedBounds = bounds
-      ? {
-          left: Number(bounds.left || 0) + 12,
-          right: Number(bounds.right || 0) - 12,
-          top: Number(bounds.top || 0) + 12,
-          bottom: Number(bounds.bottom || 0) - 12,
-        }
-      : null;
-    hiddenNodes.forEach((node, index) => {
-      const prev = pathNodes[index];
-      const next = pathNodes[index + 2];
-      const baseX = Number(node.x || 0);
-      const baseY = Number(node.y || 0);
-      const dx = Number(next?.x || 0) - Number(prev?.x || 0);
-      const dy = Number(next?.y || 0) - Number(prev?.y || 0);
-      const distance = Math.max(1, Math.hypot(dx, dy));
-      const ux = dx / distance;
-      const uy = dy / distance;
-      const px = -uy;
-      const py = ux;
+    const centers = new Map();
+    buckets.forEach((ys, lane) => {
+      if (!ys.length) return;
+      const min = Math.min(...ys);
+      const max = Math.max(...ys);
+      centers.set(lane, (min + max) / 2);
+    });
+    return centers;
+  }
+
+  function placeExpandedHiddenNodesAlongConnection(hiddenNodes, sourceNode, targetNode, existingNodes, _bounds, options = {}) {
+    if (!hiddenNodes.length) return;
+    const expansionIndex = Number(options.expansionIndex || 0);
+    const laneCenters = options.laneCenters || computeExpandedHiddenLaneCenters(existingNodes);
+    let leftmostX = Number.POSITIVE_INFINITY;
+    existingNodes.forEach((node) => {
+      const halfWidth = Number(node._pillWidth || pillWidth(node)) / 2;
+      const left = Number(node.x || 0) - halfWidth;
+      if (left < leftmostX) leftmostX = left;
+    });
+    if (!Number.isFinite(leftmostX)) leftmostX = 0;
+    const fallbackY = (Number(sourceNode?.y || 0) + Number(targetNode?.y || 0)) / 2;
+    const widths = hiddenNodes.map((node) => pillWidth(node));
+    const maxWidth = Math.max(...widths);
+    const sideMargin = 80;
+    const columnSpacing = 110;
+    const columnX = leftmostX - sideMargin - (maxWidth / 2) - (expansionIndex * columnSpacing);
+    const byLane = new Map();
+    hiddenNodes.slice().reverse().forEach((node) => {
       node._pillWidth = pillWidth(node);
       node._pillHeight = pillHeight(node);
       node._focused = false;
       node._searchHit = false;
-      let chosen = null;
-      for (const perpRank of offsetRanks) {
-        for (const alongRank of alongRanks) {
-          const rawX = baseX + (px * perpendicularStep * perpRank) + (ux * lineStep * alongRank);
-          const rawY = baseY + (py * perpendicularStep * perpRank) + (uy * lineStep * alongRank);
-          const halfW = node._pillWidth / 2;
-          const halfH = node._pillHeight / 2;
-          const candidateX = paddedBounds
-            ? clamp(rawX, paddedBounds.left + halfW, paddedBounds.right - halfW)
-            : rawX;
-          const candidateY = paddedBounds
-            ? clamp(rawY, paddedBounds.top + halfH, paddedBounds.bottom - halfH)
-            : rawY;
-          const candidateRect = nodeRect(node, candidateX, candidateY);
-          const collision = existingNodes.some((other) => rectsOverlap(candidateRect, nodeRect(other)));
-          if (collision) continue;
-          chosen = { x: candidateX, y: candidateY };
-          break;
-        }
-        if (chosen) break;
-      }
-      if (!chosen) {
-        chosen = {
-          x: baseX + (px * perpendicularStep * ((index % 2 === 0 ? 1 : -1) * (Math.floor(index / 2) + 1))),
-          y: baseY + (py * perpendicularStep * ((index % 2 === 0 ? 1 : -1) * (Math.floor(index / 2) + 1))),
-        };
-      }
-      node.x = chosen.x;
-      node.y = chosen.y;
-      existingNodes.push(node);
+      const lane = expandedHiddenLaneFor(node);
+      if (!byLane.has(lane)) byLane.set(lane, []);
+      byLane.get(lane).push(node);
+    });
+    const rowGap = 22;
+    byLane.forEach((nodes, lane) => {
+      const baseY = laneCenters.has(lane) ? laneCenters.get(lane) : fallbackY;
+      const totalHeight = nodes.reduce((sum, node) => sum + node._pillHeight, 0)
+        + (rowGap * Math.max(0, nodes.length - 1));
+      let cursor = baseY - (totalHeight / 2);
+      nodes.forEach((node) => {
+        node.x = columnX;
+        node.y = cursor + (node._pillHeight / 2);
+        cursor += node._pillHeight + rowGap;
+        existingNodes.push(node);
+      });
     });
   }
 
@@ -940,26 +931,38 @@
     const sceneNodes = scene.nodes.slice();
     const sceneEdges = scene.edges.slice();
     const nodeLookup = new Map(sceneNodes.map((node) => [String(node.id), node]));
+    const baseVisibleNodeIds = new Set(scene.nodes.map((node) => String(node.id)));
     const edgeKeysToHide = new Set();
-    viewerState.expandedHiddenConnections.forEach((expansion) => {
+    const sceneLaneCenters = computeExpandedHiddenLaneCenters(scene.nodes);
+    viewerState.expandedHiddenConnections.forEach((expansion, expansionIndex) => {
       const sourceNode = nodeLookup.get(String(expansion.source));
       const targetNode = nodeLookup.get(String(expansion.target));
       if (!sourceNode || !targetNode) return;
       const hiddenIds = Array.isArray(expansion.hiddenNodeIds) ? expansion.hiddenNodeIds : [];
+      const expansionKey = hiddenConnectionExpansionKey(expansion.source, expansion.target, hiddenIds);
       const pathEdges = pathEdgesFromHiddenChain(expansion.source, expansion.target, hiddenIds);
       const steps = [sourceNode, ...hiddenIds.map((id) => nodeById.get(id)).filter(Boolean), targetNode];
       if (steps.length < 2 || !pathEdges.length) return;
-      edgeKeysToHide.add(hiddenConnectionExpansionKey(expansion.source, expansion.target, hiddenIds));
+      edgeKeysToHide.add(expansionKey);
       const insertedHiddenNodes = [];
+      const expandedNodeIds = new Map([
+        [String(expansion.source), String(expansion.source)],
+        [String(expansion.target), String(expansion.target)],
+      ]);
       hiddenIds.forEach((hiddenId) => {
         const key = String(hiddenId);
-        if (nodeLookup.has(key)) return;
+        if (baseVisibleNodeIds.has(key)) {
+          expandedNodeIds.set(key, key);
+          return;
+        }
         const hiddenNode = nodeById.get(key);
         if (!hiddenNode) return;
-        const clone = { ...hiddenNode };
+        const cloneId = expandedHiddenCloneId(expansionKey, key);
+        const clone = { ...hiddenNode, id: cloneId, _expandedIndirectBaseId: key };
         clone._expandedIndirect = true;
         insertedHiddenNodes.push(clone);
-        nodeLookup.set(key, clone);
+        nodeLookup.set(cloneId, clone);
+        expandedNodeIds.set(key, cloneId);
       });
       placeExpandedHiddenNodesAlongConnection(
         insertedHiddenNodes,
@@ -967,14 +970,25 @@
         targetNode,
         sceneNodes,
         bounds,
+        {
+          expansionIndex,
+          laneCenters: sceneLaneCenters,
+        },
       );
       sceneNodes.push(...insertedHiddenNodes.filter((node) => !sceneNodes.includes(node)));
       pathEdges.forEach((pathEdge) => {
-        const pathKey = `${pathEdge.kind}:${pathEdge.source}:${pathEdge.target}:${String(pathEdge.tooltip || "")}:${String(pathEdge.role_type || "")}`;
+        const remappedSource = expandedNodeIds.get(String(pathEdge.source)) || String(pathEdge.source);
+        const remappedTarget = expandedNodeIds.get(String(pathEdge.target)) || String(pathEdge.target);
+        const pathKey = `${pathEdge.kind}:${remappedSource}:${remappedTarget}:${String(pathEdge.tooltip || "")}:${String(pathEdge.role_type || "")}`;
         if (sceneEdges.some((edge) => (
           `${edge.kind}:${edge.source}:${edge.target}:${String(edge.tooltip || "")}:${String(edge.role_type || "")}` === pathKey
         ))) return;
-        sceneEdges.push({ ...pathEdge, _expandedIndirect: true });
+        sceneEdges.push({
+          ...pathEdge,
+          source: remappedSource,
+          target: remappedTarget,
+          _expandedIndirect: true,
+        });
       });
     });
     const expandedScene = {
@@ -2999,7 +3013,9 @@
       rootIds: scene.rootIds,
     });
     renderExtraTreeSummary();
-    renderer.fitToNodes(visibleNodes);
+    if (!options?.preserveViewport) {
+      renderer.fitToNodes(visibleNodes);
+    }
     renderScorePanel();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
@@ -3091,7 +3107,7 @@
       if (!action) return;
       if (action.type === "hidden_connection_expand") {
         if (setExpandedHiddenConnection(action.edge)) {
-          applyViewerState({ preserveExpandedHiddenConnections: true });
+          applyViewerState({ preserveExpandedHiddenConnections: true, preserveViewport: true });
         }
       } else
       if (action.type === "open_url" && action.url) {
