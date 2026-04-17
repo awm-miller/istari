@@ -490,7 +490,9 @@ class PdfEnrichmentService:
                 seen_org_ids.add(oid)
                 deduped.append(org)
         organisations = deduped
-        self._run_seen_urls: set[str] = set()
+        self._run_seen_urls = set(
+            self.repository.get_evidence_urls_for_run(run_id, source="pdf_gemini_extraction")
+        )
         log.info("PDF enrichment: starting for %d unique organisations (deduped from %d rows)", len(organisations), len(seen_org_ids))
         for org_index, organisation in enumerate(organisations, start=1):
             log.info("PDF enrichment: org %d/%d: %s", org_index, len(organisations), _clean_text(organisation["name"]))

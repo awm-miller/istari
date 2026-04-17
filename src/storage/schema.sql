@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS run_organisations (
     UNIQUE(run_id, organisation_id, stage, source)
 );
 
+CREATE TABLE IF NOT EXISTS run_org_processing (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    organisation_id INTEGER NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(run_id, organisation_id, stage)
+);
+
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     canonical_name TEXT NOT NULL,
@@ -154,5 +164,6 @@ CREATE INDEX IF NOT EXISTS idx_person_sanctions_is_sanctioned ON person_sanction
 CREATE INDEX IF NOT EXISTS idx_people_canonical_name ON people(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_run_id ON run_organisations(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_orgs_org_id ON run_organisations(organisation_id);
+CREATE INDEX IF NOT EXISTS idx_run_org_processing_run_stage ON run_org_processing(run_id, stage);
 CREATE INDEX IF NOT EXISTS idx_org_addresses_org_id ON organisation_addresses(organisation_id);
 CREATE INDEX IF NOT EXISTS idx_org_addresses_address_id ON organisation_addresses(address_id);

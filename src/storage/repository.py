@@ -280,6 +280,102 @@ class Repository:
             ).fetchone()
             return int(row["id"])
 
+    def mark_run_organisation_processed(
+        self,
+        run_id: int,
+        organisation_id: int,
+        *,
+        stage: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO run_org_processing(
+                    run_id,
+                    organisation_id,
+                    stage,
+                    metadata_json,
+                    processed_at
+                ) VALUES(?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (
+                    int(run_id),
+                    int(organisation_id),
+                    str(stage),
+                    json.dumps(metadata or {}),
+                ),
+            )
+
+    def mark_run_organisations_processed(
+        self,
+        run_id: int,
+        organisation_ids: list[int] | set[int],
+        *,
+        stage: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        cleaned_ids = sorted({int(org_id) for org_id in organisation_ids if int(org_id) > 0})
+        if not cleaned_ids:
+            return
+        payload = json.dumps(metadata or {})
+        with self.connect() as connection:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO run_org_processing(
+                    run_id,
+                    organisation_id,
+                    stage,
+                    metadata_json,
+                    processed_at
+                ) VALUES(?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [
+                    (
+                        int(run_id),
+                        int(organisation_id),
+                        str(stage),
+                        payload,
+                    )
+                    for organisation_id in cleaned_ids
+                ],
+            )
+
+    def get_processed_run_organisation_ids(
+        self,
+        run_id: int,
+        *,
+        stage: str,
+    ) -> set[int]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT organisation_id
+                FROM run_org_processing
+                WHERE run_id = ? AND stage = ?
+                """,
+                (int(run_id), str(stage)),
+            ).fetchall()
+            return {int(row["organisation_id"]) for row in rows}
+
+    def has_run_organisation_processing(
+        self,
+        run_id: int,
+        *,
+        stage: str,
+    ) -> bool:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM run_org_processing
+                WHERE run_id = ? AND stage = ?
+                LIMIT 1
+                """,
+                (int(run_id), str(stage)),
+            ).fetchone()
+            return row is not None
+
     def get_run_organisations(
         self,
         run_id: int,
@@ -668,6 +764,25 @@ class Repository:
                 """,
                 (run_id,),
             ).fetchall()
+
+    def get_evidence_urls_for_run(
+        self,
+        run_id: int,
+        *,
+        source: str | None = None,
+    ) -> set[str]:
+        sql = """
+            SELECT DISTINCT url
+            FROM evidence_items
+            WHERE run_id = ? AND url != ''
+        """
+        params: list[Any] = [int(run_id)]
+        if source:
+            sql += " AND source = ?"
+            params.append(str(source))
+        with self.connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+            return {str(row["url"] or "").strip() for row in rows if str(row["url"] or "").strip()}
 
     def get_ranked_people(self, limit: int = 25) -> list[sqlite3.Row]:
         with self.connect() as connection:

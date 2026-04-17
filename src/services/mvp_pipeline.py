@@ -36,6 +36,8 @@ log = logging.getLogger("istari.pipeline")
 
 STEP1_STAGE = "step1_seed_match"
 STEP2_STAGE = "step2_connected_org"
+STEP2_PROGRESS_STAGE = "progress_step2_connected_org"
+STEP3_PROGRESS_STAGE = "progress_step3_connected_people"
 
 
 def _registry_name_key(value: str) -> str:
@@ -230,6 +232,10 @@ def step2_expand_connected_organisations(
     run_id: int,
 ) -> dict[str, Any]:
     scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    processed_org_ids = repository.get_processed_run_organisation_ids(
+        run_id,
+        stage=STEP2_PROGRESS_STAGE,
+    )
     settings = getattr(charity_client, "settings", None)
     companies_house_client = CompaniesHouseClient(settings) if isinstance(settings, Settings) else None
     queue: list[dict[str, Any]] = []
@@ -249,10 +255,13 @@ def step2_expand_connected_organisations(
 
     processed = 0
     linked_count = 0
+    address_count = 0
+    address_pivot_count = 0
     queue_index = 0
     while queue_index < len(queue):
         organisation = queue[queue_index]
         queue_index += 1
+        organisation_id = int(organisation["id"] or 0)
         org_key = (
             str(organisation["registry_type"] or ""),
             str(organisation["registry_number"] or ""),
@@ -261,6 +270,8 @@ def step2_expand_connected_organisations(
         if org_key in visited_keys:
             continue
         visited_keys.add(org_key)
+        if organisation_id and organisation_id in processed_org_ids:
+            continue
         processed += 1
         if organisation["registry_type"] != "charity":
             connected = []
@@ -294,6 +305,7 @@ def step2_expand_connected_organisations(
             queued_keys.add(linked_key)
             queue.append(
                 {
+                    "id": int(linked["organisation_id"]),
                     "registry_type": str(linked["registry_type"] or ""),
                     "registry_number": str(linked["registry_number"] or ""),
                     "suffix": int(linked["suffix"] or 0),
@@ -333,24 +345,19 @@ def step2_expand_connected_organisations(
             queued_keys.add(linked_key)
             queue.append(
                 {
+                    "id": counterpart_id,
                     "registry_type": counterpart.registry_type,
                     "registry_number": counterpart.registry_number,
                     "suffix": int(counterpart.suffix or 0),
                     "name": counterpart.name,
                 }
             )
-
-    address_count = 0
-    address_pivot_count = 0
-    if isinstance(settings, Settings):
-        address_searcher = AddressPivotSearcher(
-            settings=settings,
-            charity_client=charity_client,
-            companies_house_client=companies_house_client,
-        )
-        scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
-        seen_address_keys: set[str] = set()
-        for organisation in scoped_organisations:
+        if isinstance(settings, Settings):
+            address_searcher = AddressPivotSearcher(
+                settings=settings,
+                charity_client=charity_client,
+                companies_house_client=companies_house_client,
+            )
             hydrated = _hydrate_organisation_for_addresses(
                 repository=repository,
                 charity_client=charity_client,
@@ -367,6 +374,7 @@ def step2_expand_connected_organisations(
                 source=str(hydrated["source"]),
             )
             address_count += len(stored_addresses)
+            seen_address_keys: set[str] = set()
             for stored in stored_addresses:
                 address = stored["address"]
                 if address.normalized_key in seen_address_keys:
@@ -407,6 +415,31 @@ def step2_expand_connected_organisations(
                         },
                     )
                     address_pivot_count += 1
+                    linked_key = (
+                        related_record.registry_type,
+                        related_record.registry_number,
+                        int(related_record.suffix or 0),
+                    )
+                    if linked_key in queued_keys:
+                        continue
+                    queued_keys.add(linked_key)
+                    queue.append(
+                        {
+                            "id": related_org_id,
+                            "registry_type": related_record.registry_type,
+                            "registry_number": related_record.registry_number,
+                            "suffix": int(related_record.suffix or 0),
+                            "name": related_record.name,
+                        }
+                    )
+        if organisation_id:
+            repository.mark_run_organisation_processed(
+                run_id,
+                organisation_id,
+                stage=STEP2_PROGRESS_STAGE,
+                metadata={"registry_type": str(organisation["registry_type"] or "")},
+            )
+            processed_org_ids.add(organisation_id)
     return {
         "run_id": run_id,
         "processed_organisation_count": processed,
@@ -431,6 +464,10 @@ def step3_expand_connected_people(
     ranking_service = RankingService()
     matcher = HybridMatcher(settings)
     resolution_service = ResolutionService()
+    processed_org_ids = repository.get_processed_run_organisation_ids(
+        run_id,
+        stage=STEP3_PROGRESS_STAGE,
+    )
     scoped_organisations = repository.get_run_organisations(
         run_id,
         stages=[STEP1_STAGE, STEP2_STAGE],
@@ -438,6 +475,9 @@ def step3_expand_connected_people(
     processed = 0
     inserted_roles = 0
     for organisation in scoped_organisations:
+        organisation_id = int(organisation["id"] or 0)
+        if organisation_id and organisation_id in processed_org_ids:
+            continue
         processed += 1
         if organisation["registry_type"] == "charity":
             summary = expand_charity_people(
@@ -462,6 +502,27 @@ def step3_expand_connected_people(
                     organisation["registry_number"],
                     exc,
                 )
+        if organisation_id:
+            repository.mark_run_organisation_processed(
+                run_id,
+                organisation_id,
+                stage=STEP3_PROGRESS_STAGE,
+                metadata={"registry_type": str(organisation["registry_type"] or "")},
+            )
+            processed_org_ids.add(organisation_id)
+    if processed == 0:
+        return {
+            "run_id": run_id,
+            "processed_organisation_count": 0,
+            "inserted_roles": 0,
+            "stage3_resolution": {
+                "candidate_count": 0,
+                "decision_count": 0,
+                "resolution_metrics": {},
+                "skipped_existing": True,
+            },
+            "ranking": ranking_service.rank(repository, run_id=run_id, limit=limit),
+        }
     stage3_resolution = _resolve_stage3_people(
         repository=repository,
         matcher=matcher,
@@ -930,6 +991,27 @@ def resume_registry_only_mvp(
     run_row = repository.get_run(run_id)
     if run_row is None:
         raise ValueError(f"Run {run_id} does not exist.")
+
+    if not repository.has_run_organisation_processing(run_id, stage=STEP2_PROGRESS_STAGE):
+        repository.mark_run_organisations_processed(
+            run_id,
+            {
+                int(organisation["id"])
+                for organisation in repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+            },
+            stage=STEP2_PROGRESS_STAGE,
+            metadata={"bootstrapped": True},
+        )
+    if not repository.has_run_organisation_processing(run_id, stage=STEP3_PROGRESS_STAGE):
+        repository.mark_run_organisations_processed(
+            run_id,
+            {
+                int(organisation["id"])
+                for organisation in repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+            },
+            stage=STEP3_PROGRESS_STAGE,
+            metadata={"bootstrapped": True},
+        )
 
     discovery = run_recursive_network_discovery(
         repository=repository,
