@@ -771,10 +771,22 @@
     return nodeTypeKey(node);
   }
 
+  function displayNodeForEdgeId(nodeId, fallbackNode = null) {
+    const directNode = fallbackNode || nodeById.get(nodeId) || null;
+    const baseId = String(directNode?._expandedIndirectBaseId || "").trim();
+    if (baseId) return nodeById.get(baseId) || directNode;
+    return directNode;
+  }
+
+  function displayNodeLabelForEdgeId(nodeId, fallbackNode = null, fallbackLabel = "Node") {
+    const node = displayNodeForEdgeId(nodeId, fallbackNode);
+    return String(node?.label || nodeId || fallbackLabel);
+  }
+
   function hiddenConnectionStepLine(edge) {
     if (edge.tooltip) return edge.tooltip;
-    const source = nodeById.get(edge.source);
-    const target = nodeById.get(edge.target);
+    const source = displayNodeForEdgeId(edge.source, edge?._sourceNode);
+    const target = displayNodeForEdgeId(edge.target, edge?._targetNode);
     return `${source?.label || edge.source} is linked to ${target?.label || edge.target}`;
   }
 
@@ -1694,8 +1706,8 @@
         ? edge.display_person_labels.map((value) => String(value || "").trim()).filter(Boolean)
         : [];
       if (edge?.kind === "role" && displayPersonLabels.length) {
-        const sourceNode = nodeById.get(edge?.source) || null;
-        const targetNode = nodeById.get(edge?.target) || null;
+        const sourceNode = displayNodeForEdgeId(edge?.source, edge?._sourceNode) || null;
+        const targetNode = displayNodeForEdgeId(edge?.target, edge?._targetNode) || null;
         const sourceKind = String(sourceNode?.kind || "");
         const targetKind = String(targetNode?.kind || "");
         const orgLabel = sourceKind === "organisation"
@@ -1709,8 +1721,8 @@
       }
       return ["link"];
     }
-    const sourceLabel = String(nodeById.get(edge?.source)?.label || edge?.source || "Source");
-    const targetLabel = String(nodeById.get(edge?.target)?.label || edge?.target || "Target");
+    const sourceLabel = displayNodeLabelForEdgeId(edge?.source, edge?._sourceNode, "Source");
+    const targetLabel = displayNodeLabelForEdgeId(edge?.target, edge?._targetNode, "Target");
     const rawType = String(edge?.role_label || edge?.role_type || "").trim();
     const baseType = rawType.replace(/\s*\([^)]*\)\s*$/, "").toLowerCase();
     const titleMatch = rawType.match(/\(([^)]+)\)\s*$/);
@@ -2793,8 +2805,8 @@
     event.preventDefault();
     event.stopPropagation();
     hideTooltip();
-    const sourceNode = nodeById.get(edge.source);
-    const targetNode = nodeById.get(edge.target);
+    const sourceNode = displayNodeForEdgeId(edge.source, edge?._sourceNode);
+    const targetNode = displayNodeForEdgeId(edge.target, edge?._targetNode);
     const actions = [
       ...(edge?.kind === "hidden_connection"
         ? [{ type: "hidden_connection_expand", label: "Expand indirect path", edge }]
@@ -3107,7 +3119,7 @@
       if (!action) return;
       if (action.type === "hidden_connection_expand") {
         if (setExpandedHiddenConnection(action.edge)) {
-          applyViewerState({ preserveExpandedHiddenConnections: true, preserveViewport: true });
+          applyViewerState({ preserveExpandedHiddenConnections: true });
         }
       } else
       if (action.type === "open_url" && action.url) {
