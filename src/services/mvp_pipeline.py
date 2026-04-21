@@ -67,6 +67,23 @@ def _get_seed_frontier_organisations(
     return list(selected.values())
 
 
+def _get_address_frontier_organisations(
+    repository: Repository,
+    run_id: int,
+) -> list[Any]:
+    rows = repository.get_run_organisations(
+        run_id,
+        stages=[STEP1_STAGE, STEP2_STAGE],
+    )
+    selected: dict[int, Any] = {}
+    for row in rows:
+        source = str(row["source"] or "")
+        if source.startswith("address_pivot"):
+            continue
+        selected[int(row["id"] or 0)] = row
+    return list(selected.values())
+
+
 def _discover_named_counterparts(
     *,
     organisation: Any,
@@ -254,45 +271,19 @@ def step2_expand_connected_organisations(
     charity_client: CharityCommissionClient,
     run_id: int,
 ) -> dict[str, Any]:
-    scoped_organisations = _get_seed_frontier_organisations(repository, run_id)
+    scoped_organisations = _get_address_frontier_organisations(repository, run_id)
     processed_org_ids = repository.get_processed_run_organisation_ids(
         run_id,
         stage=STEP2_PROGRESS_STAGE,
     )
     settings = getattr(charity_client, "settings", None)
     companies_house_client = CompaniesHouseClient(settings) if isinstance(settings, Settings) else None
-    queue: list[dict[str, Any]] = []
-    queued_keys: set[tuple[str, str, int]] = set()
-    visited_keys: set[tuple[str, str, int]] = set()
-
-    for organisation in scoped_organisations:
-        key = (
-            str(organisation["registry_type"] or ""),
-            str(organisation["registry_number"] or ""),
-            int(organisation["suffix"] or 0),
-        )
-        if key in queued_keys:
-            continue
-        queued_keys.add(key)
-        queue.append(organisation)
-
     processed = 0
     linked_count = 0
     address_count = 0
     address_pivot_count = 0
-    queue_index = 0
-    while queue_index < len(queue):
-        organisation = queue[queue_index]
-        queue_index += 1
+    for organisation in scoped_organisations:
         organisation_id = int(organisation["id"] or 0)
-        org_key = (
-            str(organisation["registry_type"] or ""),
-            str(organisation["registry_number"] or ""),
-            int(organisation["suffix"] or 0),
-        )
-        if org_key in visited_keys:
-            continue
-        visited_keys.add(org_key)
         if organisation_id and organisation_id in processed_org_ids:
             continue
         processed += 1
@@ -379,23 +370,6 @@ def step2_expand_connected_organisations(
                         },
                     )
                     address_pivot_count += 1
-                    linked_key = (
-                        related_record.registry_type,
-                        related_record.registry_number,
-                        int(related_record.suffix or 0),
-                    )
-                    if linked_key in queued_keys:
-                        continue
-                    queued_keys.add(linked_key)
-                    queue.append(
-                        {
-                            "id": related_org_id,
-                            "registry_type": related_record.registry_type,
-                            "registry_number": related_record.registry_number,
-                            "suffix": int(related_record.suffix or 0),
-                            "name": related_record.name,
-                        }
-                    )
         if organisation_id:
             repository.mark_run_organisation_processed(
                 run_id,
@@ -432,7 +406,10 @@ def step3_expand_connected_people(
         run_id,
         stage=STEP3_PROGRESS_STAGE,
     )
-    scoped_organisations = _get_seed_frontier_organisations(repository, run_id)
+    scoped_organisations = repository.get_run_organisations(
+        run_id,
+        stages=[STEP1_STAGE, STEP2_STAGE],
+    )
     processed = 0
     inserted_roles = 0
     for organisation in scoped_organisations:
@@ -737,6 +714,18 @@ def run_recursive_network_discovery(
         },
         "resolution_metrics": {},
     }
+    downstream_step2 = step2_expand_connected_organisations(
+        repository=repository,
+        charity_client=charity_client,
+        run_id=run_id,
+    )
+    downstream_step3 = step3_expand_connected_people(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+        limit=limit,
+    )
     after_count = _scoped_org_count(repository, run_id)
     rounds = [
         {
@@ -747,13 +736,32 @@ def run_recursive_network_discovery(
             "step3": step3,
             "frontier_people": frontier_people,
             "recursive_person_search": person_search,
+            "downstream_step2": downstream_step2,
+            "downstream_step3": downstream_step3,
         }
     ]
     return {
         "run_id": run_id,
         "round_count": 1,
         "rounds": rounds,
-        "step2": discovery["step2"],
+        "step2": {
+            "run_id": run_id,
+            "processed_organisation_count": int(discovery["step2"].get("processed_organisation_count") or 0)
+            + int(downstream_step2.get("processed_organisation_count") or 0),
+            "connected_organisation_count": int(
+                downstream_step2.get(
+                    "connected_organisation_count",
+                    discovery["step2"].get("connected_organisation_count") or 0,
+                )
+                or 0
+            ),
+            "linked_insert_attempts": int(discovery["step2"].get("linked_insert_attempts") or 0)
+            + int(downstream_step2.get("linked_insert_attempts") or 0),
+            "address_count": int(discovery["step2"].get("address_count") or 0)
+            + int(downstream_step2.get("address_count") or 0),
+            "address_pivot_insert_attempts": int(discovery["step2"].get("address_pivot_insert_attempts") or 0)
+            + int(downstream_step2.get("address_pivot_insert_attempts") or 0),
+        },
         "step2b": {
             "run_id": run_id,
             "enabled": False,
@@ -769,9 +777,20 @@ def run_recursive_network_discovery(
             "organisation_mentions_seen": 0,
             "warnings": [],
         },
-        "step3": step3,
+        "step3": {
+            "run_id": run_id,
+            "processed_organisation_count": int(step3.get("processed_organisation_count") or 0)
+            + int(downstream_step3.get("processed_organisation_count") or 0),
+            "inserted_roles": int(step3.get("inserted_roles") or 0)
+            + int(downstream_step3.get("inserted_roles") or 0),
+            "stage3_resolution": downstream_step3.get(
+                "stage3_resolution",
+                step3.get("stage3_resolution", {}),
+            ),
+            "ranking": downstream_step3.get("ranking", step3.get("ranking", [])),
+        },
         "recursive_person_search": person_search,
-        "ranking": step3.get("ranking", []),
+        "ranking": downstream_step3.get("ranking", step3.get("ranking", [])),
     }
 
 
