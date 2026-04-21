@@ -31,6 +31,18 @@ from src.search.provider import build_search_providers
 from src.storage.repository import Repository
 
 
+def _json_safe(value):
+    if isinstance(value, (set, frozenset)):
+        return [_json_safe(item) for item in sorted(value, key=repr)]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Registry-only MVP pipeline.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -453,7 +465,7 @@ def main() -> None:
             overlap_limit=int(args.overlap_limit),
             resume_existing=bool(getattr(args, "resume_existing", False)),
         )
-        print(json.dumps(result, indent=2))
+        print(json.dumps(_json_safe(result), indent=2))
         return
 
     if args.command == "rank":
@@ -673,12 +685,20 @@ def _startup_stop_other_pipeline_processes() -> None:
     if not sys.platform.startswith("win"):
         return
     current_pid = os.getpid()
+    current_database_path = os.environ.get("DATABASE_PATH", "").strip().lower()
+    escaped_database_path = current_database_path.replace("'", "''")
+    target_filter = (
+        f"$_.CommandLine.ToLower().Contains('{escaped_database_path}') -and"
+        if current_database_path
+        else ""
+    )
     powershell_script = f"""
 $targets = Get-CimInstance Win32_Process |
   Where-Object {{
     $_.ProcessId -ne {current_pid} -and
     $_.CommandLine -and
     $_.CommandLine -match 'src\\.cli' -and
+    {target_filter}
     $_.CommandLine -match '(run-name|run-seeds|step1-seed|step2-orgs|step3-people|add-org)'
   }}
 $killed = @()

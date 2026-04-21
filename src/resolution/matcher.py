@@ -99,9 +99,25 @@ class HybridMatcher:
     ) -> ResolutionDecision:
         prompt = _build_resolution_prompt(seed_name, candidate)
 
-        if self._gemini is not None:
-            return self._resolve_gemini(prompt, candidate)
-        return self._resolve_openai(prompt, seed_name, candidate)
+        try:
+            if self._gemini is not None:
+                return self._resolve_gemini(prompt, candidate)
+            return self._resolve_openai(prompt, seed_name, candidate)
+        except RuntimeError as exc:
+            log.warning(
+                "Resolution LLM failed for '%s' @ '%s'; falling back to maybe_match: %s",
+                candidate.candidate_name,
+                candidate.organisation_name,
+                exc,
+            )
+            return ResolutionDecision(
+                status="maybe_match",
+                confidence=candidate.score,
+                canonical_name=candidate.candidate_name,
+                explanation="LLM resolution unavailable; left for manual review.",
+                rule_score=candidate.score,
+                llm_payload={"error": str(exc)},
+            )
 
     def _resolve_gemini(
         self, prompt: str, candidate: CandidateMatch

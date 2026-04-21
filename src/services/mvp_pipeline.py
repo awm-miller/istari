@@ -44,6 +44,29 @@ def _registry_name_key(value: str) -> str:
     return "".join(ch.lower() for ch in str(value or "") if ch.isalnum())
 
 
+def _get_seed_frontier_organisations(
+    repository: Repository,
+    run_id: int,
+    *,
+    with_people: bool = False,
+) -> list[Any]:
+    rows = (
+        repository.get_run_organisations_with_people(
+            run_id,
+            stages=[STEP1_STAGE],
+        )
+        if with_people
+        else repository.get_run_organisations(
+            run_id,
+            stages=[STEP1_STAGE],
+        )
+    )
+    selected: dict[int, Any] = {}
+    for row in rows:
+        selected[int(row["id"] or 0)] = row
+    return list(selected.values())
+
+
 def _discover_named_counterparts(
     *,
     organisation: Any,
@@ -231,7 +254,7 @@ def step2_expand_connected_organisations(
     charity_client: CharityCommissionClient,
     run_id: int,
 ) -> dict[str, Any]:
-    scoped_organisations = repository.get_run_organisations(run_id, stages=[STEP1_STAGE, STEP2_STAGE])
+    scoped_organisations = _get_seed_frontier_organisations(repository, run_id)
     processed_org_ids = repository.get_processed_run_organisation_ids(
         run_id,
         stage=STEP2_PROGRESS_STAGE,
@@ -273,85 +296,26 @@ def step2_expand_connected_organisations(
         if organisation_id and organisation_id in processed_org_ids:
             continue
         processed += 1
-        if organisation["registry_type"] != "charity":
-            connected = []
-        else:
+        if organisation["registry_type"] == "charity":
             connected = expand_charity_connected_organisations(
                 repository=repository,
                 charity_client=charity_client,
                 charity_number=int(organisation["registry_number"]),
                 suffix=int(organisation["suffix"]),
             )
-        for linked in connected:
-            repository.link_run_organisation(
-                run_id,
-                int(linked["organisation_id"]),
-                stage=STEP2_STAGE,
-                source=str(linked["source"]),
-                metadata={
-                    "parent_registry_type": organisation["registry_type"],
-                    "parent_registry_number": organisation["registry_number"],
-                    "parent_suffix": organisation["suffix"],
-                },
-            )
-            linked_count += 1
-            linked_key = (
-                str(linked["registry_type"] or ""),
-                str(linked["registry_number"] or ""),
-                int(linked["suffix"] or 0),
-            )
-            if linked_key in queued_keys:
-                continue
-            queued_keys.add(linked_key)
-            queue.append(
-                {
-                    "id": int(linked["organisation_id"]),
-                    "registry_type": str(linked["registry_type"] or ""),
-                    "registry_number": str(linked["registry_number"] or ""),
-                    "suffix": int(linked["suffix"] or 0),
-                    "name": str(linked.get("name") or ""),
-                }
-            )
-        for counterpart in _discover_named_counterparts(
-            organisation=organisation,
-            charity_client=charity_client,
-            companies_house_client=companies_house_client,
-        ):
-            counterpart_id = repository.upsert_organisation(counterpart)
-            repository.link_run_organisation(
-                run_id,
-                counterpart_id,
-                stage=STEP2_STAGE,
-                source="registry_name_counterpart",
-                metadata={
-                    "parent_registry_type": str(organisation["registry_type"] or ""),
-                    "parent_registry_number": str(organisation["registry_number"] or ""),
-                    "parent_suffix": int(organisation["suffix"] or 0),
-                    "connection_phrase": (
-                        "is the Charity Commission counterpart of"
-                        if counterpart.registry_type == "charity"
-                        else "is the Companies House counterpart of"
-                    ),
-                },
-            )
-            linked_count += 1
-            linked_key = (
-                counterpart.registry_type,
-                counterpart.registry_number,
-                int(counterpart.suffix or 0),
-            )
-            if linked_key in queued_keys:
-                continue
-            queued_keys.add(linked_key)
-            queue.append(
-                {
-                    "id": counterpart_id,
-                    "registry_type": counterpart.registry_type,
-                    "registry_number": counterpart.registry_number,
-                    "suffix": int(counterpart.suffix or 0),
-                    "name": counterpart.name,
-                }
-            )
+            for linked in connected:
+                repository.link_run_organisation(
+                    run_id,
+                    int(linked["organisation_id"]),
+                    stage=STEP2_STAGE,
+                    source=str(linked["source"]),
+                    metadata={
+                        "parent_registry_type": organisation["registry_type"],
+                        "parent_registry_number": organisation["registry_number"],
+                        "parent_suffix": organisation["suffix"],
+                    },
+                )
+                linked_count += 1
         if isinstance(settings, Settings):
             address_searcher = AddressPivotSearcher(
                 settings=settings,
@@ -468,10 +432,7 @@ def step3_expand_connected_people(
         run_id,
         stage=STEP3_PROGRESS_STAGE,
     )
-    scoped_organisations = repository.get_run_organisations(
-        run_id,
-        stages=[STEP1_STAGE, STEP2_STAGE],
-    )
+    scoped_organisations = _get_seed_frontier_organisations(repository, run_id)
     processed = 0
     inserted_roles = 0
     for organisation in scoped_organisations:
@@ -545,9 +506,10 @@ def step2b_enrich_from_pdfs(
     charity_client: CharityCommissionClient,
     run_id: int,
 ) -> dict[str, Any]:
-    scoped_organisations = repository.get_run_organisations_with_people(
+    scoped_organisations = _get_seed_frontier_organisations(
+        repository,
         run_id,
-        stages=[STEP1_STAGE, STEP2_STAGE],
+        with_people=True,
     )
     return enrich_run_from_pdfs(
         repository=repository,
@@ -620,9 +582,15 @@ def _collect_frontier_people(
     run_id: int,
     searched_people: set[str],
 ) -> list[str]:
+    seed_org_ids = {
+        int(row["id"] or 0)
+        for row in repository.get_run_organisations(run_id, stages=[STEP1_STAGE])
+    }
     frontier: list[str] = []
     seen_this_round: set[str] = set()
     for row in repository.get_expanded_people_for_run(run_id, limit=5000):
+        if int(row["organisation_id"] or 0) not in seed_org_ids:
+            continue
         person_name = str(row["person_name"] or "").strip()
         person_key = normalize_name(person_name)
         if not person_key or person_key in searched_people or person_key in seen_this_round:
@@ -647,7 +615,7 @@ def _search_people_frontier(
     resolution_service = ResolutionService()
     linked_org_ids = {
         int(row["id"])
-        for row in repository.get_run_scoped_organisations(run_id)
+        for row in repository.get_run_organisations(run_id)
     }
     provider_metrics_total: dict[str, dict[str, int]] = {}
     searched_people: list[str] = []
@@ -728,33 +696,37 @@ def run_recursive_network_discovery(
     run = repository.get_run(run_id)
     if run is None:
         raise RuntimeError(f"Run {run_id} does not exist.")
-    rounds: list[dict[str, Any]] = []
-    step2_totals: dict[str, Any] = {
-        "run_id": run_id,
-        "processed_organisation_count": 0,
-        "connected_organisation_count": 0,
-        "linked_insert_attempts": 0,
-        "address_count": 0,
-        "address_pivot_insert_attempts": 0,
-    }
-    step2b_totals: dict[str, Any] = {
-        "run_id": run_id,
-        "enabled": True,
-        "processed_organisation_count": 0,
-        "document_count": 0,
-        "entity_count": 0,
-        "people_added": 0,
-        "organisation_mentions_resolved": 0,
-        "organisation_mentions_seen": 0,
-        "warnings": [],
-    }
-    total_person_search = {
-        "enabled": False,
-        "reason": (
-            "Downstream person frontier expansion is disabled. "
-            "The pipeline now stops after organisation discovery, in-scope people expansion, "
-            "and PDF enrichment."
-        ),
+    before_count = _scoped_org_count(repository, run_id)
+    discovery = run_connected_org_discovery(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+        max_rounds=1,
+    )
+    step3 = step3_expand_connected_people(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        run_id=run_id,
+        limit=limit,
+    )
+    searched_people: set[str] = set()
+    frontier_people = _collect_frontier_people(
+        repository=repository,
+        run_id=run_id,
+        searched_people=searched_people,
+    )
+    person_search = _search_people_frontier(
+        repository=repository,
+        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
+        run_id=run_id,
+        creativity_level="balanced",
+        frontier_people=frontier_people,
+    ) if frontier_people else {
+        "searched_people": [],
         "searched_people_count": 0,
         "linked_organisation_count": 0,
         "decision_count": 0,
@@ -765,88 +737,41 @@ def run_recursive_network_discovery(
         },
         "resolution_metrics": {},
     }
-    latest_step3: dict[str, Any] = {"ranking": []}
-
-    for round_number in range(1, max_rounds + 1):
-        before_count = _scoped_org_count(repository, run_id)
-        discovery = run_connected_org_discovery(
-            repository=repository,
-            settings=settings,
-            charity_client=charity_client,
-            run_id=run_id,
-        )
-        step3 = step3_expand_connected_people(
-            repository=repository,
-            settings=settings,
-            charity_client=charity_client,
-            run_id=run_id,
-            limit=limit,
-        )
-        step2b = step2b_enrich_from_pdfs(
-            repository=repository,
-            settings=settings,
-            charity_client=charity_client,
-            run_id=run_id,
-        )
-        after_count = _scoped_org_count(repository, run_id)
-
-        step2 = dict(discovery["step2"])
-        step2b = dict(step2b)
-        step2_totals["processed_organisation_count"] += int(step2.get("processed_organisation_count") or 0)
-        step2_totals["linked_insert_attempts"] += int(step2.get("linked_insert_attempts") or 0)
-        step2_totals["address_count"] += int(step2.get("address_count") or 0)
-        step2_totals["address_pivot_insert_attempts"] += int(step2.get("address_pivot_insert_attempts") or 0)
-        step2_totals["connected_organisation_count"] = int(step2.get("connected_organisation_count") or 0)
-
-        step2b_totals["enabled"] = bool(step2b.get("enabled", step2b_totals["enabled"]))
-        step2b_totals["processed_organisation_count"] += int(step2b.get("processed_organisation_count") or 0)
-        step2b_totals["document_count"] += int(step2b.get("document_count") or 0)
-        step2b_totals["entity_count"] += int(step2b.get("entity_count") or 0)
-        step2b_totals["people_added"] += int(step2b.get("people_added") or 0)
-        step2b_totals["organisation_mentions_resolved"] += int(step2b.get("organisation_mentions_resolved") or 0)
-        step2b_totals["organisation_mentions_seen"] += int(step2b.get("organisation_mentions_seen") or 0)
-        step2b_totals["warnings"].extend(step2b.get("warnings") or [])
-
-        frontier_people: list[str] = []
-        person_search = {
-            "enabled": False,
-            "reason": total_person_search["reason"],
-            "searched_people": [],
-            "searched_people_count": 0,
-            "linked_organisation_count": 0,
-            "decision_count": 0,
-            "search_summary": {
-                "evidence_count": 0,
-                "candidate_count": 0,
-                "provider_metrics": {},
-            },
-            "resolution_metrics": {},
+    after_count = _scoped_org_count(repository, run_id)
+    rounds = [
+        {
+            "round": 1,
+            "scoped_org_count_before": before_count,
+            "scoped_org_count_after": after_count,
+            "discovery": discovery,
+            "step3": step3,
+            "frontier_people": frontier_people,
+            "recursive_person_search": person_search,
         }
-
-        rounds.append(
-            {
-                "round": round_number,
-                "scoped_org_count_before": before_count,
-                "scoped_org_count_after": after_count,
-                "discovery": discovery,
-                "step3": step3,
-                "frontier_people": frontier_people,
-                "recursive_person_search": person_search,
-            }
-        )
-        latest_step3 = step3
-        if after_count <= before_count:
-            break
-
+    ]
     return {
         "run_id": run_id,
-        "round_count": len(rounds),
+        "round_count": 1,
         "rounds": rounds,
-        "step2": step2_totals,
-        "step2b": step2b_totals,
-        "step3": latest_step3,
-        "recursive_person_search": total_person_search,
-        "ranking": latest_step3.get("ranking", []),
+        "step2": discovery["step2"],
+        "step2b": {
+            "run_id": run_id,
+            "enabled": False,
+            "reason": (
+                "PDF enrichment is disabled for the strict seed->people->linked-org flow. "
+                "This avoids PDF-mentioned organisations widening the network."
+            ),
+            "processed_organisation_count": 0,
+            "document_count": 0,
+            "entity_count": 0,
+            "people_added": 0,
+            "organisation_mentions_resolved": 0,
+            "organisation_mentions_seen": 0,
+            "warnings": [],
+        },
+        "step3": step3,
+        "recursive_person_search": person_search,
+        "ranking": step3.get("ranking", []),
     }
 
 

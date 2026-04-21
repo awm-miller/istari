@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from hashlib import sha256
@@ -22,6 +23,37 @@ class GeminiClient:
 
     def __post_init__(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _store_cache_result(self, cache_path: Path, result: dict[str, Any]) -> None:
+        temp_path = cache_path.with_suffix(
+            f"{cache_path.suffix}.{os.getpid()}.{time.time_ns()}.tmp"
+        )
+        try:
+            temp_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            for attempt in range(3):
+                try:
+                    temp_path.replace(cache_path)
+                    return
+                except PermissionError as exc:
+                    if attempt >= 2:
+                        log.warning(
+                            "Gemini cache replace failed for %s; continuing without cache write: %s",
+                            cache_path.name,
+                            exc,
+                        )
+                        return
+                    time.sleep(0.2 * (attempt + 1))
+        except Exception as exc:
+            log.warning(
+                "Gemini cache write failed for %s; continuing without cache write: %s",
+                cache_path.name,
+                exc,
+            )
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def generate(
         self,
@@ -100,9 +132,7 @@ class GeminiClient:
         else:
             raise last_error or RuntimeError("Gemini request failed with unknown error")
 
-        temp_path = cache_path.with_suffix(f"{cache_path.suffix}.tmp")
-        temp_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-        temp_path.replace(cache_path)
+        self._store_cache_result(cache_path, result)
         return result
 
 
