@@ -562,6 +562,7 @@ def _collect_frontier_people(
     seed_org_ids = {
         int(row["id"] or 0)
         for row in repository.get_run_organisations(run_id, stages=[STEP1_STAGE])
+        if str(row["source"] or "") != "recursive_person_match"
     }
     frontier: list[str] = []
     seen_this_round: set[str] = set()
@@ -688,21 +689,8 @@ def run_recursive_network_discovery(
         run_id=run_id,
         limit=limit,
     )
-    searched_people: set[str] = set()
-    frontier_people = _collect_frontier_people(
-        repository=repository,
-        run_id=run_id,
-        searched_people=searched_people,
-    )
-    person_search = _search_people_frontier(
-        repository=repository,
-        charity_client=charity_client,
-        search_providers=search_providers,
-        matcher=matcher,
-        run_id=run_id,
-        creativity_level="balanced",
-        frontier_people=frontier_people,
-    ) if frontier_people else {
+    frontier_people: list[str] = []
+    person_search = {
         "searched_people": [],
         "searched_people_count": 0,
         "linked_organisation_count": 0,
