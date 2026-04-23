@@ -8,6 +8,7 @@ from src.search.provider import SearchProvider
 from src.services.mvp_pipeline import (
     add_organisation_to_run,
     resume_registry_only_mvp,
+    run_org_rooted_mvp,
     run_registry_only_mvp,
     step1_expand_seed,
     step2_expand_connected_organisations,
@@ -158,6 +159,33 @@ def resume_run_pipeline(
     )
 
 
+def run_org_roots_pipeline(
+    *,
+    repository: Repository,
+    settings: Any,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    roots: list[dict[str, Any]],
+    creativity_level: str,
+    limit: int,
+    seed_name: str | None = None,
+    target_names: list[str] | None = None,
+) -> dict[str, Any]:
+    return run_org_rooted_mvp(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
+        roots=roots,
+        creativity_level=creativity_level,
+        limit=limit,
+        seed_name=seed_name,
+        target_names=target_names,
+    )
+
+
 def _decorate_overlap_people(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for rank, row in enumerate(rows, 1):
@@ -184,6 +212,7 @@ def _decorate_overlap_organisations(rows: list[dict[str, Any]]) -> list[dict[str
 
 __all__ = [
     "run_name_pipeline",
+    "run_org_roots_pipeline",
     "run_seed_batch_pipeline",
     "resume_run_pipeline",
     "add_organisation_to_run",

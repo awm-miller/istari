@@ -18,6 +18,7 @@ from src.pipeline import (
     add_organisation_to_run,
     resume_run_pipeline,
     run_name_pipeline,
+    run_org_roots_pipeline,
     run_seed_batch_pipeline,
     step1_expand_seed,
     step2_expand_connected_organisations,
@@ -116,6 +117,33 @@ def build_parser() -> argparse.ArgumentParser:
         default="balanced",
     )
     run_parser.add_argument("--limit", type=int, default=25)
+
+    run_orgs_parser = subparsers.add_parser(
+        "run-orgs",
+        help="Run the full discovery pipeline from one or more known organisation roots.",
+    )
+    run_orgs_parser.add_argument(
+        "roots",
+        nargs="+",
+        help="Organisation roots as registry specs like charity:1095626 or company:01234567[:suffix].",
+    )
+    run_orgs_parser.add_argument(
+        "--seed-name",
+        help="Optional label stored for the run. Defaults to a stable label built from the root specs.",
+    )
+    run_orgs_parser.add_argument(
+        "--target-name",
+        dest="target_names",
+        action="append",
+        default=[],
+        help="Target person name to use for attached-person resolution. Repeat for aliases.",
+    )
+    run_orgs_parser.add_argument(
+        "--creativity",
+        choices=["strict", "balanced", "exploratory"],
+        default="balanced",
+    )
+    run_orgs_parser.add_argument("--limit", type=int, default=25)
 
     resume_parser = subparsers.add_parser(
         "resume-run",
@@ -329,7 +357,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
-    if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-seeds", "resume-run"}:
+    if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-orgs", "run-seeds", "resume-run"}:
         _startup_stop_other_pipeline_processes()
 
     repository = Repository(
@@ -432,6 +460,26 @@ def main() -> None:
             seed_name=args.name,
             creativity_level=args.creativity,
             limit=int(args.limit),
+        )
+        print(json.dumps(result, indent=2))
+        return
+
+    if args.command == "run-orgs":
+        try:
+            roots = [_parse_org_root_spec(value) for value in getattr(args, "roots", [])]
+        except ValueError as exc:
+            parser.error(str(exc))
+        result = run_org_roots_pipeline(
+            repository=repository,
+            settings=settings,
+            charity_client=charity_client,
+            search_providers=build_search_providers(settings, include_web_dork=False),
+            matcher=matcher,
+            roots=roots,
+            creativity_level=args.creativity,
+            limit=int(args.limit),
+            seed_name=getattr(args, "seed_name", None),
+            target_names=list(getattr(args, "target_names", []) or []),
         )
         print(json.dumps(result, indent=2))
         return
@@ -680,6 +728,31 @@ def _collect_seed_names(raw_names: list[str], seed_file: str | None) -> list[str
     return deduped
 
 
+def _parse_org_root_spec(value: str) -> dict[str, object]:
+    raw = " ".join(str(value or "").split()).strip()
+    parts = raw.split(":")
+    if len(parts) not in {2, 3}:
+        raise ValueError(
+            f"Invalid org root '{value}'. Use charity:1095626, charity:1095626:0, or company:01234567."
+        )
+    registry_type = parts[0].strip().lower()
+    registry_number = parts[1].strip()
+    suffix_text = parts[2].strip() if len(parts) == 3 else "0"
+    if registry_type not in {"charity", "company"}:
+        raise ValueError(f"Invalid registry type '{parts[0]}'. Expected charity or company.")
+    if not registry_number:
+        raise ValueError(f"Invalid org root '{value}'. Registry number is required.")
+    try:
+        suffix = int(suffix_text or "0")
+    except ValueError as exc:
+        raise ValueError(f"Invalid suffix '{suffix_text}' in org root '{value}'.") from exc
+    return {
+        "registry_type": registry_type,
+        "registry_number": registry_number,
+        "suffix": suffix,
+    }
+
+
 def _startup_stop_other_pipeline_processes() -> None:
     logger = logging.getLogger("istari.startup")
     if not sys.platform.startswith("win"):
@@ -699,7 +772,7 @@ $targets = Get-CimInstance Win32_Process |
     $_.CommandLine -and
     $_.CommandLine -match 'src\\.cli' -and
     {target_filter}
-    $_.CommandLine -match '(run-name|run-seeds|step1-seed|step2-orgs|step3-people|add-org)'
+    $_.CommandLine -match '(run-name|run-orgs|run-seeds|step1-seed|step2-orgs|step3-people|add-org)'
   }}
 $killed = @()
 foreach ($p in $targets) {{

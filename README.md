@@ -251,6 +251,10 @@ python -m src.cli init-db
 # Run one seed
 python -m src.cli run-name "Jane Smith"
 
+# Run from known-good organisation roots
+python -m src.cli run-orgs charity:1095626 company:01234567
+python -m src.cli run-orgs charity:1095626 --target-name "Muhammad Fatih al-Rawi" --target-name "Fateh Alrawi"
+
 # Run several seeds
 python -m src.cli run-seeds "Jane Smith" "John Doe"
 
@@ -267,6 +271,7 @@ python -m src.cli web-ui
 |---|---|
 | `init-db` | create the main SQLite schema |
 | `run-name NAME` | run the full discovery pipeline for one seed |
+| `run-orgs ROOT [ROOT ...]` | run the full pipeline from one or more known charity or company roots |
 | `run-seeds NAME [NAME ...]` | run the full pipeline for multiple seeds |
 | `step1-seed NAME` | run only the first search and resolution step |
 | `step2-orgs RUN_ID` | expand connected organisations only |
@@ -279,6 +284,42 @@ python -m src.cli web-ui
 | `export-network --run-id ID` | export graph JSON for selected runs |
 | `web-ui` | launch the local viewer |
 | `healthcheck` | check keys and local tooling |
+
+Use `run-orgs` when the organisation is known good but the person name is ambiguous or drifts into unrelated matches. Roots use `charity:NUMBER[:SUFFIX]` or `company:NUMBER`, and the run will expand outward from those trusted organisations instead of first trying to resolve a person seed.
+
+## Org-anchored runs
+
+`run-orgs` is the trusted-root version of the pipeline.
+
+Use it when you already know that one or more charities or companies are correct, but a person-name seed is too ambiguous. In those cases, `run-name` can drift because it has to resolve the name first. `run-orgs` skips that first person-match step and starts directly from the organisation roots you provide.
+
+That means the run will:
+
+- treat the supplied charities or companies as known-good anchors
+- expand outward through the usual organisation discovery flow
+- pull trustees, officers, directors, and similar direct people from those anchored organisations
+- still rank people and run sanctions screening at the end
+
+This is useful for cases like “the charity cluster is right, but the person name keeps matching the wrong `AL-RAWI` records”.
+
+Examples:
+
+```bash
+python -m src.cli run-orgs charity:1095626
+python -m src.cli run-orgs charity:1095626 charity:1234567 --seed-name "Human Relief + Omar"
+python -m src.cli run-orgs company:01234567
+python -m src.cli run-orgs charity:1095626 --target-name "Muhammad Fatih al-Rawi" --target-name "Fateh Alrawi"
+```
+
+Root formats:
+
+- `charity:NUMBER`
+- `charity:NUMBER:SUFFIX`
+- `company:NUMBER`
+
+If you pass multiple roots, the CLI links them all into the same run first and only then runs discovery. That keeps the expansion anchored on the known-good cluster without rerunning the whole downstream pipeline once per root.
+
+If you also know the target person's likely spellings, add repeated `--target-name` flags. Those aliases are stored as the run's comparison variants so attached trustees and officers are resolved against the best matching target name instead of the run label.
 
 ## Negative-news workflow
 

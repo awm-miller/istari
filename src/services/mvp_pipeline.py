@@ -855,6 +855,149 @@ def step4_ofac_screening(
     }
 
 
+def _default_org_run_seed_name(roots: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for root in roots:
+        registry_type = str(root.get("registry_type") or "").strip().lower()
+        registry_number = str(root.get("registry_number") or "").strip()
+        suffix = int(root.get("suffix") or 0)
+        if not registry_type or not registry_number:
+            continue
+        spec = f"{registry_type}:{registry_number}"
+        if suffix:
+            spec = f"{spec}:{suffix}"
+        parts.append(spec)
+    return "org-root: " + " + ".join(parts)
+
+
+def _store_target_name_variants(
+    *,
+    repository: Repository,
+    run_id: int,
+    target_names: list[str],
+    creativity_level: str,
+) -> list[str]:
+    variant_service = VariantService()
+    all_variants: list[dict[str, Any]] = []
+    stored_names: list[str] = []
+    seen_names: set[str] = set()
+    for raw_name in target_names:
+        target_name = " ".join(str(raw_name or "").split()).strip()
+        if not target_name:
+            continue
+        stored_names.append(target_name)
+        for variant in variant_service.generate(target_name, creativity_level):
+            key = variant.name.lower()
+            if key in seen_names:
+                continue
+            seen_names.add(key)
+            all_variants.append(
+                {
+                    "name": variant.name,
+                    "strategy": variant.strategy,
+                    "creativity_level": variant.creativity_level,
+                }
+            )
+    if all_variants:
+        repository.insert_name_variants(run_id, all_variants)
+    return stored_names
+
+
+def run_org_rooted_mvp(
+    *,
+    repository: Repository,
+    settings: Settings,
+    charity_client: CharityCommissionClient,
+    search_providers: list[SearchProvider],
+    matcher: HybridMatcher,
+    roots: list[dict[str, Any]],
+    creativity_level: str,
+    limit: int,
+    seed_name: str | None = None,
+    target_names: list[str] | None = None,
+) -> dict[str, Any]:
+    cleaned_roots: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    for root in roots:
+        registry_type = str(root.get("registry_type") or "").strip().lower()
+        registry_number = str(root.get("registry_number") or "").strip()
+        suffix = int(root.get("suffix") or 0)
+        if not registry_type or not registry_number:
+            continue
+        key = (registry_type, registry_number, suffix)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned_roots.append(
+            {
+                "registry_type": registry_type,
+                "registry_number": registry_number,
+                "suffix": suffix,
+            }
+        )
+    if not cleaned_roots:
+        raise ValueError("run_org_rooted_mvp requires at least one valid organisation root.")
+
+    cleaned_target_names = [
+        " ".join(str(value or "").split()).strip()
+        for value in (target_names or [])
+        if " ".join(str(value or "").split()).strip()
+    ]
+    label = " ".join(str(seed_name or "").split()).strip()
+    if not label and cleaned_target_names:
+        label = cleaned_target_names[0]
+    if not label:
+        label = _default_org_run_seed_name(cleaned_roots)
+    run_id = repository.create_run(label, creativity_level)
+    stored_target_names = _store_target_name_variants(
+        repository=repository,
+        run_id=run_id,
+        target_names=cleaned_target_names,
+        creativity_level=creativity_level,
+    )
+    linked_roots: list[dict[str, Any]] = []
+    for root in cleaned_roots:
+        linked_roots.append(
+            add_organisation_to_run(
+                repository=repository,
+                settings=settings,
+                charity_client=charity_client,
+                run_id=run_id,
+                registry_type=str(root["registry_type"]),
+                registry_number=str(root["registry_number"]),
+                suffix=int(root["suffix"]),
+                limit=limit,
+                rerun_downstream=False,
+            )
+        )
+
+    discovery = run_recursive_network_discovery(
+        repository=repository,
+        settings=settings,
+        charity_client=charity_client,
+        search_providers=search_providers,
+        matcher=matcher,
+        run_id=run_id,
+        limit=limit,
+    )
+    ranking = discovery["ranking"]
+    step4 = step4_ofac_screening(repository=repository, settings=settings, ranking=ranking)
+    return {
+        "mode": "org_rooted_mvp",
+        "run_id": run_id,
+        "seed_name": label,
+        "target_names": stored_target_names,
+        "root_organisations": linked_roots,
+        "step2": discovery["step2"],
+        "step2b": discovery["step2b"],
+        "discovery_rounds": discovery["rounds"],
+        "step3": discovery["step3"],
+        "recursive_person_search": discovery["recursive_person_search"],
+        "step4": step4,
+        "ranking": ranking,
+    }
+
+
 def run_registry_only_mvp(
     *,
     repository: Repository,
@@ -1178,23 +1321,40 @@ def _resolve_stage3_people(
     expanded_people = repository.get_expanded_people_for_run(run_id, limit=5000)
     inserted_candidates = 0
     seed_name = str(run["seed_name"] or "").strip()
-    seed_name_key = seed_name.lower()
+    variant_names = [
+        " ".join(str(value or "").split()).strip()
+        for value in repository.get_run_variant_names(run_id)
+        if " ".join(str(value or "").split()).strip()
+    ]
+    if seed_name and not any(seed_name.lower() == value.lower() for value in variant_names):
+        variant_names.insert(0, seed_name)
+    if not variant_names:
+        variant_names = [seed_name] if seed_name else []
     for row in expanded_people:
         candidate_name = str(row["person_name"] or "").strip()
-        if not candidate_name or candidate_name.lower() == seed_name_key:
+        if not candidate_name:
             continue
         raw_payload = _build_stage3_candidate_payload(row)
-        candidate = build_candidate_match(
-            name_variant=seed_name,
-            candidate_name=candidate_name,
-            organisation_name=str(row["organisation_name"] or "").strip(),
-            registry_type=str(row["registry_type"] or "").strip() or None,
-            registry_number=str(row["registry_number"] or "").strip() or None,
-            suffix=int(row["suffix"] or 0),
-            source=str(row["source"] or "").strip(),
-            evidence_id=None,
-            raw_payload=raw_payload,
-        )
+        organisation_name = str(row["organisation_name"] or "").strip()
+        registry_type = str(row["registry_type"] or "").strip() or None
+        registry_number = str(row["registry_number"] or "").strip() or None
+        suffix = int(row["suffix"] or 0)
+        source = str(row["source"] or "").strip()
+        candidates = [
+            build_candidate_match(
+                name_variant=variant_name,
+                candidate_name=candidate_name,
+                organisation_name=organisation_name,
+                registry_type=registry_type,
+                registry_number=registry_number,
+                suffix=suffix,
+                source=source,
+                evidence_id=None,
+                raw_payload=raw_payload,
+            )
+            for variant_name in variant_names
+        ]
+        candidate = max(candidates, key=lambda item: float(item.score))
         repository.insert_candidate_match(run_id, candidate)
         inserted_candidates += 1
 
