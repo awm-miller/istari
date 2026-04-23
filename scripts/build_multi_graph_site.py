@@ -74,7 +74,12 @@ GRAPH_BUNDLES = (
         ("data/seven_spikes_sandbox.db", "data/sandbox_seven_spikes.db"),
         ("data/seven_spikes_trustees.db",),
     ),
-    GraphBundle("expanded-mb-names", "Expanded MB Names", ("data/expanded_mb_names.db",)),
+    GraphBundle(
+        "expanded-mb-names",
+        "Expanded MB Names",
+        ("data/expanded_mb_names.db",),
+        ("data/mahfuzh_safiee.db",),
+    ),
 )
 
 
