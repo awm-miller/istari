@@ -2670,7 +2670,7 @@
     await applyViewerState();
   }
 
-  async function persistHiddenOverride(action) {
+  async function persistHiddenOverride(action, options = {}) {
     const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2693,8 +2693,10 @@
       organisation: normalizeMergeOverrideRows(overrides.organisation),
       hidden: normalizeHiddenOverrideRows(overrides.hidden),
     };
-    rebuildBaseGraph();
-    await applyViewerState();
+    if (options.refresh !== false) {
+      rebuildBaseGraph();
+      await applyViewerState();
+    }
   }
 
   function promptForMergeLeader(action) {
@@ -2816,14 +2818,22 @@
     event.stopPropagation();
     hideTooltip();
     hideCanvasSearchPopover();
+    const hiddenRows = normalizeHiddenOverrideRows(mergeOverrides.hidden);
     const actions = [
       { label: "Add tree...", type: "canvas_add_prompt" },
-      ...(normalizeHiddenOverrideRows(mergeOverrides.hidden).map((row) => ({
+      ...(hiddenRows.length > 1
+        ? [{
+            label: `Restore all hidden nodes (${hiddenRows.length})`,
+            type: "hide_restore_all",
+            rows: hiddenRows,
+          }]
+        : []),
+      ...hiddenRows.map((row) => ({
         label: `Restore ${row.label || row.nodeId}`,
         type: "hide_remove",
         nodeKey: row.nodeId,
         nodeLabel: row.label || row.nodeId,
-      }))),
+      })),
       ...viewerState.extraRootIds.map((nodeId) => {
         const node = nodeById.get(nodeId);
         return node ? { label: `Remove ${node.label || node.id}`, type: "canvas_remove_tree", nodeId } : null;
@@ -3248,6 +3258,28 @@
         } catch (error) {
           console.error(error);
           window.alert("Restore node failed.");
+        }
+      } else if (action.type === "hide_restore_all") {
+        const rows = Array.isArray(action.rows) ? action.rows : [];
+        if (!rows.length) return;
+        const confirmed = window.confirm(`Restore ${rows.length} hidden nodes?`);
+        if (!confirmed) return;
+        try {
+          for (const row of rows) {
+            await persistHiddenOverride(
+              {
+                operation: "remove",
+                nodeKey: row.nodeId,
+                nodeLabel: row.label || row.nodeId,
+              },
+              { refresh: false },
+            );
+          }
+          rebuildBaseGraph();
+          await applyViewerState();
+        } catch (error) {
+          console.error(error);
+          window.alert("Restore hidden nodes failed.");
         }
       } else if (action.type === "canvas_add_prompt") {
         closeContextMenu();
