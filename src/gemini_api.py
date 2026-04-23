@@ -11,6 +11,7 @@ from typing import Any
 from urllib import error, request
 
 log = logging.getLogger("istari.gemini")
+_LAST_GEMINI_REQUEST_AT = 0.0
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class GeminiClient:
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     timeout_seconds: float = 60.0
     attempts: int = 3
+    min_request_gap_seconds: float = 0.35
 
     def __post_init__(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -97,10 +99,17 @@ class GeminiClient:
         last_error: RuntimeError | None = None
         for attempt in range(self.attempts):
             try:
+                global _LAST_GEMINI_REQUEST_AT
+                now = time.monotonic()
+                wait_for_gap = self.min_request_gap_seconds - (now - _LAST_GEMINI_REQUEST_AT)
+                if wait_for_gap > 0:
+                    time.sleep(wait_for_gap)
                 with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                    _LAST_GEMINI_REQUEST_AT = time.monotonic()
                     result = json.loads(resp.read().decode("utf-8"))
                     break
             except error.HTTPError as exc:
+                _LAST_GEMINI_REQUEST_AT = time.monotonic()
                 body = exc.read().decode("utf-8", errors="replace")
                 last_error = RuntimeError(f"Gemini request failed: {exc.code} {body}")
                 if exc.code in {429, 500, 502, 503, 504} and attempt < self.attempts - 1:
