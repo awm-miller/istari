@@ -28,8 +28,17 @@ function tryParseJson(text) {
   }
 }
 
-async function loadGraphData() {
-  const graphPath = path.join(process.cwd(), "netlify_graph_viewer", "graph-data.json");
+function normalizeGraphKey(value) {
+  const graph = String(value || "").trim().toLowerCase();
+  if (graph === "iums") return "iums";
+  if (graph === "sevenspikes") return "sevenspikes";
+  if (graph === "expanded-mb-names" || graph === "expandedmbnames") return "expanded-mb-names";
+  return "mb";
+}
+
+async function loadGraphDataForKey(graphKey) {
+  const normalizedGraphKey = normalizeGraphKey(graphKey);
+  const graphPath = path.join(process.cwd(), "netlify_graph_viewer", normalizedGraphKey, "graph-data.json");
   const raw = await fs.readFile(graphPath, "utf8");
   return JSON.parse(raw);
 }
@@ -235,15 +244,16 @@ exports.handler = async function handler(event) {
     return json(400, { error: "Invalid JSON body." });
   }
 
-  const sourceNodeId = String(payload.sourceNodeId || "");
-  const targetNodeId = String(payload.targetNodeId || "");
+  const graphKey = normalizeGraphKey(payload.graph || event.queryStringParameters?.graph);
+  const sourceNodeId = String(payload.sourceNodeId || payload.source_id || "");
+  const targetNodeId = String(payload.targetNodeId || payload.target_id || "");
   if (!sourceNodeId || !targetNodeId || sourceNodeId === targetNodeId) {
     return json(400, { error: "Two distinct node ids are required." });
   }
 
   let data;
   try {
-    data = await loadGraphData();
+    data = await loadGraphDataForKey(graphKey);
   } catch (error) {
     return json(500, { error: `Graph data is unavailable: ${error.message}` });
   }
@@ -256,6 +266,7 @@ exports.handler = async function handler(event) {
   try {
     const analysis = await generateAnalysis(context, sourceNodeId, targetNodeId);
     return json(200, {
+      graph: graphKey,
       sourceNodeId,
       targetNodeId,
       summary: analysis.summary,

@@ -3,7 +3,20 @@ const path = require("path");
 const { connectLambda, getStore } = require("@netlify/blobs");
 
 const STORE_NAME = "istari-manual-merges";
-const STORE_KEY = "overrides";
+const DEFAULT_STORE_KEY = "overrides";
+
+function normalizeGraphKey(value) {
+  const graph = String(value || "").trim().toLowerCase();
+  if (graph === "iums") return "iums";
+  if (graph === "sevenspikes") return "sevenspikes";
+  if (graph === "expanded-mb-names" || graph === "expandedmbnames") return "expanded-mb-names";
+  return "mb";
+}
+
+function storeKeyForGraph(graphKey) {
+  const normalizedGraphKey = normalizeGraphKey(graphKey);
+  return normalizedGraphKey === "mb" ? DEFAULT_STORE_KEY : `${DEFAULT_STORE_KEY}:${normalizedGraphKey}`;
+}
 
 function normalizeRow(sourceId, targetId, leaderId = "") {
   const source = String(sourceId || "");
@@ -123,22 +136,30 @@ function createStore(event) {
 }
 
 exports.handler = async function handler(event) {
+  let payload = {};
+  if (event.httpMethod === "POST") {
+    try {
+      payload = event.body ? JSON.parse(event.body) : {};
+    } catch (_error) {
+      return json(400, { error: "Invalid JSON body." });
+    }
+  }
+  const graphKey = normalizeGraphKey(
+    payload.graph
+      || event.queryStringParameters?.graph
+      || event.headers?.["x-istari-graph"]
+      || event.headers?.["X-Istari-Graph"]
+  );
+  const storeKey = storeKeyForGraph(graphKey);
   const store = createStore(event);
-  const current = normalizeOverrides((await store.get(STORE_KEY, { type: "json" })) || {});
+  const current = normalizeOverrides((await store.get(storeKey, { type: "json" })) || {});
 
   if (event.httpMethod === "GET") {
-    return json(200, { overrides: current });
+    return json(200, { graph: graphKey, overrides: current });
   }
 
   if (event.httpMethod !== "POST") {
     return json(405, { error: "Method not allowed." });
-  }
-
-  let payload = {};
-  try {
-    payload = event.body ? JSON.parse(event.body) : {};
-  } catch (_error) {
-    return json(400, { error: "Invalid JSON body." });
   }
 
   const operation = String(payload.operation || "add");
@@ -163,8 +184,8 @@ exports.handler = async function handler(event) {
     } else {
       upsertHiddenUnique(current.hidden, nodeId, label);
     }
-    await store.setJSON(STORE_KEY, current);
-    return json(200, { overrides: current });
+    await store.setJSON(storeKey, current);
+    return json(200, { graph: graphKey, overrides: current });
   }
   if (!sourceId || !targetId || sourceId === targetId) {
     return json(400, { error: "Invalid merge pair." });
@@ -175,7 +196,7 @@ exports.handler = async function handler(event) {
   } else {
     upsertUnique(current[kind], sourceId, targetId, leaderId);
   }
-  await store.setJSON(STORE_KEY, current);
+  await store.setJSON(storeKey, current);
 
-  return json(200, { overrides: current });
+  return json(200, { graph: graphKey, overrides: current });
 };

@@ -1,6 +1,7 @@
 """Rebuild graph HTML from graph modules, then copy to netlify."""
 from dataclasses import asdict
 import json
+import os
 import pathlib
 import sys
 
@@ -33,6 +34,7 @@ repository = Repository(
     settings.project_root / "src" / "storage" / "schema.sql",
 )
 repository.init_db()
+skip_sanctions_refresh = os.environ.get("SKIP_SANCTIONS_REFRESH", "").strip().lower() in {"1", "true", "yes"}
 
 
 def refresh_sanctions_for_runs(run_ids: list[int], *, ranking_limit: int = 5000) -> None:
@@ -77,7 +79,10 @@ run_ids = repository.get_latest_unique_run_ids()
 if not run_ids:
     raise SystemExit("No runs found.")
 
-refresh_sanctions_for_runs(run_ids)
+if skip_sanctions_refresh:
+    print("Skipping sanctions refresh.", flush=True)
+else:
+    refresh_sanctions_for_runs(run_ids)
 
 print(f"Consolidating runs {run_ids}...", flush=True)
 data = consolidate_multi_run(run_ids)
@@ -155,7 +160,7 @@ try:
 except Exception as error:
     print(f"Warning: failed to build address coordinate index: {error}", flush=True)
 
-html = render_html(data)
+html = render_html(data, title_override=os.environ.get("GRAPH_VIEW_TITLE") or None)
 print(f"Rendered HTML ({len(html)} bytes)", flush=True)
 
 out = pathlib.Path("output/latest_graph.html")

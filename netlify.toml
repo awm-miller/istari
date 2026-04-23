@@ -1,2 +1,27 @@
 [build]
   functions = "netlify/functions"
+
+[[redirects]]
+  from = "/"
+  to = "/mb/"
+  status = 302
+
+[[redirects]]
+  from = "/mb"
+  to = "/mb/"
+  status = 301
+
+[[redirects]]
+  from = "/iums"
+  to = "/iums/"
+  status = 301
+
+[[redirects]]
+  from = "/sevenspikes"
+  to = "/sevenspikes/"
+  status = 301
+
+[[redirects]]
+  from = "/expanded-mb-names"
+  to = "/expanded-mb-names/"
+  status = 301

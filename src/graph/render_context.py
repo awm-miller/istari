@@ -4,11 +4,11 @@ import html
 import json
 
 
-def build_render_context(data: dict) -> dict[str, str]:
+def build_render_context(data: dict, *, title_override: str | None = None) -> dict[str, str]:
     nodes = list(data.get("nodes") or [])
     edges = list(data.get("edges") or [])
     return {
-        "title": html.escape(str(data.get("seed_name") or "Istari")),
+        "title": html.escape(str(title_override or data.get("seed_name") or "Istari")),
         "node_count": str(len(nodes)),
         "edge_count": str(len(edges)),
         "nodes_json": json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/"),

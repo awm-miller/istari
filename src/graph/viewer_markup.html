@@ -1,5 +1,23 @@
 <div class="topbar">
-  <h1>{title}</h1>
+  <div class="graph-switcher">
+    <button
+      id="graph-switcher-button"
+      class="graph-switcher-button"
+      type="button"
+      aria-haspopup="menu"
+      aria-expanded="false"
+      aria-controls="graph-switcher-menu"
+    >
+      <span id="graph-switcher-label">MB</span>
+      <span class="graph-switcher-caret" aria-hidden="true"></span>
+    </button>
+    <div id="graph-switcher-menu" class="graph-switcher-menu hidden" role="menu" aria-label="Select graph">
+      <button class="graph-switcher-option" data-graph-key="mb" type="button" role="menuitem">MB</button>
+      <button class="graph-switcher-option" data-graph-key="iums" type="button" role="menuitem">IUMS</button>
+      <button class="graph-switcher-option" data-graph-key="sevenspikes" type="button" role="menuitem">Seven Spikes</button>
+      <button class="graph-switcher-option" data-graph-key="expanded-mb-names" type="button" role="menuitem">Expanded MB Names</button>
+    </div>
+  </div>
   <div class="stats" id="stats">{node_count} nodes, {edge_count} edges</div>
   <div class="compare-summary hidden" id="compare-summary">
     <span class="compare-summary-label" id="compare-summary-label"></span>

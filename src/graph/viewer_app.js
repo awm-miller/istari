@@ -3,6 +3,12 @@
   const rawMainEdges = {edges_json}.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
   const LOW_CONFIDENCE_DATA_URL = "graph-data-open-letters.json";
   const LOW_CONFIDENCE_NODES_DATA_URL = "graph-data-low-confidence-nodes.json";
+  const GRAPH_OPTIONS = [
+    { key: "mb", label: "MB", path: "/mb/" },
+    { key: "iums", label: "IUMS", path: "/iums/" },
+    { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
+    { key: "expanded-mb-names", label: "Expanded MB Names", path: "/expanded-mb-names/" },
+  ];
   const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
@@ -21,6 +27,11 @@
   const container = document.getElementById("graph");
   const tooltip = document.getElementById("tooltip");
   const searchInput = document.getElementById("search");
+  const graphSwitcherEl = document.querySelector(".graph-switcher");
+  const graphSwitcherButtonEl = document.getElementById("graph-switcher-button");
+  const graphSwitcherLabelEl = document.getElementById("graph-switcher-label");
+  const graphSwitcherMenuEl = document.getElementById("graph-switcher-menu");
+  const graphSwitcherOptionEls = [...document.querySelectorAll(".graph-switcher-option")];
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
   const compareClearButton = document.getElementById("compare-clear");
@@ -46,6 +57,7 @@
   const detailsModalBodyEl = document.getElementById("details-modal-body");
   const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
+  const currentGraphKey = detectGraphKey(window.location.pathname);
 
   let showIdentitiesInput;
   let showCompaniesInput;
@@ -112,6 +124,65 @@
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
+
+  function detectGraphKey(pathname) {
+    const path = String(pathname || "").toLowerCase();
+    if (path.startsWith("/iums/") || path === "/iums") return "iums";
+    if (path.startsWith("/sevenspikes/") || path === "/sevenspikes") return "sevenspikes";
+    if (path.startsWith("/expanded-mb-names/") || path === "/expanded-mb-names") return "expanded-mb-names";
+    if (path.startsWith("/mb/") || path === "/mb") return "mb";
+    return "mb";
+  }
+
+  function graphFunctionUrl(baseUrl) {
+    const url = new URL(baseUrl, window.location.origin);
+    url.searchParams.set("graph", currentGraphKey);
+    return url.toString();
+  }
+
+  function currentGraphOption() {
+    return GRAPH_OPTIONS.find((option) => option.key === currentGraphKey) || GRAPH_OPTIONS[0];
+  }
+
+  function setGraphSwitcherOpen(isOpen) {
+    if (!graphSwitcherEl || !graphSwitcherButtonEl || !graphSwitcherMenuEl) return;
+    graphSwitcherEl.classList.toggle("open", !!isOpen);
+    graphSwitcherMenuEl.classList.toggle("hidden", !isOpen);
+    graphSwitcherButtonEl.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+
+  function initGraphSwitcher() {
+    if (!graphSwitcherEl || !graphSwitcherButtonEl || !graphSwitcherLabelEl || !graphSwitcherMenuEl) return;
+    const activeOption = currentGraphOption();
+    graphSwitcherLabelEl.textContent = activeOption.label;
+    graphSwitcherOptionEls.forEach((optionEl) => {
+      const isActive = optionEl.dataset.graphKey === currentGraphKey;
+      optionEl.classList.toggle("active", isActive);
+      optionEl.setAttribute("aria-current", isActive ? "page" : "false");
+    });
+    graphSwitcherButtonEl.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setGraphSwitcherOpen(graphSwitcherMenuEl.classList.contains("hidden"));
+    });
+    graphSwitcherOptionEls.forEach((optionEl) => {
+      optionEl.addEventListener("click", () => {
+        const selected = GRAPH_OPTIONS.find((option) => option.key === optionEl.dataset.graphKey);
+        if (!selected) return;
+        setGraphSwitcherOpen(false);
+        window.location.assign(selected.path);
+      });
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!graphSwitcherEl.contains(event.target)) {
+        setGraphSwitcherOpen(false);
+      }
+    }, true);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setGraphSwitcherOpen(false);
+      }
+    });
+  }
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -2542,7 +2613,7 @@
 
   async function ensureMergeOverridesLoaded() {
     if (mergeOverridesLoadingPromise) return mergeOverridesLoadingPromise;
-    mergeOverridesLoadingPromise = fetch(MERGE_OVERRIDES_URL)
+    mergeOverridesLoadingPromise = fetch(graphFunctionUrl(MERGE_OVERRIDES_URL))
       .then((response) => {
         if (!response.ok) throw new Error(`Failed to load merge overrides (${response.status})`);
         return response.json();
@@ -2571,10 +2642,11 @@
   }
 
   async function persistMergeOverride(action) {
-    const response = await fetch(MERGE_OVERRIDES_URL, {
+    const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        graph: currentGraphKey,
         operation: String(action.operation || "add"),
         kind: action.kind,
         sourceId: action.sourceKey,
@@ -2599,10 +2671,11 @@
   }
 
   async function persistHiddenOverride(action) {
-    const response = await fetch(MERGE_OVERRIDES_URL, {
+    const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        graph: currentGraphKey,
         operation: String(action.operation || "add"),
         kind: "hidden",
         nodeId: action.nodeKey,
@@ -2894,10 +2967,10 @@
     setSidebarTab("ranked");
     toggleSidebar(true);
 
-    const response = await fetch(ANALYZE_CONNECTION_URL, {
+    const response = await fetch(graphFunctionUrl(ANALYZE_CONNECTION_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+      body: JSON.stringify({ source_id: sourceId, target_id: targetId, graph: currentGraphKey }),
     });
     if (!response.ok) {
       throw new Error(`Connection analysis failed (${response.status})`);
@@ -3225,6 +3298,7 @@
 
   async function boot() {
     renderLegend();
+    initGraphSwitcher();
     await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {
       onHover(node, event, hit) {
