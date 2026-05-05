@@ -124,6 +124,7 @@
   let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
   let mergeOverridesLoadingPromise = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
+  let generatedGraphs = [];
 
   const viewerState = {
     searchQuery: "",
@@ -170,6 +171,50 @@
       .filter(Boolean);
   }
 
+  function sanitizeBuilderGraphId(value) {
+    let safe = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    while (safe.includes("--")) safe = safe.replaceAll("--", "-");
+    return safe.slice(0, 80);
+  }
+
+  function builderGraphKey() {
+    return sanitizeBuilderGraphId(
+      builderGraphIdInput?.value
+      || builderSeedNameInput?.value
+      || splitLines(builderSeedNamesInput?.value)[0]
+      || "",
+    );
+  }
+
+  function versionNumber(value) {
+    const number = Number(String(value || "").replace(/^v/i, ""));
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  }
+
+  function nextBuilderVersion() {
+    const graphKey = builderGraphKey();
+    const graph = generatedGraphs.find((entry) => String(entry.id || "") === graphKey);
+    const versions = Array.isArray(graph?.versions) ? graph.versions : [];
+    const latest = versions.reduce((max, version) => Math.max(max, versionNumber(version.version)), 0);
+    return latest + 1;
+  }
+
+  function updateBuilderVersionInput() {
+    if (!builderGraphVersionInput) return;
+    const saveMode = String(builderSaveModeInput?.value || "new_version");
+    if (saveMode === "overwrite_version") {
+      builderGraphVersionInput.readOnly = false;
+      builderGraphVersionInput.placeholder = "Version";
+      if (!builderGraphVersionInput.value) {
+        builderGraphVersionInput.value = String(Math.max(1, nextBuilderVersion() - 1));
+      }
+      return;
+    }
+    builderGraphVersionInput.value = String(nextBuilderVersion());
+    builderGraphVersionInput.readOnly = true;
+    builderGraphVersionInput.placeholder = "Auto";
+  }
+
   function setBuilderStatus(message, isError = false) {
     if (!builderStatusEl) return;
     builderStatusEl.textContent = message;
@@ -189,6 +234,7 @@
 
   function builderPayload() {
     const mode = String(builderModeInput?.value || "name_seed");
+    const saveMode = String(builderSaveModeInput?.value || "new_version");
     const payload = {
       mode,
       seed_name: String(builderSeedNameInput?.value || "").trim(),
@@ -197,11 +243,13 @@
       target_names: splitLines(builderTargetNamesInput?.value),
       graph_id: String(builderGraphIdInput?.value || "").trim(),
       graph_title: String(builderGraphTitleInput?.value || "").trim(),
-      save_mode: String(builderSaveModeInput?.value || "new_version"),
-      graph_version: String(builderGraphVersionInput?.value || "").trim(),
+      save_mode: saveMode,
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
       limit: Number(builderLimitInput?.value || 25),
     };
+    if (saveMode === "overwrite_version") {
+      payload.graph_version = String(builderGraphVersionInput?.value || "").trim();
+    }
     return payload;
   }
 
@@ -310,6 +358,7 @@
     if (!response.ok) return;
     const data = await response.json();
     const graphs = Array.isArray(data.graphs) ? data.graphs : [];
+    generatedGraphs = graphs;
     graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option.generated").forEach((element) => element.remove());
     graphs.forEach((graph) => {
       const path = String(graph.path || "");
@@ -327,6 +376,7 @@
       graphSwitcherMenuEl.appendChild(button);
     });
     renderGeneratedGraphManager(graphs);
+    updateBuilderVersionInput();
     return graphs;
   }
 
@@ -3336,6 +3386,13 @@
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
+    });
+    [builderGraphIdInput, builderSeedNameInput, builderSeedNamesInput].forEach((input) => {
+      input?.addEventListener("input", updateBuilderVersionInput);
+    });
+    builderSaveModeInput?.addEventListener("change", () => {
+      if (builderGraphVersionInput) builderGraphVersionInput.value = "";
+      updateBuilderVersionInput();
     });
     builderRefreshGraphsButton?.addEventListener("click", () => {
       loadGeneratedGraphOptions().catch((error) => setBuilderStatus(error.message || "Generated graph refresh failed.", true));
