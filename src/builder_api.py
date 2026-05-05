@@ -16,11 +16,13 @@ from urllib import request
 from flask import Flask, abort, jsonify, make_response, request as flask_request, send_from_directory
 
 from src.charity_commission.client import CharityCommissionClient
+from src.companies_house.client import CompaniesHouseClient
 from src.config import Settings, load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import build_search_providers
 from src.storage.repository import Repository
+from src.tree_input_normalizer import normalize_builder_payload
 from src.tree_builder import (
     DefaultTreePipelineRunner,
     execute_tree_build,
@@ -104,7 +106,15 @@ def create_app() -> Flask:
             return _empty_response()
         payload = _json_payload()
         try:
-            tree_request = normalize_tree_build_request(payload)
+            settings = _settings_with_credentials(payload)
+            normalized_payload = normalize_builder_payload(
+                payload,
+                charity_client=CharityCommissionClient(settings),
+                companies_house_client=CompaniesHouseClient(settings),
+                gemini_client=_input_normalizer_gemini(settings),
+                gemini_model=settings.gemini_resolution_model,
+            )
+            tree_request = normalize_tree_build_request(normalized_payload)
         except Exception as exc:
             return jsonify({"ok": False, "error": _safe_error(exc)}), 400
 
@@ -114,12 +124,12 @@ def create_app() -> Flask:
             {
                 "id": job_id,
                 "status": "queued",
-                "request": _sanitize_tree_request(payload),
+                "request": _sanitize_tree_request(normalized_payload),
                 "result": None,
                 "error": "",
             },
         )
-        EXECUTOR.submit(_run_tree_job, job_id, payload)
+        EXECUTOR.submit(_run_tree_job, job_id, normalized_payload)
         return jsonify({"ok": True, "job": _read_job(job_id)}), 202
 
     @app.route("/api/tree-jobs/<job_id>", methods=["GET", "OPTIONS"])
@@ -250,6 +260,17 @@ def _settings_with_credentials(payload: dict[str, Any]) -> Settings:
         serper_api_key=_credential_value(credentials, "serper_api_key") or settings.serper_api_key,
         charity_api_key=_credential_value(credentials, "charity_api_key") or settings.charity_api_key,
         companies_house_api_key=_credential_value(credentials, "companies_house_api_key") or settings.companies_house_api_key,
+    )
+
+
+def _input_normalizer_gemini(settings: Settings) -> GeminiClient | None:
+    if not settings.gemini_api_key:
+        return None
+    return GeminiClient(
+        api_key=settings.gemini_api_key,
+        cache_dir=settings.cache_dir / "builder_input_normalizer",
+        timeout_seconds=20,
+        attempts=1,
     )
 
 
