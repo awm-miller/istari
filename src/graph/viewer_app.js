@@ -245,7 +245,7 @@
       graph_title: String(builderGraphTitleInput?.value || "").trim(),
       save_mode: saveMode,
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
-      limit: Number(builderLimitInput?.value || 25),
+      limit: Number(builderLimitInput?.value || 30),
     };
     if (saveMode === "overwrite_version") {
       payload.graph_version = String(builderGraphVersionInput?.value || "").trim();
