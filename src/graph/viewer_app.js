@@ -226,7 +226,9 @@
   function setBuilderModeFields() {
     const mode = String(builderModeInput?.value || "name_seed");
     const visibleFields = new Set();
-    if (mode === "org_rooted") {
+    if (mode === "name_seed") {
+      visibleFields.add("seed-names");
+    } else if (mode === "org_rooted") {
       visibleFields.add("roots");
       visibleFields.add("target-names");
     } else if (mode === "org_chained") {
@@ -252,10 +254,11 @@
   function builderPayload() {
     const mode = String(builderModeInput?.value || "name_seed");
     const saveMode = String(builderSaveModeInput?.value || "new_version");
+    const seedNames = splitLines(builderSeedNamesInput?.value);
     const payload = {
       mode,
-      seed_name: String(builderGraphTitleInput?.value || "").trim(),
-      seed_names: mode === "org_chained" ? splitLines(builderSeedNamesInput?.value) : [],
+      seed_name: mode === "name_seed" ? String(seedNames[0] || "").trim() : String(builderGraphTitleInput?.value || "").trim(),
+      seed_names: mode === "org_chained" ? seedNames : [],
       roots: mode === "org_rooted" || mode === "org_chained" ? splitLines(builderRootsInput?.value) : [],
       target_names: mode === "org_rooted" ? splitLines(builderTargetNamesInput?.value) : [],
       graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),

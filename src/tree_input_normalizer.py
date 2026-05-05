@@ -82,7 +82,15 @@ def normalize_builder_payload(
     mode = str(normalized.get("mode") or "").strip().lower()
 
     if mode == "name_seed":
-        normalized["seed_name"] = _first_clean_person(normalized.get("seed_name"), gemini_client=gemini_client, gemini_model=gemini_model)
+        seed_source = normalized.get("seed_name")
+        if not _clean_person_row(seed_source):
+            seed_names = _clean_people(
+                normalized.get("seed_names") or [],
+                gemini_client=gemini_client,
+                gemini_model=gemini_model,
+            )
+            seed_source = seed_names[0] if seed_names else seed_source
+        normalized["seed_name"] = _first_clean_person(seed_source, gemini_client=gemini_client, gemini_model=gemini_model)
         normalized["seed_names"] = []
         normalized["roots"] = []
         normalized["target_names"] = []
