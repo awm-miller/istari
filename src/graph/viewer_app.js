@@ -180,6 +180,7 @@
   function builderGraphKey() {
     return sanitizeBuilderGraphId(
       builderGraphIdInput?.value
+      || builderGraphTitleInput?.value
       || builderSeedNameInput?.value
       || splitLines(builderSeedNamesInput?.value)[0]
       || "",
@@ -241,7 +242,7 @@
       seed_names: splitLines(builderSeedNamesInput?.value),
       roots: splitLines(builderRootsInput?.value),
       target_names: splitLines(builderTargetNamesInput?.value),
-      graph_id: String(builderGraphIdInput?.value || "").trim(),
+      graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),
       graph_title: String(builderGraphTitleInput?.value || "").trim(),
       save_mode: saveMode,
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
@@ -3387,7 +3388,7 @@
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
     });
-    [builderGraphIdInput, builderSeedNameInput, builderSeedNamesInput].forEach((input) => {
+    [builderGraphTitleInput, builderGraphIdInput, builderSeedNameInput, builderSeedNamesInput].forEach((input) => {
       input?.addEventListener("input", updateBuilderVersionInput);
     });
     builderSaveModeInput?.addEventListener("change", () => {
