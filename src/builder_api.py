@@ -201,7 +201,11 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
         if not settings.serper_api_key:
             raise ValueError("SERPER_API_KEY must be configured before tree builds can run.")
 
-        repository = Repository(settings.database_path)
+        repository = Repository(
+            settings.database_path,
+            settings.project_root / "src" / "storage" / "schema.sql",
+        )
+        repository.init_db()
         charity_client = CharityCommissionClient(settings)
         search_providers = build_search_providers(settings, include_web_dork=False)
         matcher = HybridMatcher(settings)
