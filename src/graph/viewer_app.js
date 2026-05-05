@@ -47,10 +47,6 @@
   const builderGraphVersionInput = document.getElementById("builder-graph-version");
   const builderNotifyEmailInput = document.getElementById("builder-notify-email");
   const builderLimitInput = document.getElementById("builder-limit");
-  const builderGeminiKeyInput = document.getElementById("builder-gemini-key");
-  const builderSerperKeyInput = document.getElementById("builder-serper-key");
-  const builderTestGeminiButton = document.getElementById("builder-test-gemini");
-  const builderTestSerperButton = document.getElementById("builder-test-serper");
   const builderRefreshGraphsButton = document.getElementById("builder-refresh-graphs");
   const builderGraphListEl = document.getElementById("builder-graph-list");
   const builderStatusEl = document.getElementById("builder-status");
@@ -174,15 +170,6 @@
       .filter(Boolean);
   }
 
-  function builderCredentials() {
-    const credentials = {};
-    const geminiKey = String(builderGeminiKeyInput?.value || "").trim();
-    const serperKey = String(builderSerperKeyInput?.value || "").trim();
-    if (geminiKey) credentials.gemini_api_key = geminiKey;
-    if (serperKey) credentials.serper_api_key = serperKey;
-    return credentials;
-  }
-
   function setBuilderStatus(message, isError = false) {
     if (!builderStatusEl) return;
     builderStatusEl.textContent = message;
@@ -215,8 +202,6 @@
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
       limit: Number(builderLimitInput?.value || 25),
     };
-    const credentials = builderCredentials();
-    if (Object.keys(credentials).length) payload.credentials = credentials;
     return payload;
   }
 
@@ -231,14 +216,6 @@
       throw new Error(data.error || `Request failed with ${response.status}`);
     }
     return data;
-  }
-
-  async function testBuilderKey(kind) {
-    const path = kind === "gemini" ? "/api/key-tests/gemini" : "/api/key-tests/serper";
-    const label = kind === "gemini" ? "Gemini" : "Serper";
-    setBuilderStatus(`Testing ${label} key...`);
-    const data = await postBuilderJson(path, { credentials: builderCredentials() });
-    setBuilderStatus(data.message || `${label} key works.`);
   }
 
   async function submitBuilderJob() {
@@ -3356,12 +3333,6 @@
   function bindUiEvents() {
     modeViewerButton?.addEventListener("click", () => setAppMode("viewer"));
     modeBuilderButton?.addEventListener("click", () => setAppMode("builder"));
-    builderTestGeminiButton?.addEventListener("click", () => {
-      testBuilderKey("gemini").catch((error) => setBuilderStatus(error.message || "Gemini test failed.", true));
-    });
-    builderTestSerperButton?.addEventListener("click", () => {
-      testBuilderKey("serper").catch((error) => setBuilderStatus(error.message || "Serper test failed.", true));
-    });
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));

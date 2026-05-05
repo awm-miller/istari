@@ -472,25 +472,17 @@ body.builder-mode #compact-legend {{
   font-size: 28px;
   line-height: 1.2;
 }}
-.builder-note {{
-  max-width: 360px;
-  color: var(--text-dim);
-  font-size: 13px;
-  line-height: 1.5;
-}}
 .builder-form {{
   display: flex;
   flex-direction: column;
   gap: 14px;
 }}
-.builder-form label,
-.builder-key-panel {{
+.builder-form label {{
   display: flex;
   flex-direction: column;
   gap: 7px;
 }}
-.builder-form label span,
-.builder-key-panel summary {{
+.builder-form label span {{
   color: var(--text-bright);
   font-size: 12px;
   font-weight: 700;
@@ -516,15 +508,6 @@ body.builder-mode #compact-legend {{
   display: grid;
   grid-template-columns: minmax(0, 1fr) 120px;
   gap: 14px;
-}}
-.builder-key-panel {{
-  padding: 14px;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 14px;
-  background: rgba(255,255,255,0.03);
-}}
-.builder-key-panel summary {{
-  cursor: pointer;
 }}
 .builder-actions {{
   display: flex;

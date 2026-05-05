@@ -79,7 +79,6 @@
         <p class="builder-kicker">Tree Builder</p>
         <h1>Generate a graph</h1>
       </div>
-      <p class="builder-note">Keys are sent only to the backend for this request and are never rendered into the graph page.</p>
     </div>
     <form id="builder-form" class="builder-form">
       <label>
@@ -139,21 +138,6 @@
           <input id="builder-limit" type="number" min="1" value="25" />
         </label>
       </div>
-      <details class="builder-key-panel">
-        <summary>Temporary API keys</summary>
-        <label>
-          <span>Gemini API key</span>
-          <input id="builder-gemini-key" type="password" autocomplete="off" />
-        </label>
-        <label>
-          <span>Serper API key</span>
-          <input id="builder-serper-key" type="password" autocomplete="off" />
-        </label>
-        <div class="builder-actions">
-          <button id="builder-test-gemini" class="toolbar-btn" type="button">Test Gemini</button>
-          <button id="builder-test-serper" class="toolbar-btn" type="button">Test Serper</button>
-        </div>
-      </details>
       <div class="builder-actions">
         <button class="builder-submit" type="submit">Generate graph</button>
       </div>
