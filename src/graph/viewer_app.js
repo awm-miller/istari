@@ -37,6 +37,7 @@
   const builderPanelEl = document.getElementById("builder-panel");
   const builderFormEl = document.getElementById("builder-form");
   const builderModeInput = document.getElementById("builder-mode");
+  const builderModeFieldEls = [...document.querySelectorAll("[data-builder-field]")];
   const builderSeedNamesInput = document.getElementById("builder-seed-names");
   const builderRootsInput = document.getElementById("builder-roots");
   const builderTargetNamesInput = document.getElementById("builder-target-names");
@@ -220,6 +221,21 @@
     builderStatusEl.classList.toggle("error", !!isError);
   }
 
+  function setBuilderModeFields() {
+    const mode = String(builderModeInput?.value || "name_seed");
+    const visibleFields = new Set();
+    if (mode === "org_rooted") {
+      visibleFields.add("roots");
+      visibleFields.add("target-names");
+    } else if (mode === "org_chained") {
+      visibleFields.add("seed-names");
+      visibleFields.add("roots");
+    }
+    builderModeFieldEls.forEach((element) => {
+      element.classList.toggle("hidden", !visibleFields.has(String(element.dataset.builderField || "")));
+    });
+  }
+
   function setAppMode(mode) {
     const isBuilder = mode === "builder";
     document.body.classList.toggle("builder-mode", isBuilder);
@@ -237,9 +253,9 @@
     const payload = {
       mode,
       seed_name: String(builderGraphTitleInput?.value || "").trim(),
-      seed_names: splitLines(builderSeedNamesInput?.value),
-      roots: splitLines(builderRootsInput?.value),
-      target_names: splitLines(builderTargetNamesInput?.value),
+      seed_names: mode === "org_chained" ? splitLines(builderSeedNamesInput?.value) : [],
+      roots: mode === "org_rooted" || mode === "org_chained" ? splitLines(builderRootsInput?.value) : [],
+      target_names: mode === "org_rooted" ? splitLines(builderTargetNamesInput?.value) : [],
       graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),
       graph_title: String(builderGraphTitleInput?.value || "").trim(),
       save_mode: saveMode,
@@ -3386,6 +3402,10 @@
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
     });
+    builderModeInput?.addEventListener("change", () => {
+      setBuilderModeFields();
+      updateBuilderVersionInput();
+    });
     [builderGraphTitleInput, builderGraphIdInput, builderSeedNamesInput].forEach((input) => {
       input?.addEventListener("input", updateBuilderVersionInput);
     });
@@ -3610,6 +3630,7 @@
   async function boot() {
     renderLegend();
     initGraphSwitcher();
+    setBuilderModeFields();
     await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {
       onHover(node, event, hit) {
