@@ -25,3 +25,13 @@
   from = "/expanded-mb-names"
   to = "/expanded-mb-names/"
   status = 301
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://165.232.35.81.sslip.io/api/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/health"
+  to = "https://165.232.35.81.sslip.io/health"
+  status = 200

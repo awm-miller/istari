@@ -296,3 +296,7 @@ def _safe_error(exc: Exception) -> str:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    app.run(host=os.getenv("TREE_BUILDER_HOST", "127.0.0.1"), port=int(os.getenv("TREE_BUILDER_PORT", "8000")))

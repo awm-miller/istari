@@ -1,0 +1,22 @@
+[Unit]
+Description=Project Istari Builder Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=istari
+Group=istari
+WorkingDirectory=/srv/project-istari
+EnvironmentFile=/etc/project-istari/backend.env
+ExecStart=/srv/project-istari/venv/bin/python -m src.builder_api
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/srv/project-istari/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+# Copy to /etc/caddy/Caddyfile.
+# The builder backend listens only on 127.0.0.1:8000.
+
+165.232.35.81.sslip.io {
+  encode zstd gzip
+
+  reverse_proxy 127.0.0.1:8000 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+}
