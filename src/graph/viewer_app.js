@@ -236,6 +236,29 @@
     const data = await postBuilderJson("/api/tree-jobs", builderPayload());
     const job = data.job || {};
     setBuilderStatus(`Graph build queued.\nJob ID: ${job.id || "unknown"}\nYou will receive an email when it is ready if SMTP is configured.`);
+    if (job.id) pollBuilderJob(job.id).catch((error) => console.warn("Job polling failed", error));
+  }
+
+  async function pollBuilderJob(jobId) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const response = await fetch(builderApiUrl(`/api/tree-jobs/${encodeURIComponent(jobId)}`));
+      const data = await response.json().catch(() => ({}));
+      const job = data.job || {};
+      if (job.status === "completed") {
+        const graph = job.result?.graph || {};
+        const path = graph.path || "";
+        setBuilderStatus(path ? `Graph ready.\n${graph.title || jobId}\nOpen: ${path}` : `Graph job ${jobId} completed.`);
+        await loadGeneratedGraphOptions();
+        return;
+      }
+      if (job.status === "failed") {
+        setBuilderStatus(job.error || `Graph job ${jobId} failed.`, true);
+        return;
+      }
+      setBuilderStatus(`Graph job ${jobId} is ${job.status || "running"}...`);
+    }
+    setBuilderStatus(`Graph job ${jobId} is still running. You will receive an email when it is ready.`);
   }
 
   function currentGraphOption() {
@@ -270,6 +293,9 @@
         window.location.assign(selected.path);
       });
     });
+    loadGeneratedGraphOptions().catch((error) => {
+      console.warn("Generated graph list failed to load", error);
+    });
     document.addEventListener("pointerdown", (event) => {
       if (!graphSwitcherEl.contains(event.target)) {
         setGraphSwitcherOpen(false);
@@ -279,6 +305,30 @@
       if (event.key === "Escape") {
         setGraphSwitcherOpen(false);
       }
+    });
+  }
+
+  async function loadGeneratedGraphOptions() {
+    if (!graphSwitcherMenuEl) return;
+    const response = await fetch(builderApiUrl("/api/generated-graphs"));
+    if (!response.ok) return;
+    const data = await response.json();
+    const graphs = Array.isArray(data.graphs) ? data.graphs : [];
+    graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option.generated").forEach((element) => element.remove());
+    graphs.forEach((graph) => {
+      const path = String(graph.path || "");
+      const title = String(graph.title || graph.id || "").trim();
+      if (!path || !title) return;
+      const button = document.createElement("button");
+      button.className = "graph-switcher-option generated";
+      button.type = "button";
+      button.role = "menuitem";
+      button.textContent = title;
+      button.addEventListener("click", () => {
+        setGraphSwitcherOpen(false);
+        window.location.assign(path);
+      });
+      graphSwitcherMenuEl.appendChild(button);
     });
   }
 

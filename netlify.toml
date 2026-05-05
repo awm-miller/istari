@@ -35,3 +35,8 @@
   from = "/health"
   to = "https://165.232.35.81.sslip.io/health"
   status = 200
+
+[[redirects]]
+  from = "/generated-graphs/*"
+  to = "https://165.232.35.81.sslip.io/generated-graphs/:splat"
+  status = 200

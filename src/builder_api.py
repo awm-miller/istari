@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
-from flask import Flask, jsonify, make_response, request as flask_request
+from flask import Flask, abort, jsonify, make_response, request as flask_request, send_from_directory
 
 from src.charity_commission.client import CharityCommissionClient
 from src.config import Settings, load_settings
@@ -26,10 +26,12 @@ from src.tree_builder import (
     execute_tree_build,
     normalize_tree_build_request,
 )
+from src.tree_graph_artifacts import build_generated_graph_bundle, list_generated_graphs
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 JOB_DIR = Path(os.getenv("TREE_BUILDER_JOB_DIR", PROJECT_ROOT / "data" / "tree_jobs"))
+GENERATED_GRAPH_DIR = Path(os.getenv("TREE_BUILDER_GRAPH_DIR", PROJECT_ROOT / "data" / "generated_graphs"))
 EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("TREE_BUILDER_WORKERS", "1")))
 LOCK = threading.Lock()
 
@@ -128,6 +130,20 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "Job not found."}), 404
         return jsonify({"ok": True, "job": job})
 
+    @app.route("/api/generated-graphs", methods=["GET", "OPTIONS"])
+    def generated_graphs():
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        return jsonify({"ok": True, "graphs": list_generated_graphs(GENERATED_GRAPH_DIR)})
+
+    @app.route("/generated-graphs/<graph_id>/", methods=["GET"])
+    def generated_graph_index(graph_id: str):
+        return _send_generated_graph_file(graph_id, "index.html")
+
+    @app.route("/generated-graphs/<graph_id>/<path:filename>", methods=["GET"])
+    def generated_graph_file(graph_id: str, filename: str):
+        return _send_generated_graph_file(graph_id, filename)
+
     return app
 
 
@@ -154,6 +170,15 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
         )
         result = execute_tree_build(tree_request, runner)
         safe_result = _sanitize_result(result)
+        run_ids = _result_run_ids(safe_result)
+        if run_ids:
+            manifest = build_generated_graph_bundle(
+                run_ids=run_ids,
+                output_root=GENERATED_GRAPH_DIR,
+                graph_id=job_id,
+                title=_graph_title(tree_request),
+            )
+            safe_result["graph"] = manifest
         _update_job(job_id, status="completed", result=safe_result)
         _send_completion_email(tree_request.notify_email, job_id, safe_result, success=True)
     except Exception as exc:
@@ -217,11 +242,13 @@ def _send_completion_email(to_address: str, job_id: str, result: dict[str, Any],
     run_ids = ", ".join(str(value) for value in result.get("run_ids", []) if value)
     if not run_ids and result.get("run_id"):
         run_ids = str(result["run_id"])
+    graph = result.get("graph") if isinstance(result.get("graph"), dict) else {}
     message.set_content(
         "\n".join(
             [
                 f"Your Istari graph job {job_id} is {status}.",
                 f"Run IDs: {run_ids or 'n/a'}",
+                f"Graph path: {graph.get('path', 'n/a')}",
                 "",
                 "Open the Builder page to add it to the graph list.",
             ]
@@ -286,6 +313,38 @@ def _sanitize_tree_request(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _sanitize_result(result: dict[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(result, default=str))
+
+
+def _result_run_ids(result: dict[str, Any]) -> list[int]:
+    if isinstance(result.get("run_ids"), list):
+        return [int(value) for value in result["run_ids"] if str(value).strip()]
+    if result.get("run_id"):
+        return [int(result["run_id"])]
+    return []
+
+
+def _graph_title(request: Any) -> str:
+    if request.seed_name:
+        return f"Istari: {request.seed_name}"
+    if request.seed_names:
+        return f"Istari: {', '.join(request.seed_names[:3])}"
+    if request.roots:
+        return f"Istari: {', '.join(root.registry_number for root in request.roots[:3])}"
+    return "Istari Generated Graph"
+
+
+def _send_generated_graph_file(graph_id: str, filename: str):
+    safe_id = "".join(ch for ch in graph_id if ch.isalnum() or ch in {"-", "_"})
+    if safe_id != graph_id:
+        abort(404)
+    graph_dir = (GENERATED_GRAPH_DIR / safe_id).resolve()
+    try:
+        graph_dir.relative_to(GENERATED_GRAPH_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not (graph_dir / filename).is_file():
+        abort(404)
+    return send_from_directory(graph_dir, filename)
 
 
 def _safe_error(exc: Exception) -> str:
