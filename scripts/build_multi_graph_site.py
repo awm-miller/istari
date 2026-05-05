@@ -47,6 +47,7 @@ class GraphBundle:
     title: str
     database_candidates: tuple[str, ...]
     merge_database_candidates: tuple[str, ...] = ()
+    promote_seed_database_candidates: tuple[str, ...] = ()
 
     def resolve_database_path(self) -> Path:
         for relative_path in self.database_candidates:
@@ -64,10 +65,18 @@ class GraphBundle:
                 paths.append(candidate)
         return paths
 
+    def resolve_promote_seed_database_path(self) -> Path | None:
+        for relative_path in self.promote_seed_database_candidates:
+            candidate = PROJECT_ROOT / relative_path
+            if candidate.exists():
+                return candidate
+        return None
+
 
 GRAPH_BUNDLES = (
     GraphBundle("mb", "MB", ("old_dbs/charity_links.filtered_rebuild.sqlite", "data/istari_latest.db")),
     GraphBundle("iums", "IUMS", ("data/iums_uk.db",)),
+    GraphBundle("iran", "Iran", ("data/iran_orgs.db",), promote_seed_database_candidates=("data/iran.db",)),
     GraphBundle(
         "sevenspikes",
         "Seven Spikes",
@@ -101,6 +110,7 @@ def write_redirects_file() -> None:
     REDIRECTS_PATH.write_text(
         "/ /mb/ 302\n"
         "/mb /mb/ 301\n"
+        "/iran /iran/ 301\n"
         "/iums /iums/ 301\n"
         "/sevenspikes /sevenspikes/ 301\n"
         "/expanded-mb-names /expanded-mb-names/ 301\n"
@@ -529,6 +539,9 @@ def build_bundle(bundle: GraphBundle) -> None:
     env["DATABASE_PATH"] = str(database_path)
     env["GRAPH_VIEW_TITLE"] = bundle.title
     env["SKIP_SANCTIONS_REFRESH"] = "1"
+    promote_seed_database_path = bundle.resolve_promote_seed_database_path()
+    if promote_seed_database_path is not None:
+        env["PROMOTE_SEED_DATABASE_PATH"] = str(promote_seed_database_path)
     print(f"Building {bundle.key} from {database_path}...", flush=True)
     subprocess.run(
         [sys.executable, "scripts/rebuild_graph.py"],

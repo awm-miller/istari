@@ -18,6 +18,7 @@ from src.negative_news import (
     partition_negative_news_clusters_by_history,
 )
 from src.storage.negative_news_store import NegativeNewsStore
+from src.storage.negative_news_store import database_source_key
 from src.storage.repository import Repository
 
 
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num", type=int, default=10, help="Serper results per page.")
     parser.add_argument("--max-articles", type=int, default=40, help="Max fetched/classified URLs per cluster.")
     parser.add_argument("--max-passes", type=int, default=5, help="Max rerun passes per chunk.")
+    parser.add_argument("--cluster-timeout", type=int, default=300, help="Seconds before skipping a stuck cluster subprocess.")
     return parser
 
 
@@ -45,6 +47,8 @@ def _chunk_config(
     num: int,
     max_articles: int,
     run_ids: list[int],
+    source_database_path: Path,
+    source_database_key: str,
 ) -> dict[str, object]:
     return {
         "mode": "cluster_batch",
@@ -57,6 +61,8 @@ def _chunk_config(
         "max_articles_per_cluster": int(max_articles),
         "classify": True,
         "run_ids": list(run_ids),
+        "source_database_path": str(source_database_path),
+        "source_database_key": source_database_key,
     }
 
 
@@ -130,6 +136,8 @@ def main() -> None:
     )
     total_available = int(cluster_source.get("total_available") or 0)
     run_ids = list(cluster_source.get("run_ids") or [])
+    source_database_path = Path(settings.database_path).resolve()
+    source_database_key = database_source_key(source_database_path)
     if total_available <= 0:
         print(json.dumps({"ok": True, "message": "No merged clusters available."}, indent=2))
         return
@@ -146,7 +154,14 @@ def main() -> None:
     all_clusters = list(full_source.get("clusters") or [])
     pending_cluster_ids = {
         str(cluster.get("cluster_id") or "")
-        for cluster in (partition_negative_news_clusters_by_history(store, all_clusters).get("pending_clusters") or [])
+        for cluster in (
+            partition_negative_news_clusters_by_history(
+                store,
+                all_clusters,
+                source_database_key=source_database_key,
+            ).get("pending_clusters")
+            or []
+        )
     }
     pending_offsets = [
         (offset, cluster)
@@ -183,6 +198,8 @@ def main() -> None:
             num=int(args.num),
             max_articles=int(args.max_articles),
             run_ids=run_ids,
+            source_database_path=source_database_path,
+            source_database_key=source_database_key,
         )
         output_path = settings.project_root / "data" / f"negative_news_clusters_offset{offset}_limit{limit}.json"
         final_returncode = 0
@@ -219,7 +236,33 @@ def main() -> None:
                 ),
                 flush=True,
             )
-            proc = subprocess.run(cmd, check=False)
+            try:
+                proc = subprocess.run(cmd, check=False, timeout=max(1, int(args.cluster_timeout)))
+            except subprocess.TimeoutExpired:
+                final_returncode = 124
+                _append_skip_log(
+                    skip_log_path,
+                    offset=offset,
+                    returncode=final_returncode,
+                    attempts=attempt,
+                    label=str(cluster.get("label") or ""),
+                )
+                print(
+                    json.dumps(
+                        {
+                            "chunk_offset": offset,
+                            "chunk_limit": limit,
+                            "attempt": attempt,
+                            "returncode": final_returncode,
+                            "status": "timeout_skipped",
+                            "timeout_seconds": int(args.cluster_timeout),
+                            "label": str(cluster.get("label") or ""),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                break
             row = store.get_batch_run_by_config(config)
             if row is None:
                 final_returncode = int(proc.returncode or 0)

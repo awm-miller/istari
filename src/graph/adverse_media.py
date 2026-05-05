@@ -10,7 +10,7 @@ from typing import Any
 from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.search.queries import normalize_name
-from src.storage.negative_news_store import cluster_lookup_key, person_ids_fingerprint
+from src.storage.negative_news_store import cluster_lookup_key, database_source_key, person_ids_fingerprint
 
 
 _CATEGORY_PRIORITY = {
@@ -76,8 +76,20 @@ Headline:
     return extract_gemini_text(response).strip()
 
 
+def _result_source_key(row: sqlite3.Row) -> str:
+    try:
+        config = json.loads(str(row["config_json"] or "{}"))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(config, dict):
+        return ""
+    return str(config.get("source_database_key") or "").strip()
+
+
 def _latest_cluster_claims(
     database_path: Path,
+    *,
+    source_database_key: str = "",
 ) -> tuple[
     dict[str, list[dict[str, Any]]],
     dict[str, list[dict[str, Any]]],
@@ -92,17 +104,24 @@ def _latest_cluster_claims(
         rows = connection.execute(
             """
             SELECT
-                cluster_id,
-                result_json,
-                batch_run_id,
-                updated_at
-            FROM negative_news_cluster_results
-            WHERE status = 'completed'
-            ORDER BY batch_run_id DESC, updated_at DESC, id DESC
+                r.cluster_id,
+                r.result_json,
+                r.batch_run_id,
+                r.updated_at,
+                b.config_json
+            FROM negative_news_cluster_results r
+            JOIN negative_news_batch_runs b ON b.id = r.batch_run_id
+            WHERE r.status = 'completed'
+            ORDER BY r.batch_run_id DESC, r.updated_at DESC, r.id DESC
             """
         ).fetchall()
     finally:
         connection.close()
+
+    source_key = str(source_database_key or "").strip()
+    if source_key:
+        scoped_rows = [row for row in rows if _result_source_key(row) == source_key]
+        rows = scoped_rows if scoped_rows else [row for row in rows if not _result_source_key(row)]
 
     claims_by_cluster: dict[str, list[dict[str, Any]]] = {}
     claims_by_lookup_key: dict[str, list[dict[str, Any]]] = {}
@@ -212,7 +231,10 @@ def annotate_graph_with_adverse_media(
     settings: Settings,
     database_path: Path,
 ) -> dict[str, Any]:
-    claims_by_cluster, claims_by_lookup_key, claims_by_person_ids, claims_by_person_name = _latest_cluster_claims(database_path)
+    claims_by_cluster, claims_by_lookup_key, claims_by_person_ids, claims_by_person_name = _latest_cluster_claims(
+        database_path,
+        source_database_key=database_source_key(settings.database_path),
+    )
     if not claims_by_cluster and not claims_by_lookup_key and not claims_by_person_ids and not claims_by_person_name:
         return data
     claims_by_cluster = _translate_claim_titles(claims_by_cluster, settings=settings)

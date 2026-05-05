@@ -12,6 +12,11 @@
   status = 301
 
 [[redirects]]
+  from = "/iran"
+  to = "/iran/"
+  status = 301
+
+[[redirects]]
   from = "/iums"
   to = "/iums/"
   status = 301

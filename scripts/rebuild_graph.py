@@ -1,8 +1,10 @@
 """Rebuild graph HTML from graph modules, then copy to netlify."""
 from dataclasses import asdict
+from hashlib import sha1
 import json
 import os
 import pathlib
+import sqlite3
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -25,6 +27,7 @@ from src.mapping_low_confidence import (
     rebuild_overlay_mapping_db,
 )
 from src.ranking import rank_people
+from src.search.queries import generate_name_variants, normalize_name
 from src.services.mvp_pipeline import hydrate_cached_sanctions, step4_ofac_screening
 from src.storage.repository import Repository
 
@@ -75,6 +78,162 @@ def refresh_sanctions_for_runs(run_ids: list[int], *, ranking_limit: int = 5000)
         flush=True,
     )
 
+
+_SEED_PROMOTION_IGNORED_TOKENS = {
+    "al",
+    "ayatollah",
+    "brigadier",
+    "dr",
+    "general",
+    "miss",
+    "mr",
+    "mrs",
+    "ms",
+    "prof",
+    "professor",
+    "sir",
+}
+
+_SEED_PROMOTION_TOKEN_SWAPS = (
+    ("mohammad", "mohammed"),
+    ("mohamed", "mohammed"),
+    ("muhammad", "mohammed"),
+    ("saied", "saeed"),
+    ("sayed", "seyed"),
+)
+
+
+def _seed_promotion_token_sets(name: str, *, include_generated_variants: bool = True) -> set[frozenset[str]]:
+    raw_names = {str(name or "").strip()}
+    if include_generated_variants:
+        for variant in generate_name_variants(str(name or ""), "balanced"):
+            value = str(variant.name or "").strip()
+            if value:
+                raw_names.add(value)
+
+    token_sets: set[frozenset[str]] = set()
+    for raw_name in raw_names:
+        normalized = normalize_name(raw_name)
+        tokens = [
+            token
+            for token in normalized.split()
+            if token and token not in _SEED_PROMOTION_IGNORED_TOKENS
+        ]
+        if not tokens:
+            continue
+        joined = " ".join(tokens)
+        variants = {joined}
+        for old, new in _SEED_PROMOTION_TOKEN_SWAPS:
+            variants.add(joined.replace(old, new))
+            variants.add(joined.replace(new, old))
+        for variant in variants:
+            variant_tokens = frozenset(token for token in variant.split() if token)
+            if len(variant_tokens) >= 2:
+                token_sets.add(variant_tokens)
+    return token_sets
+
+
+def _promoted_seed_target(seed_name: str, nodes: list[dict]) -> dict | None:
+    seed_token_sets = _seed_promotion_token_sets(seed_name)
+    if not seed_token_sets:
+        return None
+    candidates: list[tuple[int, int, str, dict]] = []
+    for node in nodes:
+        if str(node.get("kind") or "") not in {"person", "seed_alias"}:
+            continue
+        node_token_sets: set[frozenset[str]] = set()
+        for name in [node.get("label", ""), *(node.get("aliases") or [])]:
+            node_token_sets.update(
+                _seed_promotion_token_sets(str(name or ""), include_generated_variants=False)
+            )
+        if not node_token_sets:
+            continue
+        best_overlap = 0
+        best_size_delta = 99
+        for seed_tokens in seed_token_sets:
+            for node_tokens in node_token_sets:
+                if seed_tokens.issubset(node_tokens) or node_tokens.issubset(seed_tokens):
+                    overlap = len(seed_tokens & node_tokens)
+                    size_delta = abs(len(seed_tokens) - len(node_tokens))
+                    if overlap > best_overlap or (overlap == best_overlap and size_delta < best_size_delta):
+                        best_overlap = overlap
+                        best_size_delta = size_delta
+        if best_overlap:
+            candidates.append((best_overlap, -best_size_delta, str(node.get("label") or ""), node))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return candidates[0][3]
+
+
+def promote_external_seed_names(data: dict) -> dict:
+    raw_path = os.environ.get("PROMOTE_SEED_DATABASE_PATH", "").strip()
+    if not raw_path:
+        return data
+    seed_database_path = pathlib.Path(raw_path)
+    if not seed_database_path.exists():
+        print(f"Warning: seed promotion database does not exist: {seed_database_path}", flush=True)
+        return data
+
+    connection = sqlite3.connect(seed_database_path)
+    try:
+        seed_names = [
+            str(row[0] or "").strip()
+            for row in connection.execute("SELECT DISTINCT seed_name FROM runs ORDER BY seed_name")
+            if str(row[0] or "").strip()
+        ]
+    finally:
+        connection.close()
+    if not seed_names:
+        return data
+
+    nodes = list(data.get("nodes") or [])
+    edges = list(data.get("edges") or [])
+    existing_node_ids = {str(node.get("id") or "") for node in nodes if isinstance(node, dict)}
+    existing_edge_keys = {
+        (str(edge.get("source") or ""), str(edge.get("target") or ""), str(edge.get("kind") or ""))
+        for edge in edges
+        if isinstance(edge, dict)
+    }
+    promoted = 0
+    for seed_name in seed_names:
+        target = _promoted_seed_target(seed_name, nodes)
+        if not target:
+            continue
+        digest = sha1(seed_name.casefold().encode("utf-8")).hexdigest()[:12]
+        seed_id = f"external_seed:{digest}"
+        if seed_id not in existing_node_ids:
+            nodes.append(
+                {
+                    "id": seed_id,
+                    "label": seed_name,
+                    "kind": "seed",
+                    "lane": 0,
+                    "seed_name": seed_name,
+                    "promoted_seed": True,
+                    "tooltip_lines": [f"Seed: {seed_name}", "Promoted from the Iran individual seed run."],
+                }
+            )
+            existing_node_ids.add(seed_id)
+        target_id = str(target.get("id") or "")
+        edge_key = (seed_id, target_id, "alias")
+        if target_id and edge_key not in existing_edge_keys:
+            edges.append(
+                {
+                    "source": seed_id,
+                    "target": target_id,
+                    "kind": "alias",
+                    "tooltip": f"{seed_name} = {target.get('label') or target_id}",
+                    "promoted_seed": True,
+                }
+            )
+            existing_edge_keys.add(edge_key)
+        promoted += 1
+    data["nodes"] = nodes
+    data["edges"] = edges
+    print(f"Promoted {promoted} external seed name(s) from {seed_database_path}", flush=True)
+    return data
+
 run_ids = repository.get_latest_unique_run_ids()
 if not run_ids:
     raise SystemExit("No runs found.")
@@ -89,6 +248,7 @@ data = consolidate_multi_run(run_ids)
 data = annotate_graph_with_egypt_judgments(data, settings=settings)
 negative_news_db_path = resolve_negative_news_db_path(settings)
 data = annotate_graph_with_adverse_media(data, settings=settings, database_path=negative_news_db_path)
+data = promote_external_seed_names(data)
 print(f"  {len(data['nodes'])} nodes, {len(data['edges'])} edges", flush=True)
 
 open_letters_data = {"nodes": [], "edges": [], "summary": {"run_key": str(data.get("run_id", ""))}}

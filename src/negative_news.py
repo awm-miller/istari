@@ -22,6 +22,7 @@ from src.search.queries import generate_name_variants
 from src.storage.negative_news_store import (
     NegativeNewsStore,
     cluster_lookup_key,
+    database_source_key,
     person_ids_fingerprint,
 )
 from src.storage.repository import Repository
@@ -292,7 +293,7 @@ def _cluster_kind(cluster_id: str, raw_kind: Any = "") -> str:
 
 
 def _cluster_source_cache_path(repository: Repository) -> Path:
-    return repository.database_path.parent / "negative_news_cluster_source_cache.json"
+    return repository.database_path.parent / f"negative_news_cluster_source_cache_{database_source_key(repository.database_path)}.json"
 
 
 def _load_cluster_source_cache(repository: Repository, *, run_ids: list[int]) -> dict[str, Any] | None:
@@ -951,10 +952,21 @@ def load_negative_news_clusters(
 def partition_negative_news_clusters_by_history(
     store: NegativeNewsStore,
     clusters: list[dict[str, Any]],
+    *,
+    source_database_key: str = "",
 ) -> dict[str, Any]:
-    historical_by_cluster_id = store.get_latest_completed_results_by_cluster_id()
-    historical_by_cluster_lookup_key = store.get_latest_completed_results_by_cluster_lookup_key()
-    historical_by_person_ids = store.get_latest_completed_results_by_person_ids()
+    historical_by_cluster_id = store.get_latest_completed_results_by_cluster_id(
+        source_database_key=source_database_key,
+        include_legacy=not bool(source_database_key),
+    )
+    historical_by_cluster_lookup_key = store.get_latest_completed_results_by_cluster_lookup_key(
+        source_database_key=source_database_key,
+        include_legacy=not bool(source_database_key),
+    )
+    historical_by_person_ids = store.get_latest_completed_results_by_person_ids(
+        source_database_key=source_database_key,
+        include_legacy=not bool(source_database_key),
+    )
     pending_clusters: list[dict[str, Any]] = []
     reused_clusters: list[dict[str, Any]] = []
     for cluster in clusters:
@@ -1042,7 +1054,13 @@ def run_negative_news_cluster_batch(
     log.info("Cluster batch load start offset=%s limit=%s", offset, limit)
     cluster_source = load_negative_news_clusters(repository, offset=offset, limit=limit)
     current_clusters = list(cluster_source.get("clusters") or [])
-    screening_partition = partition_negative_news_clusters_by_history(store, current_clusters)
+    source_database_path = Path(repository.database_path).resolve()
+    source_database_key = database_source_key(source_database_path)
+    screening_partition = partition_negative_news_clusters_by_history(
+        store,
+        current_clusters,
+        source_database_key=source_database_key,
+    )
     pending_clusters = list(screening_partition.get("pending_clusters") or [])
     reused_clusters = list(screening_partition.get("reused_clusters") or [])
     cluster_ranks = {
@@ -1068,6 +1086,8 @@ def run_negative_news_cluster_batch(
                 "run_ids": cluster_source["run_ids"],
                 "total_available": cluster_source["total_available"],
                 "negative_news_db_path": str(_negative_news_db_path(settings)),
+                "source_database_path": str(source_database_path),
+                "source_database_key": source_database_key,
                 "batch_run_id": None,
                 "broad_pages": broad_pages,
                 "org_pages": org_pages,
@@ -1098,6 +1118,8 @@ def run_negative_news_cluster_batch(
         "max_articles_per_cluster": None if max_articles_per_cluster is None else int(max_articles_per_cluster),
         "classify": bool(classify),
         "run_ids": cluster_source["run_ids"],
+        "source_database_path": str(source_database_path),
+        "source_database_key": source_database_key,
     }
     batch_run_id = store.get_or_create_batch_run(
         config=run_config,
@@ -1321,6 +1343,7 @@ def run_negative_news_cluster_batch(
             "cluster_id": cluster["cluster_id"],
             "cluster_kind": _cluster_kind(cluster["cluster_id"], cluster.get("cluster_kind")),
             "cluster_lookup_key": str(cluster.get("cluster_lookup_key") or ""),
+            "source_database_key": source_database_key,
             "label": cluster["label"],
             "aliases": english_aliases,
             "arabic_aliases": arabic_aliases,
@@ -1371,6 +1394,8 @@ def run_negative_news_cluster_batch(
             "run_ids": cluster_source["run_ids"],
             "total_available": cluster_source["total_available"],
             "negative_news_db_path": str(_negative_news_db_path(settings)),
+            "source_database_path": str(source_database_path),
+            "source_database_key": source_database_key,
             "batch_run_id": batch_run_id,
             "broad_pages": broad_pages,
             "org_pages": org_pages,

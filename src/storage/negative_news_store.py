@@ -9,6 +9,28 @@ from typing import Any
 from src.search.queries import generate_name_variants, normalize_name
 
 
+def database_source_key(database_path: Path) -> str:
+    try:
+        resolved = Path(database_path).resolve()
+    except OSError:
+        resolved = Path(database_path).absolute()
+    return sha256(str(resolved).lower().encode("utf-8")).hexdigest()[:16]
+
+
+def _config_source_key(config: Any) -> str:
+    if not isinstance(config, dict):
+        return ""
+    return str(config.get("source_database_key") or "").strip()
+
+
+def _row_source_key(row: sqlite3.Row) -> str:
+    try:
+        config = json.loads(str(row["config_json"] or "{}"))
+    except (KeyError, json.JSONDecodeError):
+        return ""
+    return _config_source_key(config)
+
+
 def person_ids_fingerprint(person_ids: Any) -> str:
     values: set[int] = set()
     for value in person_ids or []:
@@ -208,22 +230,48 @@ class NegativeNewsStore:
                 (batch_run_id,),
             ).fetchall()
 
-    def get_latest_completed_results_by_cluster_id(self) -> dict[str, dict[str, Any]]:
+    def _latest_completed_rows(
+        self,
+        *,
+        source_database_key: str = "",
+        include_legacy: bool = True,
+    ) -> list[sqlite3.Row]:
         with self.connect() as connection:
             rows = connection.execute(
                 """
                 SELECT
-                    cluster_id,
-                    label,
-                    result_json,
-                    batch_run_id,
-                    updated_at,
-                    id
-                FROM negative_news_cluster_results
-                WHERE status = 'completed'
-                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
+                    r.cluster_id,
+                    r.label,
+                    r.result_json,
+                    r.batch_run_id,
+                    r.updated_at,
+                    r.id,
+                    b.config_json
+                FROM negative_news_cluster_results r
+                JOIN negative_news_batch_runs b ON b.id = r.batch_run_id
+                WHERE r.status = 'completed'
+                ORDER BY r.batch_run_id DESC, r.updated_at DESC, r.id DESC
                 """
             ).fetchall()
+        source_key = str(source_database_key or "").strip()
+        if not source_key:
+            return rows
+        return [
+            row
+            for row in rows
+            if _row_source_key(row) == source_key or (include_legacy and not _row_source_key(row))
+        ]
+
+    def get_latest_completed_results_by_cluster_id(
+        self,
+        *,
+        source_database_key: str = "",
+        include_legacy: bool = True,
+    ) -> dict[str, dict[str, Any]]:
+        rows = self._latest_completed_rows(
+            source_database_key=source_database_key,
+            include_legacy=include_legacy,
+        )
         results: dict[str, dict[str, Any]] = {}
         for row in rows:
             cluster_id = str(row["cluster_id"] or "").strip()
@@ -242,22 +290,16 @@ class NegativeNewsStore:
             }
         return results
 
-    def get_latest_completed_results_by_person_ids(self) -> dict[str, dict[str, Any]]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    cluster_id,
-                    label,
-                    result_json,
-                    batch_run_id,
-                    updated_at,
-                    id
-                FROM negative_news_cluster_results
-                WHERE status = 'completed'
-                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
-                """
-            ).fetchall()
+    def get_latest_completed_results_by_person_ids(
+        self,
+        *,
+        source_database_key: str = "",
+        include_legacy: bool = True,
+    ) -> dict[str, dict[str, Any]]:
+        rows = self._latest_completed_rows(
+            source_database_key=source_database_key,
+            include_legacy=include_legacy,
+        )
         results: dict[str, dict[str, Any]] = {}
         for row in rows:
             try:
@@ -276,22 +318,16 @@ class NegativeNewsStore:
             }
         return results
 
-    def get_latest_completed_results_by_cluster_lookup_key(self) -> dict[str, dict[str, Any]]:
-        with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    cluster_id,
-                    label,
-                    result_json,
-                    batch_run_id,
-                    updated_at,
-                    id
-                FROM negative_news_cluster_results
-                WHERE status = 'completed'
-                ORDER BY batch_run_id DESC, updated_at DESC, id DESC
-                """
-            ).fetchall()
+    def get_latest_completed_results_by_cluster_lookup_key(
+        self,
+        *,
+        source_database_key: str = "",
+        include_legacy: bool = True,
+    ) -> dict[str, dict[str, Any]]:
+        rows = self._latest_completed_rows(
+            source_database_key=source_database_key,
+            include_legacy=include_legacy,
+        )
         results: dict[str, dict[str, Any]] = {}
         for row in rows:
             try:

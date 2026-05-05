@@ -8,6 +8,7 @@ const DEFAULT_STORE_KEY = "overrides";
 function normalizeGraphKey(value) {
   const graph = String(value || "").trim().toLowerCase();
   if (graph === "iums") return "iums";
+  if (graph === "iran") return "iran";
   if (graph === "sevenspikes") return "sevenspikes";
   if (graph === "expanded-mb-names" || graph === "expandedmbnames") return "expanded-mb-names";
   return "mb";

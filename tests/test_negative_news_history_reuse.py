@@ -6,7 +6,7 @@ from src.negative_news import partition_negative_news_clusters_by_history
 
 
 class _FakeStore:
-    def get_latest_completed_results_by_cluster_id(self):
+    def get_latest_completed_results_by_cluster_id(self, **_kwargs):
         return {
             "merged_person:429": {
                 "cluster_id": "merged_person:429",
@@ -19,10 +19,10 @@ class _FakeStore:
             }
         }
 
-    def get_latest_completed_results_by_cluster_lookup_key(self):
+    def get_latest_completed_results_by_cluster_lookup_key(self, **_kwargs):
         return {}
 
-    def get_latest_completed_results_by_person_ids(self):
+    def get_latest_completed_results_by_person_ids(self, **_kwargs):
         return {}
 
 

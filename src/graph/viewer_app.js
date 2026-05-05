@@ -6,6 +6,7 @@
   const GRAPH_OPTIONS = [
     { key: "mb", label: "MB", path: "/mb/" },
     { key: "iums", label: "IUMS", path: "/iums/" },
+    { key: "iran", label: "Iran", path: "/iran/" },
     { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
     { key: "expanded-mb-names", label: "Expanded MB Names", path: "/expanded-mb-names/" },
   ];
@@ -148,6 +149,7 @@
   function detectGraphKey(pathname) {
     const path = String(pathname || "").toLowerCase();
     if (path.startsWith("/iums/") || path === "/iums") return "iums";
+    if (path.startsWith("/iran/") || path === "/iran") return "iran";
     if (path.startsWith("/sevenspikes/") || path === "/sevenspikes") return "sevenspikes";
     if (path.startsWith("/expanded-mb-names/") || path === "/expanded-mb-names") return "expanded-mb-names";
     if (path.startsWith("/mb/") || path === "/mb") return "mb";
