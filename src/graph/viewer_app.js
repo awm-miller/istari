@@ -405,25 +405,37 @@
     }
     builderGraphListEl.innerHTML = graphs.map((graph) => {
       const versions = Array.isArray(graph.versions) ? graph.versions : [];
-      const versionButtons = versions.map((version) => `
-        <button class="toolbar-btn" type="button" data-graph-action="open-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">${escapeHtml(version.version)}</button>
-        <button class="toolbar-btn" type="button" data-graph-action="activate-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">Make active</button>
-        <button class="toolbar-btn danger" type="button" data-graph-action="delete-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">Delete ${escapeHtml(version.version)}</button>
-      `).join("");
+      const activeVersion = String(graph.active_version || versions[0]?.version || "");
+      const versionOptions = versions.map((version) => {
+        const value = String(version.version || "");
+        return `<option value="${escapeHtml(value)}"${value === activeVersion ? " selected" : ""}>${escapeHtml(value)}</option>`;
+      }).join("");
       return `
-        <div class="builder-graph-item">
-          <div class="builder-graph-item-title">
+        <div class="builder-graph-row">
+          <div class="builder-graph-row-title">
             <strong>${escapeHtml(graph.title || graph.id)}</strong>
-            <span>Active ${escapeHtml(graph.active_version || "n/a")}</span>
+            <span>${escapeHtml(graph.id)}</span>
           </div>
-          <div class="builder-graph-actions">
-            <button class="toolbar-btn" type="button" data-graph-action="open-active" data-graph-id="${escapeHtml(graph.id)}">Open active</button>
+          <div class="builder-graph-row-controls">
+            <select class="builder-graph-version-select" data-graph-id="${escapeHtml(graph.id)}" ${versionOptions ? "" : "disabled"}>
+              ${versionOptions || '<option value="">No versions</option>'}
+            </select>
+            <button class="toolbar-btn" type="button" data-graph-action="open-active" data-graph-id="${escapeHtml(graph.id)}">Open</button>
+            <button class="toolbar-btn danger" type="button" data-graph-action="delete-selected-version" data-graph-id="${escapeHtml(graph.id)}">Delete version</button>
             <button class="toolbar-btn danger" type="button" data-graph-action="delete-graph" data-graph-id="${escapeHtml(graph.id)}">Delete graph</button>
-            ${versionButtons}
           </div>
         </div>
       `;
     }).join("");
+  }
+
+  async function handleGeneratedGraphVersionChange(select) {
+    const graphId = String(select.dataset.graphId || "");
+    const version = String(select.value || "");
+    if (!graphId || !version) return;
+    await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
+    setBuilderStatus(`${graphId} ${version} is now active.`);
+    await loadGeneratedGraphOptions();
   }
 
   async function handleGeneratedGraphAction(button) {
@@ -449,6 +461,16 @@
       if (!window.confirm(`Delete ${graphId} ${version}?`)) return;
       await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}`);
       setBuilderStatus(`${graphId} ${version} deleted.`);
+      await loadGeneratedGraphOptions();
+      return;
+    }
+    if (action === "delete-selected-version") {
+      const select = button.closest(".builder-graph-row")?.querySelector(".builder-graph-version-select");
+      const selectedVersion = String(select?.value || "");
+      if (!selectedVersion) return;
+      if (!window.confirm(`Delete ${graphId} ${selectedVersion}?`)) return;
+      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(selectedVersion)}`);
+      setBuilderStatus(`${graphId} ${selectedVersion} deleted.`);
       await loadGeneratedGraphOptions();
       return;
     }
@@ -3422,6 +3444,11 @@
       const button = event.target.closest("[data-graph-action]");
       if (!button) return;
       handleGeneratedGraphAction(button).catch((error) => setBuilderStatus(error.message || "Generated graph action failed.", true));
+    });
+    builderGraphListEl?.addEventListener("change", (event) => {
+      const select = event.target.closest(".builder-graph-version-select");
+      if (!select) return;
+      handleGeneratedGraphVersionChange(select).catch((error) => setBuilderStatus(error.message || "Generated graph version change failed.", true));
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();
