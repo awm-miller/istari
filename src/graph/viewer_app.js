@@ -37,7 +37,6 @@
   const builderPanelEl = document.getElementById("builder-panel");
   const builderFormEl = document.getElementById("builder-form");
   const builderModeInput = document.getElementById("builder-mode");
-  const builderSeedNameInput = document.getElementById("builder-seed-name");
   const builderSeedNamesInput = document.getElementById("builder-seed-names");
   const builderRootsInput = document.getElementById("builder-roots");
   const builderTargetNamesInput = document.getElementById("builder-target-names");
@@ -181,7 +180,6 @@
     return sanitizeBuilderGraphId(
       builderGraphIdInput?.value
       || builderGraphTitleInput?.value
-      || builderSeedNameInput?.value
       || splitLines(builderSeedNamesInput?.value)[0]
       || "",
     );
@@ -238,7 +236,7 @@
     const saveMode = String(builderSaveModeInput?.value || "new_version");
     const payload = {
       mode,
-      seed_name: String(builderSeedNameInput?.value || "").trim(),
+      seed_name: String(builderGraphTitleInput?.value || "").trim(),
       seed_names: splitLines(builderSeedNamesInput?.value),
       roots: splitLines(builderRootsInput?.value),
       target_names: splitLines(builderTargetNamesInput?.value),
@@ -3388,7 +3386,7 @@
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
     });
-    [builderGraphTitleInput, builderGraphIdInput, builderSeedNameInput, builderSeedNamesInput].forEach((input) => {
+    [builderGraphTitleInput, builderGraphIdInput, builderSeedNamesInput].forEach((input) => {
       input?.addEventListener("input", updateBuilderVersionInput);
     });
     builderSaveModeInput?.addEventListener("change", () => {
