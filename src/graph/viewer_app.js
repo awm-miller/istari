@@ -47,6 +47,7 @@
   const builderSaveModeInput = document.getElementById("builder-save-mode");
   const builderGraphVersionInput = document.getElementById("builder-graph-version");
   const builderNotifyEmailInput = document.getElementById("builder-notify-email");
+  const builderNegativeNewsInput = document.getElementById("builder-negative-news");
   const builderLimitInput = document.getElementById("builder-limit");
   const builderRefreshGraphsButton = document.getElementById("builder-refresh-graphs");
   const builderGraphListEl = document.getElementById("builder-graph-list");
@@ -265,6 +266,7 @@
       graph_title: String(builderGraphTitleInput?.value || "").trim(),
       save_mode: saveMode,
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
+      run_negative_news: !!builderNegativeNewsInput?.checked,
       limit: Number(builderLimitInput?.value || 30),
     };
     if (saveMode === "overwrite_version") {

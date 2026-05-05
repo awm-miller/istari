@@ -17,6 +17,7 @@ def build_generated_graph_bundle(
     title: str,
     version: str | None = None,
     overwrite: bool = False,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not run_ids:
         raise ValueError("Cannot build a generated graph without run IDs.")
@@ -40,6 +41,8 @@ def build_generated_graph_bundle(
         "node_count": len(data.get("nodes") or []),
         "edge_count": len(data.get("edges") or []),
     }
+    if metadata:
+        version_manifest["metadata"] = metadata
 
     (version_dir / "index.html").write_text(html, encoding="utf-8")
     (version_dir / "graph-data.json").write_text(graph_json, encoding="utf-8")

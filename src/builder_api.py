@@ -19,6 +19,7 @@ from src.charity_commission.client import CharityCommissionClient
 from src.companies_house.client import CompaniesHouseClient
 from src.config import Settings, load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
+from src.negative_news import run_negative_news_cluster_batch
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import build_search_providers
 from src.storage.repository import Repository
@@ -229,6 +230,9 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
         result = execute_tree_build(tree_request, runner)
         safe_result = _sanitize_result(result)
         run_ids = _result_run_ids(safe_result)
+        negative_news_result = _run_negative_news_if_requested(settings, repository, tree_request)
+        if negative_news_result:
+            safe_result["negative_news"] = negative_news_result
         if run_ids:
             manifest = build_generated_graph_bundle(
                 run_ids=run_ids,
@@ -237,6 +241,7 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
                 title=_requested_graph_title(payload, tree_request),
                 version=str(payload.get("graph_version") or "").strip() or None,
                 overwrite=str(payload.get("save_mode") or "") == "overwrite_version",
+                metadata={"negative_news": negative_news_result} if negative_news_result else None,
             )
             safe_result["graph"] = manifest
         _update_job(job_id, status="completed", result=safe_result)
@@ -293,6 +298,31 @@ def _test_serper(settings: Settings) -> int:
     with request.urlopen(req, timeout=20) as response:
         data = json.loads(response.read().decode("utf-8"))
     return len(data.get("organic") or [])
+
+
+def _run_negative_news_if_requested(settings: Settings, repository: Repository, tree_request: Any) -> dict[str, Any] | None:
+    if not getattr(tree_request, "run_negative_news", False):
+        return None
+    limit = int(os.getenv("TREE_BUILDER_NEGATIVE_NEWS_LIMIT", "5"))
+    result = run_negative_news_cluster_batch(
+        settings,
+        repository,
+        offset=0,
+        limit=limit,
+        broad_pages=int(os.getenv("TREE_BUILDER_NEGATIVE_NEWS_BROAD_PAGES", "1")),
+        org_pages=int(os.getenv("TREE_BUILDER_NEGATIVE_NEWS_ORG_PAGES", "1")),
+        max_articles_per_cluster=int(os.getenv("TREE_BUILDER_NEGATIVE_NEWS_MAX_ARTICLES", "10")),
+    )
+    meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+    return {
+        "enabled": True,
+        "cluster_limit": limit,
+        "batch_run_id": meta.get("batch_run_id"),
+        "source_database_key": meta.get("source_database_key"),
+        "pending_cluster_count": meta.get("pending_cluster_count"),
+        "historically_screened_count": meta.get("historically_screened_count"),
+        "negative_news_db_path": meta.get("negative_news_db_path"),
+    }
 
 
 def _send_completion_email(to_address: str, job_id: str, result: dict[str, Any], *, success: bool) -> None:

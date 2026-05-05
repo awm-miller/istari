@@ -42,6 +42,7 @@ class TreeBuildRequest:
     creativity_level: str = "balanced"
     limit: int = 25
     notify_email: str = ""
+    run_negative_news: bool = False
 
 
 class TreePipelineRunner(Protocol):
@@ -92,6 +93,7 @@ def normalize_tree_build_request(payload: dict[str, Any]) -> TreeBuildRequest:
     if limit < 1:
         raise ValueError("limit must be at least 1.")
     notify_email = _clean_text(payload.get("notify_email"))
+    run_negative_news = _coerce_bool(payload.get("run_negative_news"))
 
     if mode == "name_seed":
         if not seed_names and seed_name:
@@ -119,6 +121,7 @@ def normalize_tree_build_request(payload: dict[str, Any]) -> TreeBuildRequest:
         creativity_level=creativity_level,
         limit=limit,
         notify_email=notify_email,
+        run_negative_news=run_negative_news,
     )
 
 
@@ -236,6 +239,12 @@ class DefaultTreePipelineRunner:
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _dedupe_texts(values: Any) -> list[str]:

@@ -527,6 +527,23 @@ body.builder-mode #compact-legend {{
   color: var(--text-dim);
   background: rgba(255,255,255,0.03);
 }}
+.builder-form .builder-checkbox {{
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}}
+.builder-form .builder-checkbox input {{
+  width: auto;
+  accent-color: var(--blue);
+}}
+.builder-form .builder-checkbox span {{
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0;
+}}
 .builder-grid {{
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, 0.45fr);

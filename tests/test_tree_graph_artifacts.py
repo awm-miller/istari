@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from src.tree_graph_artifacts import (
+    build_generated_graph_bundle,
     delete_generated_graph,
     list_generated_graphs,
     set_active_graph_version,
@@ -55,6 +56,25 @@ class TreeGraphArtifactsTest(unittest.TestCase):
 
         self.assertEqual("v1", graph["active_version"])
         self.assertEqual(["v1"], [version["version"] for version in graph["versions"]])
+
+    def test_version_manifest_keeps_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import src.tree_graph_artifacts as artifacts
+
+            original_consolidate = artifacts.consolidate_multi_run
+            try:
+                artifacts.consolidate_multi_run = lambda _run_ids: {"nodes": [], "edges": []}
+                manifest = build_generated_graph_bundle(
+                    run_ids=[1],
+                    output_root=Path(tmp),
+                    graph_id="with metadata",
+                    title="With metadata",
+                    metadata={"negative_news": {"enabled": True, "source_database_key": "abc"}},
+                )
+            finally:
+                artifacts.consolidate_multi_run = original_consolidate
+
+        self.assertEqual({"enabled": True, "source_database_key": "abc"}, manifest["metadata"]["negative_news"])
 
 
 if __name__ == "__main__":

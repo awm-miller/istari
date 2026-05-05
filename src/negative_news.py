@@ -277,6 +277,9 @@ def _append_query_spec(unique_specs: list[QuerySpec], spec: QuerySpec) -> None:
 
 
 def _negative_news_db_path(settings: Settings) -> Path:
+    raw = os.getenv("NEGATIVE_NEWS_DB_PATH", "").strip()
+    if raw:
+        return Path(raw)
     return settings.project_root / "data" / "negative_news.sqlite"
 
 

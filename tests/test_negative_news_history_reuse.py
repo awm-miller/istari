@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
 from src.negative_news import partition_negative_news_clusters_by_history
+from src.storage.negative_news_store import database_source_key
 
 
 class _FakeStore:
@@ -43,6 +46,17 @@ class NegativeNewsHistoryReuseTest(unittest.TestCase):
 
         self.assertEqual(1, len(partition["pending_clusters"]))
         self.assertEqual(0, len(partition["reused_clusters"]))
+
+    def test_database_source_key_changes_when_database_is_rebuilt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            database_path = Path(tmp) / "builder.sqlite"
+            database_path.write_bytes(b"first-db")
+            first_key = database_source_key(database_path)
+
+            database_path.write_bytes(b"second-db-with-different-content")
+            second_key = database_source_key(database_path)
+
+        self.assertNotEqual(first_key, second_key)
 
 
 if __name__ == "__main__":

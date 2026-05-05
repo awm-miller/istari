@@ -44,11 +44,13 @@ class TreeBuilderTest(unittest.TestCase):
             {
                 "mode": "name_seed",
                 "seed_names": [" Alice Example ", "Bob Example", "alice example"],
+                "run_negative_news": "true",
             }
         )
 
         self.assertEqual("Alice Example", request.seed_name)
         self.assertEqual(("Alice Example", "Bob Example"), request.seed_names)
+        self.assertTrue(request.run_negative_news)
 
     def test_org_rooted_request_normalizes_roots(self) -> None:
         request = normalize_tree_build_request(

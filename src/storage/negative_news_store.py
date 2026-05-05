@@ -14,7 +14,12 @@ def database_source_key(database_path: Path) -> str:
         resolved = Path(database_path).resolve()
     except OSError:
         resolved = Path(database_path).absolute()
-    return sha256(str(resolved).lower().encode("utf-8")).hexdigest()[:16]
+    try:
+        stat = resolved.stat()
+        identity = f"{resolved}|{stat.st_size}|{stat.st_mtime_ns}"
+    except OSError:
+        identity = str(resolved)
+    return sha256(identity.lower().encode("utf-8")).hexdigest()[:16]
 
 
 def _config_source_key(config: Any) -> str:
