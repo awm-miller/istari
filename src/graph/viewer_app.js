@@ -32,6 +32,22 @@
   const graphSwitcherLabelEl = document.getElementById("graph-switcher-label");
   const graphSwitcherMenuEl = document.getElementById("graph-switcher-menu");
   const graphSwitcherOptionEls = [...document.querySelectorAll(".graph-switcher-option")];
+  const modeViewerButton = document.getElementById("mode-viewer");
+  const modeBuilderButton = document.getElementById("mode-builder");
+  const builderPanelEl = document.getElementById("builder-panel");
+  const builderFormEl = document.getElementById("builder-form");
+  const builderModeInput = document.getElementById("builder-mode");
+  const builderSeedNameInput = document.getElementById("builder-seed-name");
+  const builderSeedNamesInput = document.getElementById("builder-seed-names");
+  const builderRootsInput = document.getElementById("builder-roots");
+  const builderTargetNamesInput = document.getElementById("builder-target-names");
+  const builderNotifyEmailInput = document.getElementById("builder-notify-email");
+  const builderLimitInput = document.getElementById("builder-limit");
+  const builderGeminiKeyInput = document.getElementById("builder-gemini-key");
+  const builderSerperKeyInput = document.getElementById("builder-serper-key");
+  const builderTestGeminiButton = document.getElementById("builder-test-gemini");
+  const builderTestSerperButton = document.getElementById("builder-test-serper");
+  const builderStatusEl = document.getElementById("builder-status");
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
   const compareClearButton = document.getElementById("compare-clear");
@@ -58,6 +74,7 @@
   const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
   const currentGraphKey = detectGraphKey(window.location.pathname);
+  const BUILDER_API_BASE = String(window.ISTARI_API_BASE || "").replace(/\/$/, "");
 
   let showIdentitiesInput;
   let showCompaniesInput;
@@ -138,6 +155,87 @@
     const url = new URL(baseUrl, window.location.origin);
     url.searchParams.set("graph", currentGraphKey);
     return url.toString();
+  }
+
+  function builderApiUrl(path) {
+    return `${BUILDER_API_BASE}${path}`;
+  }
+
+  function splitLines(value) {
+    return String(value || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function builderCredentials() {
+    const credentials = {};
+    const geminiKey = String(builderGeminiKeyInput?.value || "").trim();
+    const serperKey = String(builderSerperKeyInput?.value || "").trim();
+    if (geminiKey) credentials.gemini_api_key = geminiKey;
+    if (serperKey) credentials.serper_api_key = serperKey;
+    return credentials;
+  }
+
+  function setBuilderStatus(message, isError = false) {
+    if (!builderStatusEl) return;
+    builderStatusEl.textContent = message;
+    builderStatusEl.classList.toggle("error", !!isError);
+  }
+
+  function setAppMode(mode) {
+    const isBuilder = mode === "builder";
+    document.body.classList.toggle("builder-mode", isBuilder);
+    builderPanelEl?.classList.toggle("hidden", !isBuilder);
+    modeViewerButton?.classList.toggle("active", !isBuilder);
+    modeBuilderButton?.classList.toggle("active", isBuilder);
+    if (!isBuilder && renderer) {
+      window.requestAnimationFrame(() => applyViewerState());
+    }
+  }
+
+  function builderPayload() {
+    const mode = String(builderModeInput?.value || "name_seed");
+    const payload = {
+      mode,
+      seed_name: String(builderSeedNameInput?.value || "").trim(),
+      seed_names: splitLines(builderSeedNamesInput?.value),
+      roots: splitLines(builderRootsInput?.value),
+      target_names: splitLines(builderTargetNamesInput?.value),
+      notify_email: String(builderNotifyEmailInput?.value || "").trim(),
+      limit: Number(builderLimitInput?.value || 25),
+    };
+    const credentials = builderCredentials();
+    if (Object.keys(credentials).length) payload.credentials = credentials;
+    return payload;
+  }
+
+  async function postBuilderJson(path, payload) {
+    const response = await fetch(builderApiUrl(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `Request failed with ${response.status}`);
+    }
+    return data;
+  }
+
+  async function testBuilderKey(kind) {
+    const path = kind === "gemini" ? "/api/key-tests/gemini" : "/api/key-tests/serper";
+    const label = kind === "gemini" ? "Gemini" : "Serper";
+    setBuilderStatus(`Testing ${label} key...`);
+    const data = await postBuilderJson(path, { credentials: builderCredentials() });
+    setBuilderStatus(data.message || `${label} key works.`);
+  }
+
+  async function submitBuilderJob() {
+    setBuilderStatus("Submitting graph build...");
+    const data = await postBuilderJson("/api/tree-jobs", builderPayload());
+    const job = data.job || {};
+    setBuilderStatus(`Graph build queued.\nJob ID: ${job.id || "unknown"}\nYou will receive an email when it is ready if SMTP is configured.`);
   }
 
   function currentGraphOption() {
@@ -3122,6 +3220,18 @@
   }
 
   function bindUiEvents() {
+    modeViewerButton?.addEventListener("click", () => setAppMode("viewer"));
+    modeBuilderButton?.addEventListener("click", () => setAppMode("builder"));
+    builderTestGeminiButton?.addEventListener("click", () => {
+      testBuilderKey("gemini").catch((error) => setBuilderStatus(error.message || "Gemini test failed.", true));
+    });
+    builderTestSerperButton?.addEventListener("click", () => {
+      testBuilderKey("serper").catch((error) => setBuilderStatus(error.message || "Serper test failed.", true));
+    });
+    builderFormEl?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
+    });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();
       if (viewerState.searchQuery) viewerState.focusedNodeIds.clear();

@@ -26,6 +26,10 @@
   <div class="search-box">
     <input id="search" type="search" placeholder="Search and focus..." autocomplete="off" />
   </div>
+  <div class="mode-switch" aria-label="Choose workspace">
+    <button id="mode-viewer" class="mode-switch-button active" type="button" data-mode="viewer">Viewer</button>
+    <button id="mode-builder" class="mode-switch-button" type="button" data-mode="builder">Builder</button>
+  </div>
 </div>
 <div class="legend compact-legend" id="compact-legend"></div>
 <button class="sidebar-handle open" id="toggle-sidebar" type="button" aria-label="Hide tools sidebar" title="Hide tools sidebar">
@@ -68,6 +72,72 @@
     </div>
   </div>
 </aside>
+<main class="builder-panel hidden" id="builder-panel" aria-live="polite">
+  <section class="builder-card">
+    <div class="builder-card-header">
+      <div>
+        <p class="builder-kicker">Tree Builder</p>
+        <h1>Generate a graph</h1>
+      </div>
+      <p class="builder-note">Keys are sent only to the backend for this request and are never rendered into the graph page.</p>
+    </div>
+    <form id="builder-form" class="builder-form">
+      <label>
+        <span>Build mode</span>
+        <select id="builder-mode">
+          <option value="name_seed">Normal seed</option>
+          <option value="org_rooted">Start from organisations</option>
+          <option value="org_chained">Seeds with organisations</option>
+        </select>
+      </label>
+      <label>
+        <span>Seed name</span>
+        <input id="builder-seed-name" type="text" placeholder="e.g. Alice Example" autocomplete="off" />
+      </label>
+      <label>
+        <span>Seed names, one per line</span>
+        <textarea id="builder-seed-names" rows="4" placeholder="Use for organisation-chained builds"></textarea>
+      </label>
+      <label>
+        <span>Organisation roots, one per line</span>
+        <textarea id="builder-roots" rows="4" placeholder="charity:1095626&#10;company:01234567[:suffix]"></textarea>
+      </label>
+      <label>
+        <span>Target names, one per line</span>
+        <textarea id="builder-target-names" rows="3" placeholder="Optional aliases for org-rooted builds"></textarea>
+      </label>
+      <div class="builder-grid">
+        <label>
+          <span>Notify email</span>
+          <input id="builder-notify-email" type="email" placeholder="you@example.com" autocomplete="email" />
+        </label>
+        <label>
+          <span>Limit</span>
+          <input id="builder-limit" type="number" min="1" value="25" />
+        </label>
+      </div>
+      <details class="builder-key-panel">
+        <summary>Temporary API keys</summary>
+        <label>
+          <span>Gemini API key</span>
+          <input id="builder-gemini-key" type="password" autocomplete="off" />
+        </label>
+        <label>
+          <span>Serper API key</span>
+          <input id="builder-serper-key" type="password" autocomplete="off" />
+        </label>
+        <div class="builder-actions">
+          <button id="builder-test-gemini" class="toolbar-btn" type="button">Test Gemini</button>
+          <button id="builder-test-serper" class="toolbar-btn" type="button">Test Serper</button>
+        </div>
+      </details>
+      <div class="builder-actions">
+        <button class="builder-submit" type="submit">Generate graph</button>
+      </div>
+    </form>
+    <div class="builder-status" id="builder-status">Ready.</div>
+  </section>
+</main>
 <div id="graph"></div>
 <div class="canvas-search-popover hidden" id="canvas-search-popover" aria-live="polite">
   <div class="canvas-search-title" id="canvas-search-title">Add tree</div>
