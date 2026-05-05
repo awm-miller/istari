@@ -103,7 +103,10 @@ def write_redirects_file() -> None:
         "/mb /mb/ 301\n"
         "/iums /iums/ 301\n"
         "/sevenspikes /sevenspikes/ 301\n"
-        "/expanded-mb-names /expanded-mb-names/ 301\n",
+        "/expanded-mb-names /expanded-mb-names/ 301\n"
+        "/api/* https://165.232.35.81.sslip.io/api/:splat 200\n"
+        "/health https://165.232.35.81.sslip.io/health 200\n"
+        "/generated-graphs/* https://165.232.35.81.sslip.io/generated-graphs/:splat 200\n",
         encoding="utf-8",
     )
 
