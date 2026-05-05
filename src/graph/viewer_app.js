@@ -258,7 +258,7 @@
     const payload = {
       mode,
       seed_name: mode === "name_seed" ? String(seedNames[0] || "").trim() : String(builderGraphTitleInput?.value || "").trim(),
-      seed_names: mode === "org_chained" ? seedNames : [],
+      seed_names: mode === "name_seed" || mode === "org_chained" ? seedNames : [],
       roots: mode === "org_rooted" || mode === "org_chained" ? splitLines(builderRootsInput?.value) : [],
       target_names: mode === "org_rooted" ? splitLines(builderTargetNamesInput?.value) : [],
       graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),

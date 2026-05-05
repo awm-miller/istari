@@ -93,8 +93,13 @@ def normalize_tree_build_request(payload: dict[str, Any]) -> TreeBuildRequest:
         raise ValueError("limit must be at least 1.")
     notify_email = _clean_text(payload.get("notify_email"))
 
-    if mode == "name_seed" and not seed_name:
-        raise ValueError("name_seed builds require seed_name.")
+    if mode == "name_seed":
+        if not seed_names and seed_name:
+            seed_names = (seed_name,)
+        if seed_names and not seed_name:
+            seed_name = seed_names[0]
+        if not seed_names:
+            raise ValueError("name_seed builds require at least one seed name.")
     if mode == "org_rooted" and not roots:
         raise ValueError("org_rooted builds require at least one organisation root.")
     if mode == "org_chained":
@@ -136,16 +141,30 @@ class DefaultTreePipelineRunner:
     matcher: HybridMatcher
 
     def run_name(self, request: TreeBuildRequest) -> dict[str, Any]:
-        return run_name_pipeline(
-            repository=self.repository,
-            settings=self.settings,
-            charity_client=self.charity_client,
-            search_providers=self.search_providers,
-            matcher=self.matcher,
-            seed_name=request.seed_name,
-            creativity_level=request.creativity_level,
-            limit=request.limit,
-        )
+        seed_names = request.seed_names or ((request.seed_name,) if request.seed_name else ())
+        runs: list[dict[str, Any]] = []
+        run_ids: list[int] = []
+        for seed_name in seed_names:
+            result = run_name_pipeline(
+                repository=self.repository,
+                settings=self.settings,
+                charity_client=self.charity_client,
+                search_providers=self.search_providers,
+                matcher=self.matcher,
+                seed_name=seed_name,
+                creativity_level=request.creativity_level,
+                limit=request.limit,
+            )
+            run_ids.append(int(result["run_id"]))
+            runs.append(result)
+        if len(runs) == 1:
+            return runs[0]
+        return {
+            "mode": "name_seed",
+            "seed_names": list(seed_names),
+            "run_ids": run_ids,
+            "runs": runs,
+        }
 
     def run_org_rooted(self, request: TreeBuildRequest) -> dict[str, Any]:
         return run_org_roots_pipeline(

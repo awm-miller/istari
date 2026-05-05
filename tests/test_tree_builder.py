@@ -36,8 +36,19 @@ class TreeBuilderTest(unittest.TestCase):
         self.assertEqual(2, root.suffix)
 
     def test_normal_seed_request_requires_seed_name(self) -> None:
-        with self.assertRaisesRegex(ValueError, "seed_name"):
+        with self.assertRaisesRegex(ValueError, "seed name"):
             normalize_tree_build_request({"mode": "name_seed"})
+
+    def test_normal_seed_request_accepts_multiple_seed_names(self) -> None:
+        request = normalize_tree_build_request(
+            {
+                "mode": "name_seed",
+                "seed_names": [" Alice Example ", "Bob Example", "alice example"],
+            }
+        )
+
+        self.assertEqual("Alice Example", request.seed_name)
+        self.assertEqual(("Alice Example", "Bob Example"), request.seed_names)
 
     def test_org_rooted_request_normalizes_roots(self) -> None:
         request = normalize_tree_build_request(

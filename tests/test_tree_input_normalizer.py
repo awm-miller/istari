@@ -80,17 +80,20 @@ class TreeInputNormalizerTest(unittest.TestCase):
         self.assertEqual(["charity:1136006"], payload["roots"])
         self.assertEqual(["HASHEM DARWISH"], payload["target_names"])
 
-    def test_normal_seed_can_use_seed_names_input(self) -> None:
+    def test_normal_seed_keeps_multiple_seed_names(self) -> None:
         payload = normalize_builder_payload(
             {
                 "mode": "name_seed",
                 "seed_name": "",
-                "seed_names": ["Name: Ahmed Vaezi - Iran report row"],
+                "seed_names": [
+                    "Name: Ahmed Vaezi - Iran report row",
+                    "Name: Aliasghar Ramezanpour - Iran report row",
+                ],
             },
         )
 
         self.assertEqual("Ahmed Vaezi", payload["seed_name"])
-        self.assertEqual([], payload["seed_names"])
+        self.assertEqual(["Ahmed Vaezi", "Aliasghar Ramezanpour"], payload["seed_names"])
 
     def test_resolves_company_names_with_registry_search(self) -> None:
         payload = normalize_builder_payload(
