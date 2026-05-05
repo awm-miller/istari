@@ -157,12 +157,20 @@ def resolve_organisation_roots(
         unresolved.append(str(raw_row))
 
     if unresolved and gemini_client is not None:
-        for raw_row, label in _ai_extract_entities(
+        extracted = _ai_extract_entities(
             unresolved,
             entity_key="organisations",
             gemini_client=gemini_client,
             gemini_model=gemini_model,
-        ).items():
+        )
+        still_unresolved: list[str] = []
+        for raw_row in unresolved:
+            label = extracted.get(raw_row)
+            if not label and len(unresolved) == 1 and len(extracted) == 1:
+                label = next(iter(extracted.values()))
+            if not label:
+                still_unresolved.append(raw_row)
+                continue
             match = _resolve_organisation_label(
                 label,
                 charity_client=charity_client,
@@ -170,7 +178,9 @@ def resolve_organisation_roots(
             )
             if match:
                 resolved.append(match)
-                unresolved.remove(raw_row)
+            else:
+                still_unresolved.append(raw_row)
+        unresolved = still_unresolved
 
     if unresolved:
         rows_text = "; ".join(_clean_row(row) or str(row) for row in unresolved)
@@ -241,7 +251,7 @@ def _clean_organisation_label(value: Any) -> str:
     if not text:
         return ""
     text = _ORG_PREFIX_RE.sub("", text)
-    parts = [part.strip(" ,-;:") for part in re.split(r"\t|\s+[|–—]\s+", text) if part.strip(" ,-;:")]
+    parts = [part.strip(" ,-;:") for part in re.split(r"\t|\s+(?:[|–—]|-)\s+", text) if part.strip(" ,-;:")]
     hinted = [part for part in parts if _ORG_HINT_RE.search(part)]
     text = hinted[0] if hinted else parts[0] if parts else text
     text = _TRAILING_ID_RE.sub("", text).strip(" ,-;:")
