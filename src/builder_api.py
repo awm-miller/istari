@@ -27,6 +27,7 @@ from src.tree_builder import (
     normalize_tree_build_request,
 )
 from src.tree_graph_artifacts import build_generated_graph_bundle, list_generated_graphs
+from src.tree_graph_artifacts import delete_generated_graph, generated_graph_file_path, set_active_graph_version
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def create_app() -> Flask:
             response.headers["Access-Control-Allow-Origin"] = allowed_origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Methods"] = "DELETE, GET, POST, OPTIONS"
         return response
 
     @app.route("/health", methods=["GET", "OPTIONS"])
@@ -136,13 +137,56 @@ def create_app() -> Flask:
             return _empty_response()
         return jsonify({"ok": True, "graphs": list_generated_graphs(GENERATED_GRAPH_DIR)})
 
+    @app.route("/api/generated-graphs/<graph_id>/active", methods=["POST", "OPTIONS"])
+    def activate_generated_graph_version(graph_id: str):
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        payload = _json_payload()
+        try:
+            graph = set_active_graph_version(GENERATED_GRAPH_DIR, graph_id, str(payload.get("version") or ""))
+            return jsonify({"ok": True, "graph": graph})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": _safe_error(exc)}), 400
+
+    @app.route("/api/generated-graphs/<graph_id>", methods=["DELETE", "OPTIONS"])
+    def delete_generated_graph_route(graph_id: str):
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        try:
+            delete_generated_graph(GENERATED_GRAPH_DIR, graph_id)
+            return jsonify({"ok": True})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": _safe_error(exc)}), 400
+
+    @app.route("/api/generated-graphs/<graph_id>/versions/<version>", methods=["DELETE", "OPTIONS"])
+    def delete_generated_graph_version_route(graph_id: str, version: str):
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        try:
+            graph = delete_generated_graph(GENERATED_GRAPH_DIR, graph_id, version)
+            return jsonify({"ok": True, "graph": graph})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": _safe_error(exc)}), 400
+
     @app.route("/generated-graphs/<graph_id>/", methods=["GET"])
     def generated_graph_index(graph_id: str):
         return _send_generated_graph_file(graph_id, "index.html")
 
     @app.route("/generated-graphs/<graph_id>/<path:filename>", methods=["GET"])
     def generated_graph_file(graph_id: str, filename: str):
+        parts = filename.split("/", 2)
+        if len(parts) >= 2 and parts[0] == "versions":
+            nested_filename = parts[2] if len(parts) == 3 and parts[2] else "index.html"
+            return _send_generated_graph_file(graph_id, nested_filename, version=parts[1])
         return _send_generated_graph_file(graph_id, filename)
+
+    @app.route("/generated-graphs/<graph_id>/versions/<version>/", methods=["GET"])
+    def generated_graph_version_index(graph_id: str, version: str):
+        return _send_generated_graph_file(graph_id, "index.html", version=version)
+
+    @app.route("/generated-graphs/<graph_id>/versions/<version>/<path:filename>", methods=["GET"])
+    def generated_graph_version_file(graph_id: str, version: str, filename: str):
+        return _send_generated_graph_file(graph_id, filename, version=version)
 
     return app
 
@@ -175,8 +219,10 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
             manifest = build_generated_graph_bundle(
                 run_ids=run_ids,
                 output_root=GENERATED_GRAPH_DIR,
-                graph_id=job_id,
-                title=_graph_title(tree_request),
+                graph_id=_requested_graph_id(payload, job_id, tree_request),
+                title=_requested_graph_title(payload, tree_request),
+                version=str(payload.get("graph_version") or "").strip() or None,
+                overwrite=str(payload.get("save_mode") or "") == "overwrite_version",
             )
             safe_result["graph"] = manifest
         _update_job(job_id, status="completed", result=safe_result)
@@ -323,7 +369,21 @@ def _result_run_ids(result: dict[str, Any]) -> list[int]:
     return []
 
 
-def _graph_title(request: Any) -> str:
+def _requested_graph_id(payload: dict[str, Any], job_id: str, tree_request: Any) -> str:
+    explicit = " ".join(str(payload.get("graph_id") or "").split()).strip()
+    if explicit:
+        return explicit
+    if tree_request.seed_name:
+        return tree_request.seed_name
+    if tree_request.seed_names:
+        return tree_request.seed_names[0]
+    return job_id
+
+
+def _requested_graph_title(payload: dict[str, Any], request: Any) -> str:
+    explicit = " ".join(str(payload.get("graph_title") or "").split()).strip()
+    if explicit:
+        return explicit
     if request.seed_name:
         return f"Istari: {request.seed_name}"
     if request.seed_names:
@@ -333,18 +393,14 @@ def _graph_title(request: Any) -> str:
     return "Istari Generated Graph"
 
 
-def _send_generated_graph_file(graph_id: str, filename: str):
-    safe_id = "".join(ch for ch in graph_id if ch.isalnum() or ch in {"-", "_"})
-    if safe_id != graph_id:
-        abort(404)
-    graph_dir = (GENERATED_GRAPH_DIR / safe_id).resolve()
+def _send_generated_graph_file(graph_id: str, filename: str, *, version: str | None = None):
     try:
-        graph_dir.relative_to(GENERATED_GRAPH_DIR.resolve())
-    except ValueError:
+        path = generated_graph_file_path(GENERATED_GRAPH_DIR, graph_id, filename, version)
+    except Exception:
         abort(404)
-    if not (graph_dir / filename).is_file():
+    if not path.is_file():
         abort(404)
-    return send_from_directory(graph_dir, filename)
+    return send_from_directory(path.parent, path.name)
 
 
 def _safe_error(exc: Exception) -> str:

@@ -139,6 +139,10 @@ body {{
   border-color: var(--blue);
   color: var(--text-bright);
 }}
+.toolbar-btn.danger:hover {{
+  border-color: var(--red);
+  color: #ffb4bd;
+}}
 .search-box input {{
   width: 240px;
   padding: 6px 12px;
@@ -554,6 +558,36 @@ body.builder-mode #compact-legend {{
 .builder-status.error {{
   border: 1px solid rgba(229,85,97,0.36);
   color: #ffb4bd;
+}}
+.builder-graphs-card {{
+  margin-top: 18px;
+}}
+.builder-graph-list {{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+}}
+.builder-graph-item {{
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.18);
+}}
+.builder-graph-item-title {{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}}
+.builder-graph-item-title strong {{
+  color: var(--text-bright);
+}}
+.builder-graph-actions {{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }}
 .graph-stage,
 .graph-label-layer {{

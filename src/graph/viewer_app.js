@@ -41,12 +41,18 @@
   const builderSeedNamesInput = document.getElementById("builder-seed-names");
   const builderRootsInput = document.getElementById("builder-roots");
   const builderTargetNamesInput = document.getElementById("builder-target-names");
+  const builderGraphIdInput = document.getElementById("builder-graph-id");
+  const builderGraphTitleInput = document.getElementById("builder-graph-title");
+  const builderSaveModeInput = document.getElementById("builder-save-mode");
+  const builderGraphVersionInput = document.getElementById("builder-graph-version");
   const builderNotifyEmailInput = document.getElementById("builder-notify-email");
   const builderLimitInput = document.getElementById("builder-limit");
   const builderGeminiKeyInput = document.getElementById("builder-gemini-key");
   const builderSerperKeyInput = document.getElementById("builder-serper-key");
   const builderTestGeminiButton = document.getElementById("builder-test-gemini");
   const builderTestSerperButton = document.getElementById("builder-test-serper");
+  const builderRefreshGraphsButton = document.getElementById("builder-refresh-graphs");
+  const builderGraphListEl = document.getElementById("builder-graph-list");
   const builderStatusEl = document.getElementById("builder-status");
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
@@ -202,6 +208,10 @@
       seed_names: splitLines(builderSeedNamesInput?.value),
       roots: splitLines(builderRootsInput?.value),
       target_names: splitLines(builderTargetNamesInput?.value),
+      graph_id: String(builderGraphIdInput?.value || "").trim(),
+      graph_title: String(builderGraphTitleInput?.value || "").trim(),
+      save_mode: String(builderSaveModeInput?.value || "new_version"),
+      graph_version: String(builderGraphVersionInput?.value || "").trim(),
       notify_email: String(builderNotifyEmailInput?.value || "").trim(),
       limit: Number(builderLimitInput?.value || 25),
     };
@@ -259,6 +269,15 @@
       setBuilderStatus(`Graph job ${jobId} is ${job.status || "running"}...`);
     }
     setBuilderStatus(`Graph job ${jobId} is still running. You will receive an email when it is ready.`);
+  }
+
+  async function deleteBuilderJson(path) {
+    const response = await fetch(builderApiUrl(path), { method: "DELETE" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `Delete failed with ${response.status}`);
+    }
+    return data;
   }
 
   function currentGraphOption() {
@@ -330,6 +349,71 @@
       });
       graphSwitcherMenuEl.appendChild(button);
     });
+    renderGeneratedGraphManager(graphs);
+    return graphs;
+  }
+
+  function renderGeneratedGraphManager(graphs) {
+    if (!builderGraphListEl) return;
+    if (!graphs.length) {
+      builderGraphListEl.textContent = "No saved generated graphs yet.";
+      return;
+    }
+    builderGraphListEl.innerHTML = graphs.map((graph) => {
+      const versions = Array.isArray(graph.versions) ? graph.versions : [];
+      const versionButtons = versions.map((version) => `
+        <button class="toolbar-btn" type="button" data-graph-action="open-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">${escapeHtml(version.version)}</button>
+        <button class="toolbar-btn" type="button" data-graph-action="activate-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">Make active</button>
+        <button class="toolbar-btn danger" type="button" data-graph-action="delete-version" data-graph-id="${escapeHtml(graph.id)}" data-version="${escapeHtml(version.version)}">Delete ${escapeHtml(version.version)}</button>
+      `).join("");
+      return `
+        <div class="builder-graph-item">
+          <div class="builder-graph-item-title">
+            <strong>${escapeHtml(graph.title || graph.id)}</strong>
+            <span>Active ${escapeHtml(graph.active_version || "n/a")}</span>
+          </div>
+          <div class="builder-graph-actions">
+            <button class="toolbar-btn" type="button" data-graph-action="open-active" data-graph-id="${escapeHtml(graph.id)}">Open active</button>
+            <button class="toolbar-btn danger" type="button" data-graph-action="delete-graph" data-graph-id="${escapeHtml(graph.id)}">Delete graph</button>
+            ${versionButtons}
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function handleGeneratedGraphAction(button) {
+    const graphId = String(button.dataset.graphId || "");
+    const version = String(button.dataset.version || "");
+    const action = String(button.dataset.graphAction || "");
+    if (!graphId) return;
+    if (action === "open-active") {
+      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/`);
+      return;
+    }
+    if (action === "open-version" && version) {
+      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}/`);
+      return;
+    }
+    if (action === "activate-version" && version) {
+      await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
+      setBuilderStatus(`${graphId} ${version} is now active.`);
+      await loadGeneratedGraphOptions();
+      return;
+    }
+    if (action === "delete-version" && version) {
+      if (!window.confirm(`Delete ${graphId} ${version}?`)) return;
+      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}`);
+      setBuilderStatus(`${graphId} ${version} deleted.`);
+      await loadGeneratedGraphOptions();
+      return;
+    }
+    if (action === "delete-graph") {
+      if (!window.confirm(`Delete all versions of ${graphId}?`)) return;
+      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}`);
+      setBuilderStatus(`${graphId} deleted.`);
+      await loadGeneratedGraphOptions();
+    }
   }
 
   function escapeHtml(value) {
@@ -3281,6 +3365,14 @@
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
       submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
+    });
+    builderRefreshGraphsButton?.addEventListener("click", () => {
+      loadGeneratedGraphOptions().catch((error) => setBuilderStatus(error.message || "Generated graph refresh failed.", true));
+    });
+    builderGraphListEl?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-graph-action]");
+      if (!button) return;
+      handleGeneratedGraphAction(button).catch((error) => setBuilderStatus(error.message || "Generated graph action failed.", true));
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();

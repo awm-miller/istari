@@ -108,6 +108,29 @@
       </label>
       <div class="builder-grid">
         <label>
+          <span>Graph key</span>
+          <input id="builder-graph-id" type="text" placeholder="Leave blank to use the seed name" autocomplete="off" />
+        </label>
+        <label>
+          <span>Graph title</span>
+          <input id="builder-graph-title" type="text" placeholder="Optional display title" autocomplete="off" />
+        </label>
+      </div>
+      <div class="builder-grid">
+        <label>
+          <span>Save mode</span>
+          <select id="builder-save-mode">
+            <option value="new_version">Save as new version</option>
+            <option value="overwrite_version">Overwrite version</option>
+          </select>
+        </label>
+        <label>
+          <span>Version</span>
+          <input id="builder-graph-version" type="number" min="1" placeholder="Auto" />
+        </label>
+      </div>
+      <div class="builder-grid">
+        <label>
           <span>Notify email</span>
           <input id="builder-notify-email" type="email" placeholder="you@example.com" autocomplete="email" />
         </label>
@@ -136,6 +159,16 @@
       </div>
     </form>
     <div class="builder-status" id="builder-status">Ready.</div>
+  </section>
+  <section class="builder-card builder-graphs-card">
+    <div class="builder-card-header">
+      <div>
+        <p class="builder-kicker">Generated Graphs</p>
+        <h1>Saved graphs</h1>
+      </div>
+      <button id="builder-refresh-graphs" class="toolbar-btn" type="button">Refresh</button>
+    </div>
+    <div class="builder-graph-list" id="builder-graph-list">No generated graphs loaded yet.</div>
   </section>
 </main>
 <div id="graph"></div>
