@@ -19,6 +19,7 @@ from src.charity_commission.client import CharityCommissionClient
 from src.companies_house.client import CompaniesHouseClient
 from src.config import Settings, load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
+from src.graph.adverse_media import annotate_graph_with_adverse_media, resolve_negative_news_db_path
 from src.negative_news import run_negative_news_cluster_batch
 from src.resolution.matcher import HybridMatcher
 from src.search.provider import build_search_providers
@@ -242,6 +243,15 @@ def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
                 version=str(payload.get("graph_version") or "").strip() or None,
                 overwrite=str(payload.get("save_mode") or "") == "overwrite_version",
                 metadata={"negative_news": negative_news_result} if negative_news_result else None,
+                transform_data=(
+                    lambda data: annotate_graph_with_adverse_media(
+                        data,
+                        settings=settings,
+                        database_path=resolve_negative_news_db_path(settings),
+                    )
+                )
+                if negative_news_result
+                else None,
             )
             safe_result["graph"] = manifest
         _update_job(job_id, status="completed", result=safe_result)

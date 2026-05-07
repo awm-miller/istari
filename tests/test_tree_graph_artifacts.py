@@ -76,6 +76,28 @@ class TreeGraphArtifactsTest(unittest.TestCase):
 
         self.assertEqual({"enabled": True, "source_database_key": "abc"}, manifest["metadata"]["negative_news"])
 
+    def test_build_bundle_can_transform_graph_data_before_rendering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            import src.tree_graph_artifacts as artifacts
+
+            original_consolidate = artifacts.consolidate_multi_run
+            try:
+                artifacts.consolidate_multi_run = lambda _run_ids: {"nodes": [{"id": "n1"}], "edges": []}
+                manifest = build_generated_graph_bundle(
+                    run_ids=[1],
+                    output_root=Path(tmp),
+                    graph_id="transformed",
+                    title="Transformed",
+                    transform_data=lambda data: {**data, "nodes": [{**data["nodes"][0], "adverse_media_hit": True}]},
+                )
+                graph_data = json.loads(
+                    (Path(tmp) / "transformed" / "versions" / manifest["version"] / "graph-data.json").read_text(encoding="utf-8")
+                )
+            finally:
+                artifacts.consolidate_multi_run = original_consolidate
+
+        self.assertTrue(graph_data["nodes"][0]["adverse_media_hit"])
+
 
 if __name__ == "__main__":
     unittest.main()

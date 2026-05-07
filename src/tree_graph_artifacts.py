@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.graph.build import consolidate_multi_run
 from src.graph.render import render_html
@@ -18,6 +18,7 @@ def build_generated_graph_bundle(
     version: str | None = None,
     overwrite: bool = False,
     metadata: dict[str, Any] | None = None,
+    transform_data: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not run_ids:
         raise ValueError("Cannot build a generated graph without run IDs.")
@@ -30,6 +31,8 @@ def build_generated_graph_bundle(
 
     version_dir.mkdir(parents=True, exist_ok=True)
     data = consolidate_multi_run(run_ids)
+    if transform_data is not None:
+        data = transform_data(data)
     html = render_html(data, title_override=title)
     graph_json = json.dumps(data, ensure_ascii=False, indent=2)
     version_manifest = {
