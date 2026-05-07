@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 from contextlib import redirect_stdout
 from dataclasses import dataclass
