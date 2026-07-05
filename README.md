@@ -1,6 +1,6 @@
 # Project Istari
 
-Project Istari starts a person and asks:
+Project Istari starts with a person and asks:
 
 "Which charities, companies, people, watchlists, and news hits are connected to them?"
 
@@ -36,17 +36,11 @@ That means:
 
 Then it keeps looping only through organisations.
 
-In practice, that means newly discovered trustees or officers are kept as graph people and used for ranking, sanctions, and review, but they do not become fresh external search seeds inside the same run.
-
-So the real discovery loop is:
-
 1. find initial organisations from the seed
 2. expand connected organisations
 3. expand people from those organisations
 4. run PDF enrichment across in-scope organisations
 5. repeat organisation and address expansion until the run stops growing or hits its round limit
-
-That is the core of the pipeline.
 
 ## What happens during discovery
 
@@ -105,20 +99,6 @@ This can add:
 - resolved organisation mentions
 - unresolved organisation mentions that stay visible as low-confidence review nodes
 
-
-
-### 4. Ranking
-
-At the end of a run, people are ranked by how strongly they connect into the discovered organisation network.
-
-In simple terms, people rise higher when they connect to more important or more numerous organisations in that seed's run.
-
-### 7. Sanctions screening
-
-The ranked people are screened against sanctions data.
-
-Those results are saved so they can be reused later instead of recomputed every time.
-
 Once you have multiple runs, Istari rebuilds one combined graph from the latest run for each seed.
 
 This rebuild stage is separate from discovery.
@@ -142,29 +122,6 @@ The viewer also supports two separate review overlays.
 
 Both overlays are built separately and exported as their own JSON payloads so they can be turned on and off independently in the viewer.
 
-## What gets written out
-
-After rebuild, the project writes:
-
-- the main HTML viewer
-- the main graph JSON
-- the open-letters overlay JSON
-- the low-confidence-nodes overlay JSON
-- the address coordinate JSON used by the viewer
-
-These outputs are written into `output/` and copied into `netlify_graph_viewer/` when that folder exists.
-
-## Main data sources
-
-| Source | What it is used for |
-|---|---|
-| Charity Commission for England and Wales | charity search, trustees, linked charities |
-| Companies House | officer search, company records, appointments |
-| Serper | web search for some registry discovery and adverse media |
-| Gemini / OpenAI | entity resolution, PDF extraction, translation, article classification |
-| Local sanctions data | sanctions screening |
-| `data/egypt_judgments_screen.json` | curated Egypt judgments annotation during rebuild |
-| `data/negative_news.sqlite` | stored adverse-media results |
 
 
 
