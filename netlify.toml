@@ -12,6 +12,11 @@
   status = 301
 
 [[redirects]]
+  from = "/94-park-ave"
+  to = "/94-park-ave/"
+  status = 301
+
+[[redirects]]
   from = "/iran"
   to = "/iran/"
   status = 301

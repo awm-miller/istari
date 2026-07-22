@@ -75,6 +75,7 @@ class GraphBundle:
 
 GRAPH_BUNDLES = (
     GraphBundle("mb", "MB", ("old_dbs/charity_links.filtered_rebuild.sqlite", "data/istari_latest.db")),
+    GraphBundle("94-park-ave", "94 park ave", ("data/istari_94_park_avenue_north.db",)),
     GraphBundle("iums", "IUMS", ("data/iums_uk.db",)),
     GraphBundle("iran", "Iran", ("data/iran_orgs.db",), promote_seed_database_candidates=("data/iran.db",)),
     GraphBundle(
@@ -110,6 +111,7 @@ def write_redirects_file() -> None:
     REDIRECTS_PATH.write_text(
         "/ /mb/ 302\n"
         "/mb /mb/ 301\n"
+        "/94-park-ave /94-park-ave/ 301\n"
         "/iran /iran/ 301\n"
         "/iums /iums/ 301\n"
         "/sevenspikes /sevenspikes/ 301\n"
