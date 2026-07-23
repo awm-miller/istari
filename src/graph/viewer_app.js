@@ -84,7 +84,8 @@
   const detailsModalBodyEl = document.getElementById("details-modal-body");
   const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
-  const currentGraphKey = detectGraphKey(window.location.pathname);
+  const currentGeneratedGraphId = detectGeneratedGraphId(window.location.pathname);
+  const currentGraphKey = currentGeneratedGraphId || detectGraphKey(window.location.pathname);
   const BUILDER_API_BASE = String(window.ISTARI_API_BASE || "").replace(/\/$/, "");
 
   let showIdentitiesInput;
@@ -163,6 +164,16 @@
       path === optionPath || path === optionPath.slice(0, -1) || path.startsWith(optionPath)
     ));
     return option?.key || GRAPH_OPTIONS[0].key;
+  }
+
+  function detectGeneratedGraphId(pathname) {
+    const match = String(pathname || "").match(/^\/generated-graphs\/([^/]+)(?:\/|$)/i);
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (_error) {
+      return match[1];
+    }
   }
 
   function graphFunctionUrl(baseUrl) {
@@ -336,7 +347,16 @@
   }
 
   function currentGraphOption() {
-    return GRAPH_OPTIONS.find((option) => option.key === currentGraphKey) || GRAPH_OPTIONS[0];
+    return GRAPH_OPTIONS.find((option) => option.key === currentGraphKey) || null;
+  }
+
+  function setGraphSwitcherSelection(optionEl, label) {
+    graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option").forEach((element) => {
+      const isActive = element === optionEl;
+      element.classList.toggle("active", isActive);
+      element.setAttribute("aria-current", isActive ? "page" : "false");
+    });
+    graphSwitcherLabelEl.textContent = label;
   }
 
   function setGraphSwitcherOpen(isOpen) {
@@ -349,9 +369,9 @@
   function initGraphSwitcher() {
     if (!graphSwitcherEl || !graphSwitcherButtonEl || !graphSwitcherLabelEl || !graphSwitcherMenuEl) return;
     const activeOption = currentGraphOption();
-    graphSwitcherLabelEl.textContent = activeOption.label;
+    graphSwitcherLabelEl.textContent = activeOption?.label || document.title || currentGeneratedGraphId || "Graph";
     graphSwitcherOptionEls.forEach((optionEl) => {
-      const isActive = optionEl.dataset.graphKey === currentGraphKey;
+      const isActive = !currentGeneratedGraphId && optionEl.dataset.graphKey === currentGraphKey;
       optionEl.classList.toggle("active", isActive);
       optionEl.setAttribute("aria-current", isActive ? "page" : "false");
     });
@@ -363,6 +383,7 @@
       optionEl.addEventListener("click", () => {
         const selected = GRAPH_OPTIONS.find((option) => option.key === optionEl.dataset.graphKey);
         if (!selected) return;
+        setGraphSwitcherSelection(optionEl, selected.label);
         setGraphSwitcherOpen(false);
         window.location.assign(selected.path);
       });
@@ -393,17 +414,24 @@
     graphs.forEach((graph) => {
       const path = String(graph.path || "");
       const title = String(graph.title || graph.id || "").trim();
-      if (!path || !title) return;
+      const graphId = String(graph.id || detectGeneratedGraphId(path)).trim();
+      if (!path || !title || !graphId) return;
       const button = document.createElement("button");
       button.className = "graph-switcher-option generated";
       button.type = "button";
       button.role = "menuitem";
+      button.dataset.graphKey = graphId;
       button.textContent = title;
+      const isActive = graphId.toLowerCase() === currentGeneratedGraphId.toLowerCase();
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-current", isActive ? "page" : "false");
       button.addEventListener("click", () => {
+        setGraphSwitcherSelection(button, title);
         setGraphSwitcherOpen(false);
         window.location.assign(path);
       });
       graphSwitcherMenuEl.appendChild(button);
+      if (isActive) setGraphSwitcherSelection(button, title);
     });
     renderGeneratedGraphManager(graphs);
     updateBuilderVersionInput();

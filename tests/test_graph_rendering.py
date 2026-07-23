@@ -67,6 +67,14 @@ class GraphRenderingTests(unittest.TestCase):
             self.assertIn(f'path: "/{graph_key}/"', html)
         self.assertIn("GRAPH_OPTIONS.find(({ path: optionPath })", html)
 
+    def test_generated_graph_switcher_selection_survives_navigation(self) -> None:
+        html = render_html({"nodes": [], "edges": []}, title_override="Generated graph")
+
+        self.assertIn("function detectGeneratedGraphId(pathname)", html)
+        self.assertIn("const currentGraphKey = currentGeneratedGraphId || detectGraphKey", html)
+        self.assertIn("button.dataset.graphKey = graphId", html)
+        self.assertIn("if (isActive) setGraphSwitcherSelection(button, title)", html)
+
 
 if __name__ == "__main__":
     unittest.main()
