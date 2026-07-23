@@ -13,6 +13,7 @@ def render_viewer_html(context: dict[str, str], *, runtime_assets: tuple[str, ..
         f"<script>\n{replace_tokens(load_asset_text(asset_name), context)}\n</script>"
         for asset_name in runtime_assets
     )
+    graph_data = f'<script id="graph-data" type="application/json">{{"nodes":{context["nodes_json"]},"edges":{context["edges_json"]}}}</script>'
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -25,6 +26,7 @@ def render_viewer_html(context: dict[str, str], *, runtime_assets: tuple[str, ..
 </head>
 <body>
 {markup}
+{graph_data}
 {D3_SCRIPT_TAG}
 {PIXI_SCRIPT_TAG}
 {runtime}

@@ -48,15 +48,32 @@ class BuilderApiTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._executor = builder_api.EXECUTOR
         self._generated_graph_dir = builder_api.GENERATED_GRAPH_DIR
+        self._static_graph_dir = builder_api.STATIC_GRAPH_DIR
         builder_api.JOB_DIR = Path(self._tmp.name)
         builder_api.GENERATED_GRAPH_DIR = Path(self._tmp.name) / "generated"
+        builder_api.STATIC_GRAPH_DIR = Path(self._tmp.name) / "site"
         builder_api.EXECUTOR = _NoopExecutor()
         self.client = builder_api.create_app().test_client()
 
     def tearDown(self) -> None:
         builder_api.EXECUTOR = self._executor
         builder_api.GENERATED_GRAPH_DIR = self._generated_graph_dir
+        builder_api.STATIC_GRAPH_DIR = self._static_graph_dir
         self._tmp.cleanup()
+
+    def test_static_graph_routes_serve_every_dropdown_destination(self) -> None:
+        for graph_key in builder_api.STATIC_GRAPH_KEYS:
+            graph_dir = builder_api.STATIC_GRAPH_DIR / graph_key
+            graph_dir.mkdir(parents=True)
+            (graph_dir / "index.html").write_text(graph_key, encoding="utf-8")
+
+        for graph_key in builder_api.STATIC_GRAPH_KEYS:
+            with self.client.get(f"/{graph_key}/") as response:
+                self.assertEqual(200, response.status_code, graph_key)
+                self.assertEqual(graph_key, response.get_data(as_text=True))
+
+        self.assertEqual(302, self.client.get("/").status_code)
+        self.assertEqual(404, self.client.get("/not-a-graph/").status_code)
 
     def test_gemini_key_test_requires_server_side_key(self) -> None:
         with patch("src.builder_api.load_settings", return_value=_empty_settings(Path(self._tmp.name))):

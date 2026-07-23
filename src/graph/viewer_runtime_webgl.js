@@ -23,15 +23,6 @@
     };
   }
 
-  function escapeHtml(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-  }
-
   function pillWidth(node) {
     return Number(node?._pillWidth || 56);
   }
@@ -199,20 +190,6 @@
     graphics.stroke({ color, width: 1.4, alpha: 1 });
   }
 
-  function badgeMarkup(node) {
-    const spec = badgeSpec(node);
-    if (!spec) return "";
-    const iconPath = spec.icon === "heart"
-      ? '<path d="M12 20s-6-3.9-6-8.2A3.8 3.8 0 0 1 12 9a3.8 3.8 0 0 1 6 2.8C18 16.1 12 20 12 20Z"></path>'
-      : '<path d="M5 19V7.8L9 5v14M11 19V9h8v10M8 10.6h.01M8 13.6h.01M8 16.6h.01M15 12h.01M15 15h.01"></path>';
-    return `<span class="graph-node-badge"><svg viewBox="0 0 24 24" aria-hidden="true">${iconPath}</svg></span>`;
-  }
-
-  function focusMarkup(node) {
-    if (node?.kind === "seed") return "";
-    return '<span class="graph-node-focus" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 18a7 7 0 1 1 4.95-2.05M16 16l4 4"></path></svg></span>';
-  }
-
   function createGraphRenderer(container, options) {
     const host = document.createElement("div");
     host.className = "graph-stage";
@@ -229,14 +206,30 @@
     const edgeLayer = new PIXI.Graphics();
     const nodeLayer = new PIXI.Graphics();
     const overlayLayer = new PIXI.Graphics();
+    const hoverLayer = new PIXI.Graphics();
     world.addChild(edgeLayer);
     world.addChild(nodeLayer);
     world.addChild(overlayLayer);
+    world.addChild(hoverLayer);
+
+    const focusElementTemplate = document.createElement("span");
+    focusElementTemplate.className = "graph-node-focus";
+    focusElementTemplate.setAttribute("aria-hidden", "true");
+    const badgeElementTemplates = new Map([
+      ["heart", '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-6-3.9-6-8.2A3.8 3.8 0 0 1 12 9a3.8 3.8 0 0 1 6 2.8C18 16.1 12 20 12 20Z"></path></svg>'],
+      ["building", '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V7.8L9 5v14M11 19V9h8v10M8 10.6h.01M8 13.6h.01M8 16.6h.01M15 12h.01M15 15h.01"></path></svg>'],
+    ].map(([icon, markup]) => {
+      const element = document.createElement("span");
+      element.className = "graph-node-badge";
+      element.innerHTML = markup;
+      return [icon, element];
+    }));
 
     let transform = createWorldTransform(0, 0, 1);
     let zoomBehavior = null;
     let sceneNodes = [];
     let sceneEdges = [];
+    let sceneNodeById = new Map();
     let rootIds = new Set();
     let labelNodes = [];
     const labelElementByNodeId = new Map();
@@ -304,8 +297,13 @@
     function createLabelElement(node) {
       const element = document.createElement("div");
       element.dataset.nodeId = String(node.id);
-      element.innerHTML = `${badgeMarkup(node)}<span class="graph-node-text">${escapeHtml(node.label || "")}</span>${focusMarkup(node)}`;
-      labelWorld.appendChild(element);
+      const spec = badgeSpec(node);
+      if (spec) element.appendChild(badgeElementTemplates.get(spec.icon).cloneNode(true));
+      const textElement = document.createElement("span");
+      textElement.className = "graph-node-text";
+      textElement.textContent = String(node.label || "");
+      element.appendChild(textElement);
+      if (node.kind !== "seed") element.appendChild(focusElementTemplate.cloneNode(true));
       labelElementByNodeId.set(String(node.id), element);
       return element;
     }
@@ -318,10 +316,7 @@
       element.style.transform = `translate(${bounds.x}px, ${bounds.y}px)`;
       element.style.fontSize = `${Number(node._fontSize || 11)}px`;
       const spec = badgeSpec(node);
-      const badge = element.querySelector(".graph-node-badge");
-      if (badge && spec) {
-        badge.style.background = `#${spec.fill.toString(16).padStart(6, "0")}`;
-      }
+      if (spec) element.style.setProperty("--badge-color", `#${spec.fill.toString(16).padStart(6, "0")}`);
     }
 
     function updateLabels() {
@@ -332,11 +327,45 @@
         element.remove();
         labelElementByNodeId.delete(nodeId);
       });
+      const fragment = document.createDocumentFragment();
       labelNodes.forEach((node) => {
         const nodeId = String(node.id);
-        const element = labelElementByNodeId.get(nodeId) || createLabelElement(node);
+        let element = labelElementByNodeId.get(nodeId);
+        if (!element) {
+          element = createLabelElement(node);
+          fragment.appendChild(element);
+        }
         updateLabelElement(element, node);
       });
+      if (fragment.childNodes.length) labelWorld.appendChild(fragment);
+    }
+
+    function drawHoveredNode() {
+      hoverLayer.clear();
+      const node = sceneNodeById.get(hoveredNodeId);
+      if (!node) return;
+      const bounds = pillBounds(node);
+      if (node.is_low_confidence) {
+        drawDashedCapsuleBorder(hoverLayer, bounds, lowConfidenceColor(node), 2.2);
+        return;
+      }
+      const strokeColor = node.sanctioned ? 0xff2222 : node.egypt_judgment_hit ? 0xff9800 : node.adverse_media_hit ? 0xff6a00 : node._colorValue;
+      hoverLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
+      hoverLayer.stroke({ color: strokeColor, width: nodeStrokeWidth(node) + 0.8, alpha: 1 });
+      if (node.sanctioned && node.adverse_media_hit) {
+        const inset = 2.4;
+        hoverLayer.roundRect(
+          bounds.x + inset,
+          bounds.y + inset,
+          Math.max(0, bounds.width - (inset * 2)),
+          Math.max(0, bounds.height - (inset * 2)),
+          Math.max(0, bounds.radius - inset),
+        );
+        hoverLayer.stroke({ color: 0xff6a00, width: 2.6, alpha: 1 });
+      }
+      if (node._lowConfidenceOnlyVisible) {
+        drawDashedCapsuleBorder(hoverLayer, bounds, 0xfacc15, 2.2);
+      }
     }
 
     function drawScene({ syncLabels = true } = {}) {
@@ -344,39 +373,54 @@
       nodeLayer.clear();
       overlayLayer.clear();
 
+      const edgeGroups = new Map();
       sceneEdges.forEach((edge) => {
         const endpoints = edgeEndpoints(edge);
         if (!endpoints) return;
         const width = edge.kind === "hidden_connection" ? 1.8 : edge.kind === "alias" ? 2.5 : 1.4 + ((edge.weight || 0) * 1.5);
         const alpha = edge.is_low_confidence ? 0.72 : edge.kind === "address_link" ? 0.75 : 0.45;
-        if (edge.kind === "hidden_connection" || edge.is_low_confidence) {
-          drawDashedLine(edgeLayer, endpoints.start.x, endpoints.start.y, endpoints.end.x, endpoints.end.y, 8, 6);
-        } else {
-          edgeLayer.moveTo(endpoints.start.x, endpoints.start.y);
-          edgeLayer.lineTo(endpoints.end.x, endpoints.end.y);
+        const dashed = edge.kind === "hidden_connection" || edge.is_low_confidence;
+        const key = `${edge._colorValue}:${width}:${alpha}:${dashed ? 1 : 0}`;
+        if (!edgeGroups.has(key)) {
+          edgeGroups.set(key, { color: edge._colorValue, width, alpha, dashed, lines: [] });
         }
-        edgeLayer.stroke({ color: edge._colorValue, width, alpha });
+        edgeGroups.get(key).lines.push(endpoints);
+      });
+      edgeGroups.forEach((group) => {
+        group.lines.forEach(({ start, end }) => {
+          if (group.dashed) drawDashedLine(edgeLayer, start.x, start.y, end.x, end.y, 8, 6);
+          else {
+            edgeLayer.moveTo(start.x, start.y);
+            edgeLayer.lineTo(end.x, end.y);
+          }
+        });
+        edgeLayer.stroke({ color: group.color, width: group.width, alpha: group.alpha });
       });
 
+      const nodeFillGroups = new Map();
+      const nodeStrokeGroups = new Map();
       sceneNodes.forEach((node) => {
         const bounds = pillBounds(node);
-        const isHovered = node._hovered;
         const fillColor = node._colorValue;
         const strokeColor = node.sanctioned ? 0xff2222 : node.egypt_judgment_hit ? 0xff9800 : node.adverse_media_hit ? 0xff6a00 : fillColor;
         const hasCombinedSanctionAdverse = !!(node.sanctioned && node.adverse_media_hit);
-        nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius);
-        nodeLayer.fill({ color: fillColor, alpha: nodeFillAlpha(node) });
+        const fillAlpha = nodeFillAlpha(node);
+        const fillKey = `${fillColor}:${fillAlpha}`;
+        if (!nodeFillGroups.has(fillKey)) nodeFillGroups.set(fillKey, { color: fillColor, alpha: fillAlpha, bounds: [] });
+        nodeFillGroups.get(fillKey).bounds.push(bounds);
         if (node.is_low_confidence) {
-          drawDashedCapsuleBorder(overlayLayer, bounds, lowConfidenceColor(node), isHovered ? 2.2 : 1.8);
+          drawDashedCapsuleBorder(overlayLayer, bounds, lowConfidenceColor(node), 1.8);
         } else {
-          nodeLayer.stroke({
-            color: strokeColor,
-            width: isHovered ? nodeStrokeWidth(node) + 0.8 : nodeStrokeWidth(node),
-            alpha: node._focused || isHovered ? 1 : (node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit ? 1 : 0.7),
-          });
+          const strokeWidth = nodeStrokeWidth(node);
+          const strokeAlpha = node._focused ? 1 : (node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit ? 1 : 0.7);
+          const strokeKey = `${strokeColor}:${strokeWidth}:${strokeAlpha}`;
+          if (!nodeStrokeGroups.has(strokeKey)) {
+            nodeStrokeGroups.set(strokeKey, { color: strokeColor, width: strokeWidth, alpha: strokeAlpha, bounds: [] });
+          }
+          nodeStrokeGroups.get(strokeKey).bounds.push(bounds);
           if (hasCombinedSanctionAdverse) {
             const inset = 2.4;
-            const innerWidth = Math.max(1.6, (isHovered ? 2.6 : 2.1));
+            const innerWidth = 2.1;
             overlayLayer.roundRect(
               bounds.x + inset,
               bounds.y + inset,
@@ -387,22 +431,37 @@
             overlayLayer.stroke({ color: 0xff6a00, width: innerWidth, alpha: 1 });
           }
           if (node._lowConfidenceOnlyVisible) {
-            drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, isHovered ? 2.2 : 1.8);
+            drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, 1.8);
           }
         }
       });
+      nodeFillGroups.forEach((group) => {
+        group.bounds.forEach((bounds) => nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius));
+        nodeLayer.fill({ color: group.color, alpha: group.alpha });
+      });
+      nodeStrokeGroups.forEach((group) => {
+        group.bounds.forEach((bounds) => nodeLayer.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.radius));
+        nodeLayer.stroke({ color: group.color, width: group.width, alpha: group.alpha });
+      });
 
+      drawHoveredNode();
       if (syncLabels) updateLabels();
     }
 
     function fitToNodes(nodes) {
       if (!nodes.length) return;
-      const bounds = {
-        x0: Math.min(...nodes.map((node) => pillBounds(node).x)) - 60,
-        x1: Math.max(...nodes.map((node) => pillBounds(node).x + pillBounds(node).width)) + 60,
-        y0: Math.min(...nodes.map((node) => pillBounds(node).y)) - 40,
-        y1: Math.max(...nodes.map((node) => pillBounds(node).y + pillBounds(node).height)) + 40,
-      };
+      const bounds = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+      nodes.forEach((node) => {
+        const nodeBounds = pillBounds(node);
+        bounds.x0 = Math.min(bounds.x0, nodeBounds.x);
+        bounds.x1 = Math.max(bounds.x1, nodeBounds.x + nodeBounds.width);
+        bounds.y0 = Math.min(bounds.y0, nodeBounds.y);
+        bounds.y1 = Math.max(bounds.y1, nodeBounds.y + nodeBounds.height);
+      });
+      bounds.x0 -= 60;
+      bounds.x1 += 60;
+      bounds.y0 -= 40;
+      bounds.y1 += 40;
       const width = Math.max(1, bounds.x1 - bounds.x0);
       const height = Math.max(1, bounds.y1 - bounds.y0);
       const viewportWidth = host.clientWidth || container.clientWidth || window.innerWidth;
@@ -410,9 +469,10 @@
       const scale = clamp(Math.min(viewportWidth / width, viewportHeight / height, 1.5) * 0.85, 0.05, 6);
       const x = ((viewportWidth - (width * scale)) / 2) - (bounds.x0 * scale);
       const y = ((viewportHeight - (height * scale)) / 2) - (bounds.y0 * scale);
-      syncWorldTransform(createWorldTransform(x, y, scale));
       if (zoomBehavior) {
         d3.select(host).call(zoomBehavior.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+      } else {
+        syncWorldTransform(createWorldTransform(x, y, scale));
       }
     }
 
@@ -426,7 +486,7 @@
         if (focus) {
           const dx = focus.cx - worldX;
           const dy = focus.cy - worldY;
-          if (Math.sqrt((dx * dx) + (dy * dy)) <= Math.max(focus.r, 10 / transform.k)) {
+          if ((dx * dx) + (dy * dy) <= Math.max(focus.r, 10 / transform.k) ** 2) {
             return { node, zone: "focus" };
           }
         }
@@ -440,10 +500,10 @@
       for (const edge of sceneEdges) {
         const endpoints = edgeEndpoints(edge);
         if (!endpoints) continue;
-        const distance = distanceToSegment(worldX, worldY, endpoints.start.x, endpoints.start.y, endpoints.end.x, endpoints.end.y);
+        const distanceSquared = distanceToSegmentSquared(worldX, worldY, endpoints.start.x, endpoints.start.y, endpoints.end.x, endpoints.end.y);
         const threshold = Math.max(10 / transform.k, 5);
-        if (distance <= threshold && distance < bestDistance) {
-          bestDistance = distance;
+        if (distanceSquared <= threshold ** 2 && distanceSquared < bestDistance) {
+          bestDistance = distanceSquared;
           bestEdge = edge;
         }
       }
@@ -453,25 +513,25 @@
       return null;
     }
 
-    function distanceToSegment(px, py, x1, y1, x2, y2) {
+    function distanceToSegmentSquared(px, py, x1, y1, x2, y2) {
       const dx = x2 - x1;
       const dy = y2 - y1;
       if (dx === 0 && dy === 0) {
-        return Math.sqrt(((px - x1) ** 2) + ((py - y1) ** 2));
+        return ((px - x1) ** 2) + ((py - y1) ** 2);
       }
       const t = Math.max(0, Math.min(1, (((px - x1) * dx) + ((py - y1) * dy)) / ((dx * dx) + (dy * dy))));
       const cx = x1 + (t * dx);
       const cy = y1 + (t * dy);
-      return Math.sqrt(((px - cx) ** 2) + ((py - cy) ** 2));
+      return ((px - cx) ** 2) + ((py - cy) ** 2);
     }
 
     function setHoveredNode(nextNodeId) {
-      const previousNode = sceneNodes.find((node) => String(node.id) === hoveredNodeId);
-      const nextNode = sceneNodes.find((node) => String(node.id) === nextNodeId);
+      const previousNode = sceneNodeById.get(hoveredNodeId);
+      const nextNode = sceneNodeById.get(nextNodeId);
       if (previousNode) previousNode._hovered = false;
       if (nextNode) nextNode._hovered = true;
       hoveredNodeId = nextNodeId;
-      drawScene({ syncLabels: false });
+      drawHoveredNode();
       if (previousNode) {
         const previousElement = labelElementByNodeId.get(String(previousNode.id));
         if (previousElement) updateLabelElement(previousElement, previousNode);
@@ -508,12 +568,17 @@
       const hit = pickHit(event.clientX, event.clientY);
       const nodeId = hit?.node ? String(hit.node.id) : "";
       const edgeKey = hit?.edge ? String(hit.edge._key || "") : "";
+      const hitChanged = nodeId !== hoveredNodeId || edgeKey !== hoveredEdgeKey;
       if (nodeId !== hoveredNodeId) {
         setHoveredNode(nodeId);
       }
       hoveredEdgeKey = edgeKey;
-      options.onHover?.(hit?.node || null, event, hit || null);
-      options.onEdgeHover?.(hit?.edge || null, event, hit || null);
+      if (hitChanged) {
+        options.onHover?.(hit?.node || null, event, hit || null);
+        options.onEdgeHover?.(hit?.edge || null, event, hit || null);
+      } else if (hit) {
+        options.onPointerMove?.(event, hit);
+      }
     }
 
     function handlePointerUp(event) {
@@ -530,7 +595,9 @@
     function handlePointerLeave() {
       if (!draggingNode) {
         setHoveredNode("");
+        hoveredEdgeKey = "";
         options.onHover?.(null, null, null);
+        options.onEdgeHover?.(null, null, null);
       }
     }
 
@@ -569,14 +636,16 @@
       }
     }
 
-    function setGraph(graph) {
+    function setGraph(graph, { fit = false } = {}) {
       sceneNodes = graph.nodes || [];
       sceneEdges = graph.edges || [];
+      sceneNodeById = new Map(sceneNodes.map((node) => [String(node.id), node]));
       rootIds = new Set(graph.rootIds || []);
       sceneNodes.forEach((node) => {
         node._focused = rootIds.has(node.id);
         node._hovered = String(node.id) === hoveredNodeId;
       });
+      if (fit) fitToNodes(sceneNodes);
       drawScene();
     }
 

@@ -1,10 +1,15 @@
 (function () {
-  const rawMainNodes = {nodes_json};
-  const rawMainEdges = {edges_json}.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
+  const graphDataElement = document.getElementById("graph-data");
+  const graphData = JSON.parse(graphDataElement.textContent);
+  graphDataElement.remove();
+  const rawMainNodes = Array.isArray(graphData.nodes) ? graphData.nodes : [];
+  const rawMainEdges = (Array.isArray(graphData.edges) ? graphData.edges : [])
+    .filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
   const LOW_CONFIDENCE_DATA_URL = "graph-data-open-letters.json";
   const LOW_CONFIDENCE_NODES_DATA_URL = "graph-data-low-confidence-nodes.json";
   const GRAPH_OPTIONS = [
     { key: "mb", label: "MB", path: "/mb/" },
+    { key: "94-park-ave", label: "94 park ave", path: "/94-park-ave/" },
     { key: "iums", label: "IUMS", path: "/iums/" },
     { key: "iran", label: "Iran", path: "/iran/" },
     { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
@@ -149,15 +154,15 @@
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
+  let tooltipWidth = 0;
+  let tooltipHeight = 0;
 
   function detectGraphKey(pathname) {
     const path = String(pathname || "").toLowerCase();
-    if (path.startsWith("/iums/") || path === "/iums") return "iums";
-    if (path.startsWith("/iran/") || path === "/iran") return "iran";
-    if (path.startsWith("/sevenspikes/") || path === "/sevenspikes") return "sevenspikes";
-    if (path.startsWith("/expanded-mb-names/") || path === "/expanded-mb-names") return "expanded-mb-names";
-    if (path.startsWith("/mb/") || path === "/mb") return "mb";
-    return "mb";
+    const option = GRAPH_OPTIONS.find(({ path: optionPath }) => (
+      path === optionPath || path === optionPath.slice(0, -1) || path.startsWith(optionPath)
+    ));
+    return option?.key || GRAPH_OPTIONS[0].key;
   }
 
   function graphFunctionUrl(baseUrl) {
@@ -1871,13 +1876,23 @@
     const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
     const edgeAdjacency = buildEdgeAdjacency(nodes, edges);
     const fallbackCenter = bounds.left + ((bounds.right - bounds.left) / 2);
+    nodes.forEach((node) => {
+      node._pillWidth = pillWidth(node);
+      node._pillHeight = pillHeight(node);
+    });
     let curY = bounds.top + 72;
     [1, 2, 3, 4].forEach((lane) => {
       const laneNodes = nodes.filter((node) => Number(node.lane || 0) === lane);
+      const neighborXByNodeId = new Map(
+        laneNodes.map((node) => [node.id, avgNeighborX(node, edgeAdjacency, nodeLookup, fallbackCenter)]),
+      );
+      const lowConfidenceAnchorByNodeId = lane === 2
+        ? new Map(laneNodes.map((node) => [node.id, lowConfidenceLaneAnchorX(node, edgeAdjacency, nodeLookup)]))
+        : new Map();
       laneNodes.sort((left, right) => {
         if (lane === 2) {
-          const leftAnchor = lowConfidenceLaneAnchorX(left, edgeAdjacency, nodeLookup);
-          const rightAnchor = lowConfidenceLaneAnchorX(right, edgeAdjacency, nodeLookup);
+          const leftAnchor = lowConfidenceAnchorByNodeId.get(left.id);
+          const rightAnchor = lowConfidenceAnchorByNodeId.get(right.id);
           if (leftAnchor != null || rightAnchor != null) {
             if (leftAnchor == null) return 1;
             if (rightAnchor == null) return -1;
@@ -1887,7 +1902,7 @@
         }
         const connectionDiff = nodeConnectionOrderScore(right) - nodeConnectionOrderScore(left);
         if (connectionDiff !== 0) return connectionDiff;
-        const neighborDiff = avgNeighborX(left, edgeAdjacency, nodeLookup, fallbackCenter) - avgNeighborX(right, edgeAdjacency, nodeLookup, fallbackCenter);
+        const neighborDiff = neighborXByNodeId.get(left.id) - neighborXByNodeId.get(right.id);
         if (neighborDiff !== 0) return neighborDiff;
         return String(left.label || "").localeCompare(String(right.label || ""));
       });
@@ -1901,7 +1916,7 @@
       let currentRow = [];
       let currentWidth = 0;
       laneNodes.forEach((node) => {
-        const nodeWidth = pillWidth(node);
+        const nodeWidth = node._pillWidth;
         const nextWidth = currentRow.length ? currentWidth + spacing + nodeWidth : nodeWidth;
         if (currentRow.length && nextWidth > maxRowW) {
           rows.push(currentRow);
@@ -1913,17 +1928,15 @@
         }
       });
       if (currentRow.length) rows.push(currentRow);
-      const rowStep = rows.length ? Math.max(...rows.flat().map((node) => pillHeight(node))) + rowGap : 0;
+      const rowStep = rows.length ? Math.max(...rows.flat().map((node) => node._pillHeight)) + rowGap : 0;
       rows.forEach((row, rowIndex) => {
-        const rowW = row.reduce((sum, node) => sum + pillWidth(node), 0) + (spacing * Math.max(0, row.length - 1));
+        const rowW = row.reduce((sum, node) => sum + node._pillWidth, 0) + (spacing * Math.max(0, row.length - 1));
         let cx = usableMin + Math.max(0, (maxRowW - rowW) / 2);
         const rowY = curY + (rowIndex * rowStep);
         row.forEach((node) => {
-          const widthForNode = pillWidth(node);
+          const widthForNode = node._pillWidth;
           node.x = cx + (widthForNode / 2);
           node.y = rowY;
-          node._pillWidth = widthForNode;
-          node._pillHeight = pillHeight(node);
           node._focused = rootIds.has(node.id);
           node._searchHit = viewerState.searchQuery && String(node.label || "").toLowerCase().includes(viewerState.searchQuery.toLowerCase());
           node._rankScore = nodeRankScore(node);
@@ -2020,14 +2033,16 @@
     if (!lines?.length) return;
     tooltip.innerHTML = lines.join("<br>");
     tooltip.style.display = "block";
+    tooltipWidth = tooltip.offsetWidth;
+    tooltipHeight = tooltip.offsetHeight;
     positionTooltip(event);
   }
 
   function positionTooltip(event) {
     if (!event) return;
     const pad = 14;
-    const width = tooltip.offsetWidth;
-    const height = tooltip.offsetHeight;
+    const width = tooltipWidth;
+    const height = tooltipHeight;
     let x = event.clientX + pad;
     let y = event.clientY - 10;
     if (x + width > window.innerWidth - 10) x = event.clientX - width - pad;
@@ -3444,11 +3459,8 @@
       nodes: visibleNodes,
       edges: visibleEdges,
       rootIds: scene.rootIds,
-    });
+    }, { fit: !options?.preserveViewport });
     renderExtraTreeSummary();
-    if (!options?.preserveViewport) {
-      renderer.fitToNodes(visibleNodes);
-    }
     renderScorePanel();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
@@ -3716,6 +3728,9 @@
       onEdgeHover(edge, event) {
         if (!edge) return;
         showTooltip(event, tooltipLinesForEdge(edge));
+      },
+      onPointerMove(event) {
+        positionTooltip(event);
       },
       onContextMenu(node, event) {
         openContextMenu(node, event);

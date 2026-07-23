@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
-from flask import Flask, abort, jsonify, make_response, request as flask_request, send_from_directory
+from flask import Flask, abort, jsonify, make_response, redirect, request as flask_request, send_from_directory
 
 from src.charity_commission.client import CharityCommissionClient
 from src.companies_house.client import CompaniesHouseClient
@@ -37,6 +37,8 @@ from src.tree_graph_artifacts import delete_generated_graph, generated_graph_fil
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 JOB_DIR = Path(os.getenv("TREE_BUILDER_JOB_DIR", PROJECT_ROOT / "data" / "tree_jobs"))
 GENERATED_GRAPH_DIR = Path(os.getenv("TREE_BUILDER_GRAPH_DIR", PROJECT_ROOT / "data" / "generated_graphs"))
+STATIC_GRAPH_DIR = Path(os.getenv("ISTARI_STATIC_GRAPH_DIR", PROJECT_ROOT / "netlify_graph_viewer"))
+STATIC_GRAPH_KEYS = frozenset({"mb", "94-park-ave", "iums", "iran", "sevenspikes", "expanded-mb-names"})
 EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("TREE_BUILDER_WORKERS", "1")))
 LOCK = threading.Lock()
 
@@ -54,6 +56,19 @@ def create_app() -> Flask:
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
             response.headers["Access-Control-Allow-Methods"] = "DELETE, GET, POST, OPTIONS"
         return response
+
+    @app.route("/")
+    def graph_home():
+        return redirect("/mb/")
+
+    @app.route("/<graph_key>/", methods=["GET"])
+    def static_graph_index(graph_key: str):
+        return _send_static_graph_file(graph_key, "index.html")
+
+    @app.route("/<graph_key>/<path:filename>", methods=["GET"])
+    def static_graph_file(graph_key: str, filename: str):
+        return _send_static_graph_file(graph_key, filename)
+
 
     @app.route("/health", methods=["GET", "OPTIONS"])
     def health():
@@ -466,6 +481,15 @@ def _send_generated_graph_file(graph_id: str, filename: str, *, version: str | N
     if not path.is_file():
         abort(404)
     return send_from_directory(path.parent, path.name)
+
+
+def _send_static_graph_file(graph_key: str, filename: str):
+    if graph_key not in STATIC_GRAPH_KEYS:
+        abort(404)
+    graph_dir = STATIC_GRAPH_DIR / graph_key
+    if not (graph_dir / filename).is_file():
+        abort(404)
+    return send_from_directory(graph_dir, filename)
 
 
 def _safe_error(exc: Exception) -> str:
