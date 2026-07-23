@@ -218,6 +218,9 @@
     host.className = "graph-stage";
     const labelLayer = document.createElement("div");
     labelLayer.className = "graph-label-layer";
+    const labelWorld = document.createElement("div");
+    labelWorld.className = "graph-label-world";
+    labelLayer.appendChild(labelWorld);
     container.innerHTML = "";
     container.append(host, labelLayer);
 
@@ -236,6 +239,7 @@
     let sceneEdges = [];
     let rootIds = new Set();
     let labelNodes = [];
+    const labelElementByNodeId = new Map();
     let hoveredNodeId = "";
     let hoveredEdgeKey = "";
     let draggingNode = null;
@@ -246,7 +250,7 @@
       transform = createWorldTransform(nextTransform.x, nextTransform.y, nextTransform.k);
       world.position.set(transform.x, transform.y);
       world.scale.set(transform.k, transform.k);
-      updateLabels();
+      labelWorld.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.k})`;
       options.onTransform?.(transform);
     }
 
@@ -274,63 +278,68 @@
       host.addEventListener("click", handleClick);
       host.addEventListener("contextmenu", handleContextMenu);
       host.addEventListener("dblclick", handleDoubleClick);
-      window.addEventListener("resize", updateLabels);
-
       syncWorldTransform(d3.zoomIdentity);
     }
 
     function destroy() {
-      window.removeEventListener("resize", updateLabels);
       app.destroy(true, { children: true });
     }
 
     function labelCandidates() {
-      const scale = transform.k;
-      if (rootIds.size) return sceneNodes;
-      if (scale >= 0.85) return sceneNodes.slice(0, 1400);
-      const focused = sceneNodes.filter((node) => node._focused || node._hovered || node._searchHit || node.sanctioned || node.egypt_judgment_hit || node.adverse_media_hit);
-      if (scale >= 0.45) {
-        const ranked = sceneNodes
-          .filter((node) => !node._focused && !node._hovered && !node._searchHit && !node.sanctioned && !node.egypt_judgment_hit && !node.adverse_media_hit && Number(node._rankScore || 0) > 0)
-          .sort((left, right) => Number(right._rankScore || 0) - Number(left._rankScore || 0))
-          .slice(0, 220);
-        return [...focused, ...ranked];
+      return sceneNodes;
+    }
+
+    function labelClasses(node) {
+      const classes = ["graph-node-label"];
+      if (node._focused) classes.push("highlight");
+      if (node.sanctioned) classes.push("sanctioned");
+      if (node.egypt_judgment_hit) classes.push("egypt-judgment");
+      if (node.adverse_media_hit) classes.push("adverse-media");
+      if (node._hovered) classes.push("hovered");
+      if (badgeSpec(node)) classes.push("has-badge");
+      if (node.kind !== "seed") classes.push("has-focus");
+      return classes.join(" ");
+    }
+
+    function createLabelElement(node) {
+      const element = document.createElement("div");
+      element.dataset.nodeId = String(node.id);
+      element.innerHTML = `${badgeMarkup(node)}<span class="graph-node-text">${escapeHtml(node.label || "")}</span>${focusMarkup(node)}`;
+      labelWorld.appendChild(element);
+      labelElementByNodeId.set(String(node.id), element);
+      return element;
+    }
+
+    function updateLabelElement(element, node) {
+      element.className = labelClasses(node);
+      const bounds = pillBounds(node);
+      element.style.width = `${bounds.width}px`;
+      element.style.height = `${bounds.height}px`;
+      element.style.transform = `translate(${bounds.x}px, ${bounds.y}px)`;
+      element.style.fontSize = `${Number(node._fontSize || 11)}px`;
+      const spec = badgeSpec(node);
+      const badge = element.querySelector(".graph-node-badge");
+      if (badge && spec) {
+        badge.style.background = `#${spec.fill.toString(16).padStart(6, "0")}`;
       }
-      return focused;
     }
 
     function updateLabels() {
       labelNodes = labelCandidates();
-      labelLayer.innerHTML = labelNodes.map((node) => {
-        const classes = ["graph-node-label"];
-        if (node._focused) classes.push("highlight");
-        if (node.sanctioned) classes.push("sanctioned");
-        if (node.egypt_judgment_hit) classes.push("egypt-judgment");
-        if (node.adverse_media_hit) classes.push("adverse-media");
-        if (node._hovered) classes.push("hovered");
-        if (badgeSpec(node)) classes.push("has-badge");
-        if (node.kind !== "seed") classes.push("has-focus");
-        return `<div class="${classes.join(" ")}" data-node-id="${String(node.id)}">${badgeMarkup(node)}<span class="graph-node-text">${escapeHtml(node.label || "")}</span>${focusMarkup(node)}</div>`;
-      }).join("");
-
-      labelLayer.querySelectorAll(".graph-node-label").forEach((element) => {
-        const nodeId = String(element.getAttribute("data-node-id") || "");
-        const node = labelNodes.find((candidate) => String(candidate.id) === nodeId);
-        if (!node) return;
-        const bounds = pillBounds(node);
-        element.style.width = `${bounds.width}px`;
-        element.style.height = `${bounds.height}px`;
-        element.style.transform = `translate(${transform.applyX(bounds.x)}px, ${transform.applyY(bounds.y)}px) scale(${transform.k})`;
-        element.style.fontSize = `${Number(node._fontSize || 11)}px`;
-        const spec = badgeSpec(node);
-        const badge = element.querySelector(".graph-node-badge");
-        if (badge && spec) {
-          badge.style.background = `#${spec.fill.toString(16).padStart(6, "0")}`;
-        }
+      const activeIds = new Set(labelNodes.map((node) => String(node.id)));
+      labelElementByNodeId.forEach((element, nodeId) => {
+        if (activeIds.has(nodeId)) return;
+        element.remove();
+        labelElementByNodeId.delete(nodeId);
+      });
+      labelNodes.forEach((node) => {
+        const nodeId = String(node.id);
+        const element = labelElementByNodeId.get(nodeId) || createLabelElement(node);
+        updateLabelElement(element, node);
       });
     }
 
-    function drawScene() {
+    function drawScene({ syncLabels = true } = {}) {
       edgeLayer.clear();
       nodeLayer.clear();
       overlayLayer.clear();
@@ -383,7 +392,7 @@
         }
       });
 
-      updateLabels();
+      if (syncLabels) updateLabels();
     }
 
     function fitToNodes(nodes) {
@@ -457,11 +466,20 @@
     }
 
     function setHoveredNode(nextNodeId) {
-      sceneNodes.forEach((node) => {
-        node._hovered = String(node.id) === nextNodeId;
-      });
+      const previousNode = sceneNodes.find((node) => String(node.id) === hoveredNodeId);
+      const nextNode = sceneNodes.find((node) => String(node.id) === nextNodeId);
+      if (previousNode) previousNode._hovered = false;
+      if (nextNode) nextNode._hovered = true;
       hoveredNodeId = nextNodeId;
-      drawScene();
+      drawScene({ syncLabels: false });
+      if (previousNode) {
+        const previousElement = labelElementByNodeId.get(String(previousNode.id));
+        if (previousElement) updateLabelElement(previousElement, previousNode);
+      }
+      if (nextNode) {
+        const nextElement = labelElementByNodeId.get(String(nextNode.id));
+        if (nextElement) updateLabelElement(nextElement, nextNode);
+      }
     }
 
     function handlePointerDown(event) {
@@ -481,7 +499,9 @@
         const rect = host.getBoundingClientRect();
         draggingNode.x = transform.invertX(event.clientX - rect.left);
         draggingNode.y = transform.invertY(event.clientY - rect.top);
-        drawScene();
+        drawScene({ syncLabels: false });
+        const labelElement = labelElementByNodeId.get(String(draggingNode.id));
+        if (labelElement) updateLabelElement(labelElement, draggingNode);
         options.onDrag?.(draggingNode, event);
         return;
       }

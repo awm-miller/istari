@@ -682,6 +682,12 @@ body.builder-mode #compact-legend {{
   pointer-events: none;
   overflow: hidden;
 }
+.graph-label-world {{
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}}
 .graph-node-label {{
   position: absolute;
   left: 0;
@@ -699,7 +705,6 @@ body.builder-mode #compact-legend {{
   line-height: 1;
   white-space: nowrap;
   box-shadow: none;
-  will-change: transform;
   pointer-events: none;
   overflow: hidden;
 }

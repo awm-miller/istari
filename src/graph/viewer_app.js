@@ -13,6 +13,8 @@
   const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
+  const LEAFLET_CSS_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+  const LEAFLET_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
 
   const COLORS = {
     amber: 0xfacc15,
@@ -123,6 +125,7 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
+  let leafletLoadingPromise = null;
   let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
   let mergeOverridesLoadingPromise = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
@@ -3292,8 +3295,40 @@
     scorePanelEl.innerHTML = renderAnalysisHtml(payload);
   }
 
-  function ensureAddressMap() {
+  function loadExternalAsset(tagName, url) {
+    const attribute = tagName === "link" ? "href" : "src";
+    const existing = document.querySelector(`${tagName}[${attribute}="${url}"]`);
+    if (existing?.dataset.loaded === "true") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const element = existing || document.createElement(tagName);
+      element.addEventListener("load", () => {
+        element.dataset.loaded = "true";
+        resolve();
+      }, { once: true });
+      element.addEventListener("error", () => reject(new Error(`Failed to load ${url}`)), { once: true });
+      if (existing) return;
+      element[attribute] = url;
+      if (tagName === "link") element.rel = "stylesheet";
+      document.head.appendChild(element);
+    });
+  }
+
+  function ensureLeafletLoaded() {
+    if (window.L) return Promise.resolve();
+    if (!leafletLoadingPromise) {
+      leafletLoadingPromise = Promise.all([
+        loadExternalAsset("link", LEAFLET_CSS_URL),
+        loadExternalAsset("script", LEAFLET_SCRIPT_URL),
+      ]).then(() => undefined).finally(() => {
+        leafletLoadingPromise = null;
+      });
+    }
+    return leafletLoadingPromise;
+  }
+
+  async function ensureAddressMap() {
     if (addressMap) return;
+    await ensureLeafletLoaded();
     addressMap = L.map("address-map", { zoomControl: true });
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -3377,8 +3412,8 @@
   }
 
   async function openMapView() {
-    ensureAddressMap();
     setSidebarTab("map");
+    await ensureAddressMap();
     const ok = await ensureAddressCoordinatesLoaded();
     if (!ok) {
       addressMarkersLayer.clearLayers();
