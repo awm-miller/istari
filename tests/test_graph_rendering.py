@@ -75,6 +75,14 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("button.dataset.graphKey = graphId", html)
         self.assertIn("if (isActive) setGraphSwitcherSelection(button, title)", html)
 
+    def test_builder_renders_backend_stdout_instead_of_status_copy(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('class="builder-stdout"', html)
+        self.assertIn("function renderBuilderStdout(job = {})", html)
+        self.assertIn("Array.isArray(job.stdout)", html)
+        self.assertNotIn('class="builder-status"', html)
+
 
 if __name__ == "__main__":
     unittest.main()

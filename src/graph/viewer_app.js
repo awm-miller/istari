@@ -191,8 +191,33 @@
 
   function setBuilderStatus(message, isError = false) {
     if (!builderStatusEl) return;
-    builderStatusEl.textContent = message;
+    if (!message) {
+      builderStatusEl.textContent = "";
+      builderStatusEl.classList.remove("error");
+      return;
+    }
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false });
+    const line = `[${timestamp}] ${message}`;
+    const existing = builderStatusEl.textContent.trimEnd();
+    if (!existing.endsWith(line)) {
+      builderStatusEl.textContent = existing ? `${existing}\n${line}` : line;
+    }
     builderStatusEl.classList.toggle("error", !!isError);
+    builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
+  }
+
+  function renderBuilderStdout(job = {}) {
+    if (!builderStatusEl) return;
+    const lines = (Array.isArray(job.stdout) ? job.stdout : []).map((entry) => {
+      const timestamp = new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour12: false });
+      return `[${timestamp}] ${String(entry.message || "")}`;
+    });
+    if (job.error && !lines.some((line) => line.includes(job.error))) {
+      lines.push(`[error] ${job.error}`);
+    }
+    builderStatusEl.textContent = lines.join("\n");
+    builderStatusEl.classList.toggle("error", job.status === "failed");
+    builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
   }
 
   function setAppMode(mode) {
@@ -273,9 +298,10 @@
     casePlanSubmitButton.disabled = true;
     caseOpenResultEl.classList.add("hidden");
     casePlanEl.classList.add("hidden");
-    setBuilderStatus("Planning...");
+    setBuilderStatus(`$ plan ${query}`);
     const data = await postBuilderJson("/api/case-jobs", { query });
     const job = data.job || {};
+    renderBuilderStdout(job);
     currentCaseJobId = String(job.id || "");
     if (!currentCaseJobId) throw new Error("The case planner did not return a job id.");
     await pollBuilderJob(currentCaseJobId);
@@ -284,19 +310,18 @@
   async function pollBuilderJob(jobId) {
     for (let attempt = 0; attempt < 360; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
-      const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`));
+      const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       const job = data.job || {};
+      renderBuilderStdout(job);
       if (job.status === "planned") {
         renderCasePlan(job.plan || {});
-        setBuilderStatus("Check the scope, then run.");
         casePlanSubmitButton.disabled = false;
         return;
       }
       if (job.status === "completed") {
         const graph = job.result?.artifact || {};
         const path = graph.path || "";
-        setBuilderStatus(`${graph.node_count || 0} nodes, ${graph.edge_count || 0} relationships.`);
         if (path) {
           caseOpenResultEl.href = path;
           caseOpenResultEl.classList.remove("hidden");
@@ -306,25 +331,22 @@
         return;
       }
       if (job.status === "failed") {
-        setBuilderStatus(job.error || `Graph job ${jobId} failed.`, true);
         casePlanSubmitButton.disabled = false;
         caseRunButton.disabled = false;
         return;
       }
-      if (job.status === "running") {
-        setBuilderStatus("Discovering records...");
-      }
     }
-    setBuilderStatus("Still running. You can leave this page.");
+    setBuilderStatus("poll timeout; the backend job may still be running", true);
   }
 
   async function runPlannedCase() {
     if (!currentCaseJobId || !currentCasePlan) throw new Error("Draft a case scope first.");
     caseRunButton.disabled = true;
-    setBuilderStatus("Discovering records...");
-    await postBuilderJson(`/api/case-jobs/${encodeURIComponent(currentCaseJobId)}/run`, {
+    setBuilderStatus("$ run approved scope");
+    const data = await postBuilderJson(`/api/case-jobs/${encodeURIComponent(currentCaseJobId)}/run`, {
       plan: approvedCasePlan(),
     });
+    renderBuilderStdout(data.job || {});
     await pollBuilderJob(currentCaseJobId);
   }
 

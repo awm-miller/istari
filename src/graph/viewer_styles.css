@@ -636,15 +636,22 @@ body.builder-mode #compact-legend {{
   cursor: pointer;
 }}
 .case-reset:hover {{ color: #c4cbd4; }}
-.builder-status {{
-  min-height: 20px;
-  margin-top: 12px;
-  color: #8d96a4;
-  font-size: 11px;
-  line-height: 1.55;
+.builder-stdout {{
+  min-height: 48px;
+  max-height: 280px;
+  margin: 18px 0 0;
+  padding: 12px 0;
+  overflow: auto;
+  border: solid #252b34;
+  border-width: 1px 0;
+  color: #8f9ba8;
+  background: transparent;
+  font: 11px/1.65 "IBM Plex Mono", "Courier New", monospace;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }}
-.builder-status.error {{ color: #e68a93; }}
+.builder-stdout:empty {{ display: none; }}
+.builder-stdout.error {{ color: #e68a93; }}
 .case-open-result {{
   display: inline-block;
   margin-top: 10px;
