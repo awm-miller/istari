@@ -1,0 +1,40 @@
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const { handler, _private } = require("../netlify/functions/istari-sites-proxy");
+
+test("proxy allows only Istari case and generated graph routes", () => {
+  assert.equal(_private.ALLOWED_TARGET.test("/api/case-jobs/abc123/run"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/https://example.com"), false);
+  assert.equal(_private.ALLOWED_TARGET.test("/api/admin"), false);
+});
+
+test("proxy adds the server-side token without exposing it in the response", async () => {
+  const previousOrigin = process.env.ISTARI_SITES_ORIGIN;
+  const previousToken = process.env.ISTARI_SITES_PROXY_TOKEN;
+  const previousFetch = global.fetch;
+  process.env.ISTARI_SITES_ORIGIN = "https://juicer.example";
+  process.env.ISTARI_SITES_PROXY_TOKEN = "proxy-secret";
+  global.fetch = async (url, options) => {
+    assert.equal(url, "https://juicer.example/api/generated-graphs");
+    assert.equal(options.headers["X-Istari-Proxy-Token"], "proxy-secret");
+    return new Response(JSON.stringify({ ok: true, graphs: [] }), {
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await handler({
+      httpMethod: "GET",
+      headers: {},
+      queryStringParameters: { target: "/api/generated-graphs" },
+    });
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.body.includes("proxy-secret"), false);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousOrigin == null) delete process.env.ISTARI_SITES_ORIGIN;
+    else process.env.ISTARI_SITES_ORIGIN = previousOrigin;
+    if (previousToken == null) delete process.env.ISTARI_SITES_PROXY_TOKEN;
+    else process.env.ISTARI_SITES_PROXY_TOKEN = previousToken;
+  }
+});

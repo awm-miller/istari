@@ -38,15 +38,15 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://165.232.35.81.sslip.io/api/:splat"
+  to = "/.netlify/functions/istari-sites-proxy?target=/api/:splat"
   status = 200
 
 [[redirects]]
   from = "/health"
-  to = "https://165.232.35.81.sslip.io/health"
+  to = "/.netlify/functions/istari-sites-proxy?target=/health"
   status = 200
 
 [[redirects]]
   from = "/generated-graphs/*"
-  to = "https://165.232.35.81.sslip.io/generated-graphs/:splat"
+  to = "/.netlify/functions/istari-sites-proxy?target=/generated-graphs/:splat"
   status = 200

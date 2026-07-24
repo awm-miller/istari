@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+
+from src.graph.render import render_html
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -116,9 +119,9 @@ def write_redirects_file() -> None:
         "/iums /iums/ 301\n"
         "/sevenspikes /sevenspikes/ 301\n"
         "/expanded-mb-names /expanded-mb-names/ 301\n"
-        "/api/* https://165.232.35.81.sslip.io/api/:splat 200\n"
-        "/health https://165.232.35.81.sslip.io/health 200\n"
-        "/generated-graphs/* https://165.232.35.81.sslip.io/generated-graphs/:splat 200\n",
+        "/api/* /.netlify/functions/istari-sites-proxy?target=/api/:splat 200\n"
+        "/health /.netlify/functions/istari-sites-proxy?target=/health 200\n"
+        "/generated-graphs/* /.netlify/functions/istari-sites-proxy?target=/generated-graphs/:splat 200\n",
         encoding="utf-8",
     )
 
@@ -557,10 +560,30 @@ def build_bundle(bundle: GraphBundle) -> None:
     print(f"Wrote bundle to {bundle_dir}", flush=True)
 
 
+def refresh_bundle_viewer(bundle: GraphBundle) -> None:
+    bundle_dir = NETLIFY_ROOT / bundle.key
+    graph_data_path = bundle_dir / "graph-data.json"
+    if not graph_data_path.exists():
+        raise FileNotFoundError(f"Graph data is missing for {bundle.key}: {graph_data_path}")
+    data = json.loads(graph_data_path.read_text(encoding="utf-8"))
+    (bundle_dir / "index.html").write_text(
+        render_html(data, title_override=bundle.title),
+        encoding="utf-8",
+    )
+    print(f"Refreshed viewer for {bundle.key}", flush=True)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build Istari's multi-graph static site.")
+    parser.add_argument(
+        "--viewer-only",
+        action="store_true",
+        help="Refresh HTML shells from existing graph-data.json files without rebuilding databases.",
+    )
+    args = parser.parse_args()
     NETLIFY_ROOT.mkdir(parents=True, exist_ok=True)
     for bundle in GRAPH_BUNDLES:
-        build_bundle(bundle)
+        refresh_bundle_viewer(bundle) if args.viewer_only else build_bundle(bundle)
     write_redirects_file()
     write_root_redirect_index()
     print("Finished building multi-graph Netlify site.", flush=True)
