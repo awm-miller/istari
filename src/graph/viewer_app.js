@@ -44,20 +44,22 @@
   const modeBuilderButton = document.getElementById("mode-builder");
   const builderPanelEl = document.getElementById("builder-panel");
   const builderFormEl = document.getElementById("builder-form");
-  const builderModeInput = document.getElementById("builder-mode");
-  const builderModeFieldEls = [...document.querySelectorAll("[data-builder-field]")];
-  const builderSeedNamesInput = document.getElementById("builder-seed-names");
-  const builderRootsInput = document.getElementById("builder-roots");
-  const builderTargetNamesInput = document.getElementById("builder-target-names");
-  const builderGraphIdInput = document.getElementById("builder-graph-id");
-  const builderGraphTitleInput = document.getElementById("builder-graph-title");
-  const builderSaveModeInput = document.getElementById("builder-save-mode");
-  const builderGraphVersionInput = document.getElementById("builder-graph-version");
-  const builderNotifyEmailInput = document.getElementById("builder-notify-email");
-  const builderNegativeNewsInput = document.getElementById("builder-negative-news");
-  const builderLimitInput = document.getElementById("builder-limit");
-  const builderRefreshGraphsButton = document.getElementById("builder-refresh-graphs");
-  const builderGraphListEl = document.getElementById("builder-graph-list");
+  const caseQueryInput = document.getElementById("case-query");
+  const casePlanSubmitButton = document.getElementById("case-plan-submit");
+  const casePlanEl = document.getElementById("case-plan");
+  const casePlanTitleEl = document.getElementById("case-plan-title");
+  const casePlanInputsEl = document.getElementById("case-plan-inputs");
+  const caseAddInputButton = document.getElementById("case-add-input");
+  const caseRecipeInput = document.getElementById("case-recipe");
+  const caseRoundsInput = document.getElementById("case-rounds");
+  const caseEntitiesInput = document.getElementById("case-entities");
+  const casePeopleInput = document.getElementById("case-people");
+  const caseSanctionsInput = document.getElementById("case-sanctions");
+  const caseDocumentsInput = document.getElementById("case-documents");
+  const caseNegativeNewsInput = document.getElementById("case-negative-news");
+  const caseRunButton = document.getElementById("case-run");
+  const caseResetButton = document.getElementById("case-reset");
+  const caseOpenResultEl = document.getElementById("case-open-result");
   const builderStatusEl = document.getElementById("builder-status");
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
@@ -135,7 +137,8 @@
   let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
   let mergeOverridesLoadingPromise = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
-  let generatedGraphs = [];
+  let currentCaseJobId = "";
+  let currentCasePlan = null;
 
   const viewerState = {
     searchQuery: "",
@@ -186,78 +189,10 @@
     return `${BUILDER_API_BASE}${path}`;
   }
 
-  function splitLines(value) {
-    return String(value || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-
-  function sanitizeBuilderGraphId(value) {
-    let safe = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    while (safe.includes("--")) safe = safe.replaceAll("--", "-");
-    return safe.slice(0, 80);
-  }
-
-  function builderGraphKey() {
-    return sanitizeBuilderGraphId(
-      builderGraphIdInput?.value
-      || builderGraphTitleInput?.value
-      || splitLines(builderSeedNamesInput?.value)[0]
-      || "",
-    );
-  }
-
-  function versionNumber(value) {
-    const number = Number(String(value || "").replace(/^v/i, ""));
-    return Number.isFinite(number) && number > 0 ? number : 0;
-  }
-
-  function nextBuilderVersion() {
-    const graphKey = builderGraphKey();
-    const graph = generatedGraphs.find((entry) => String(entry.id || "") === graphKey);
-    const versions = Array.isArray(graph?.versions) ? graph.versions : [];
-    const latest = versions.reduce((max, version) => Math.max(max, versionNumber(version.version)), 0);
-    return latest + 1;
-  }
-
-  function updateBuilderVersionInput() {
-    if (!builderGraphVersionInput) return;
-    const saveMode = String(builderSaveModeInput?.value || "new_version");
-    if (saveMode === "overwrite_version") {
-      builderGraphVersionInput.readOnly = false;
-      builderGraphVersionInput.placeholder = "Version";
-      if (!builderGraphVersionInput.value) {
-        builderGraphVersionInput.value = String(Math.max(1, nextBuilderVersion() - 1));
-      }
-      return;
-    }
-    builderGraphVersionInput.value = String(nextBuilderVersion());
-    builderGraphVersionInput.readOnly = true;
-    builderGraphVersionInput.placeholder = "Auto";
-  }
-
   function setBuilderStatus(message, isError = false) {
     if (!builderStatusEl) return;
     builderStatusEl.textContent = message;
     builderStatusEl.classList.toggle("error", !!isError);
-  }
-
-  function setBuilderModeFields() {
-    const mode = String(builderModeInput?.value || "name_seed");
-    const visibleFields = new Set();
-    if (mode === "name_seed") {
-      visibleFields.add("seed-names");
-    } else if (mode === "org_rooted") {
-      visibleFields.add("roots");
-      visibleFields.add("target-names");
-    } else if (mode === "org_chained") {
-      visibleFields.add("seed-names");
-      visibleFields.add("roots");
-    }
-    builderModeFieldEls.forEach((element) => {
-      element.classList.toggle("hidden", !visibleFields.has(String(element.dataset.builderField || "")));
-    });
   }
 
   function setAppMode(mode) {
@@ -271,27 +206,52 @@
     }
   }
 
-  function builderPayload() {
-    const mode = String(builderModeInput?.value || "name_seed");
-    const saveMode = String(builderSaveModeInput?.value || "new_version");
-    const seedNames = splitLines(builderSeedNamesInput?.value);
-    const payload = {
-      mode,
-      seed_name: mode === "name_seed" ? String(seedNames[0] || "").trim() : String(builderGraphTitleInput?.value || "").trim(),
-      seed_names: mode === "name_seed" || mode === "org_chained" ? seedNames : [],
-      roots: mode === "org_rooted" || mode === "org_chained" ? splitLines(builderRootsInput?.value) : [],
-      target_names: mode === "org_rooted" ? splitLines(builderTargetNamesInput?.value) : [],
-      graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),
-      graph_title: String(builderGraphTitleInput?.value || "").trim(),
-      save_mode: saveMode,
-      notify_email: String(builderNotifyEmailInput?.value || "").trim(),
-      run_negative_news: !!builderNegativeNewsInput?.checked,
-      limit: Number(builderLimitInput?.value || 30),
-    };
-    if (saveMode === "overwrite_version") {
-      payload.graph_version = String(builderGraphVersionInput?.value || "").trim();
-    }
-    return payload;
+  function renderCasePlan(plan) {
+    currentCasePlan = plan;
+    casePlanTitleEl.textContent = plan.title || "Untitled case";
+    casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
+    caseRecipeInput.value = plan.recipe || "registry-light";
+    caseRoundsInput.value = String(plan.policy?.max_rounds || 2);
+    caseEntitiesInput.value = String(plan.policy?.max_entities || 500);
+    casePeopleInput.checked = (plan.policy?.leaf_kinds || ["person"]).includes("person");
+    caseSanctionsInput.checked = plan.enrichments?.sanctions !== false;
+    caseDocumentsInput.checked = !!plan.enrichments?.documents;
+    caseNegativeNewsInput.checked = !!plan.enrichments?.negative_news;
+    casePlanEl.classList.remove("hidden");
+    casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function renderCaseInput(input = {}) {
+    const kind = String(input.kind || "person");
+    const options = ["person", "company", "charity", "address"].map((value) => (
+      `<option value="${value}"${value === kind ? " selected" : ""}>${value}</option>`
+    )).join("");
+    return `
+      <div class="case-input">
+        <select class="case-input-kind" aria-label="Input type">${options}</select>
+        <input class="case-input-value" type="text" aria-label="Input value" value="${escapeHtml(input.value || "")}" />
+        <button class="case-input-remove" type="button" aria-label="Remove input">Remove</button>
+      </div>
+    `;
+  }
+
+  function approvedCasePlan() {
+    const plan = JSON.parse(JSON.stringify(currentCasePlan || {}));
+    plan.policy = plan.policy || {};
+    plan.enrichments = plan.enrichments || {};
+    plan.recipe = caseRecipeInput.value;
+    plan.inputs = [...casePlanInputsEl.querySelectorAll(".case-input")].map((row) => ({
+      kind: row.querySelector(".case-input-kind").value,
+      value: row.querySelector(".case-input-value").value.trim(),
+    })).filter((input) => input.value);
+    if (!plan.inputs.length) throw new Error("Add at least one starting input.");
+    plan.policy.max_rounds = Number(caseRoundsInput.value || 2);
+    plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
+    plan.policy.leaf_kinds = casePeopleInput.checked ? ["person"] : [];
+    plan.enrichments.sanctions = !!caseSanctionsInput.checked;
+    plan.enrichments.documents = !!caseDocumentsInput.checked;
+    plan.enrichments.negative_news = !!caseNegativeNewsInput.checked;
+    return plan;
   }
 
   async function postBuilderJson(path, payload) {
@@ -308,42 +268,75 @@
   }
 
   async function submitBuilderJob() {
-    setBuilderStatus("Submitting graph build...");
-    const data = await postBuilderJson("/api/tree-jobs", builderPayload());
+    const query = String(caseQueryInput?.value || "").trim();
+    if (!query) throw new Error("Write a short investigation brief first.");
+    casePlanSubmitButton.disabled = true;
+    caseOpenResultEl.classList.add("hidden");
+    casePlanEl.classList.add("hidden");
+    setBuilderStatus("Planning...");
+    const data = await postBuilderJson("/api/case-jobs", { query });
     const job = data.job || {};
-    setBuilderStatus(`Graph build queued.\nJob ID: ${job.id || "unknown"}\nYou will receive an email when it is ready if SMTP is configured.`);
-    if (job.id) pollBuilderJob(job.id).catch((error) => console.warn("Job polling failed", error));
+    currentCaseJobId = String(job.id || "");
+    if (!currentCaseJobId) throw new Error("The case planner did not return a job id.");
+    await pollBuilderJob(currentCaseJobId);
   }
 
   async function pollBuilderJob(jobId) {
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      const response = await fetch(builderApiUrl(`/api/tree-jobs/${encodeURIComponent(jobId)}`));
+    for (let attempt = 0; attempt < 360; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
+      const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`));
       const data = await response.json().catch(() => ({}));
       const job = data.job || {};
+      if (job.status === "planned") {
+        renderCasePlan(job.plan || {});
+        setBuilderStatus("Check the scope, then run.");
+        casePlanSubmitButton.disabled = false;
+        return;
+      }
       if (job.status === "completed") {
-        const graph = job.result?.graph || {};
+        const graph = job.result?.artifact || {};
         const path = graph.path || "";
-        setBuilderStatus(path ? `Graph ready.\n${graph.title || jobId}\nOpen: ${path}` : `Graph job ${jobId} completed.`);
+        setBuilderStatus(`${graph.node_count || 0} nodes, ${graph.edge_count || 0} relationships.`);
+        if (path) {
+          caseOpenResultEl.href = path;
+          caseOpenResultEl.classList.remove("hidden");
+        }
+        caseRunButton.disabled = false;
         await loadGeneratedGraphOptions();
         return;
       }
       if (job.status === "failed") {
         setBuilderStatus(job.error || `Graph job ${jobId} failed.`, true);
+        casePlanSubmitButton.disabled = false;
+        caseRunButton.disabled = false;
         return;
       }
-      setBuilderStatus(`Graph job ${jobId} is ${job.status || "running"}...`);
+      if (job.status === "running") {
+        setBuilderStatus("Discovering records...");
+      }
     }
-    setBuilderStatus(`Graph job ${jobId} is still running. You will receive an email when it is ready.`);
+    setBuilderStatus("Still running. You can leave this page.");
   }
 
-  async function deleteBuilderJson(path) {
-    const response = await fetch(builderApiUrl(path), { method: "DELETE" });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.ok === false) {
-      throw new Error(data.error || `Delete failed with ${response.status}`);
-    }
-    return data;
+  async function runPlannedCase() {
+    if (!currentCaseJobId || !currentCasePlan) throw new Error("Draft a case scope first.");
+    caseRunButton.disabled = true;
+    setBuilderStatus("Discovering records...");
+    await postBuilderJson(`/api/case-jobs/${encodeURIComponent(currentCaseJobId)}/run`, {
+      plan: approvedCasePlan(),
+    });
+    await pollBuilderJob(currentCaseJobId);
+  }
+
+  function resetCaseDesk() {
+    currentCaseJobId = "";
+    currentCasePlan = null;
+    casePlanEl.classList.add("hidden");
+    caseOpenResultEl.classList.add("hidden");
+    casePlanSubmitButton.disabled = false;
+    caseRunButton.disabled = false;
+    setBuilderStatus("");
+    caseQueryInput?.focus();
   }
 
   function currentGraphOption() {
@@ -409,7 +402,6 @@
     if (!response.ok) return;
     const data = await response.json();
     const graphs = Array.isArray(data.graphs) ? data.graphs : [];
-    generatedGraphs = graphs;
     graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option.generated").forEach((element) => element.remove());
     graphs.forEach((graph) => {
       const path = String(graph.path || "");
@@ -433,94 +425,7 @@
       graphSwitcherMenuEl.appendChild(button);
       if (isActive) setGraphSwitcherSelection(button, title);
     });
-    renderGeneratedGraphManager(graphs);
-    updateBuilderVersionInput();
     return graphs;
-  }
-
-  function renderGeneratedGraphManager(graphs) {
-    if (!builderGraphListEl) return;
-    if (!graphs.length) {
-      builderGraphListEl.textContent = "No saved generated graphs yet.";
-      return;
-    }
-    builderGraphListEl.innerHTML = graphs.map((graph) => {
-      const versions = Array.isArray(graph.versions) ? graph.versions : [];
-      const activeVersion = String(graph.active_version || versions[0]?.version || "");
-      const versionOptions = versions.map((version) => {
-        const value = String(version.version || "");
-        return `<option value="${escapeHtml(value)}"${value === activeVersion ? " selected" : ""}>${escapeHtml(value)}</option>`;
-      }).join("");
-      return `
-        <div class="builder-graph-row">
-          <div class="builder-graph-row-title">
-            <strong>${escapeHtml(graph.title || graph.id)}</strong>
-            <span>${escapeHtml(graph.id)}</span>
-          </div>
-          <div class="builder-graph-row-controls">
-            <select class="builder-graph-version-select" data-graph-id="${escapeHtml(graph.id)}" ${versionOptions ? "" : "disabled"}>
-              ${versionOptions || '<option value="">No versions</option>'}
-            </select>
-            <button class="toolbar-btn" type="button" data-graph-action="open-active" data-graph-id="${escapeHtml(graph.id)}">Open</button>
-            <button class="toolbar-btn danger" type="button" data-graph-action="delete-selected-version" data-graph-id="${escapeHtml(graph.id)}">Delete version</button>
-            <button class="toolbar-btn danger" type="button" data-graph-action="delete-graph" data-graph-id="${escapeHtml(graph.id)}">Delete graph</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-  }
-
-  async function handleGeneratedGraphVersionChange(select) {
-    const graphId = String(select.dataset.graphId || "");
-    const version = String(select.value || "");
-    if (!graphId || !version) return;
-    await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
-    setBuilderStatus(`${graphId} ${version} is now active.`);
-    await loadGeneratedGraphOptions();
-  }
-
-  async function handleGeneratedGraphAction(button) {
-    const graphId = String(button.dataset.graphId || "");
-    const version = String(button.dataset.version || "");
-    const action = String(button.dataset.graphAction || "");
-    if (!graphId) return;
-    if (action === "open-active") {
-      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/`);
-      return;
-    }
-    if (action === "open-version" && version) {
-      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}/`);
-      return;
-    }
-    if (action === "activate-version" && version) {
-      await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
-      setBuilderStatus(`${graphId} ${version} is now active.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-version" && version) {
-      if (!window.confirm(`Delete ${graphId} ${version}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}`);
-      setBuilderStatus(`${graphId} ${version} deleted.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-selected-version") {
-      const select = button.closest(".builder-graph-row")?.querySelector(".builder-graph-version-select");
-      const selectedVersion = String(select?.value || "");
-      if (!selectedVersion) return;
-      if (!window.confirm(`Delete ${graphId} ${selectedVersion}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(selectedVersion)}`);
-      setBuilderStatus(`${graphId} ${selectedVersion} deleted.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-graph") {
-      if (!window.confirm(`Delete all versions of ${graphId}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}`);
-      setBuilderStatus(`${graphId} deleted.`);
-      await loadGeneratedGraphOptions();
-    }
   }
 
   function escapeHtml(value) {
@@ -3504,31 +3409,25 @@
     modeBuilderButton?.addEventListener("click", () => setAppMode("builder"));
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
-      submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
+      submitBuilderJob().catch((error) => {
+        casePlanSubmitButton.disabled = false;
+        setBuilderStatus(error.message || "Case planning failed to start.", true);
+      });
     });
-    builderModeInput?.addEventListener("change", () => {
-      setBuilderModeFields();
-      updateBuilderVersionInput();
+    caseRunButton?.addEventListener("click", () => {
+      runPlannedCase().catch((error) => {
+        caseRunButton.disabled = false;
+        setBuilderStatus(error.message || "Case discovery failed to start.", true);
+      });
     });
-    [builderGraphTitleInput, builderGraphIdInput, builderSeedNamesInput].forEach((input) => {
-      input?.addEventListener("input", updateBuilderVersionInput);
+    caseResetButton?.addEventListener("click", resetCaseDesk);
+    caseAddInputButton?.addEventListener("click", () => {
+      casePlanInputsEl.insertAdjacentHTML("beforeend", renderCaseInput());
+      casePlanInputsEl.querySelector(".case-input:last-child .case-input-value")?.focus();
     });
-    builderSaveModeInput?.addEventListener("change", () => {
-      if (builderGraphVersionInput) builderGraphVersionInput.value = "";
-      updateBuilderVersionInput();
-    });
-    builderRefreshGraphsButton?.addEventListener("click", () => {
-      loadGeneratedGraphOptions().catch((error) => setBuilderStatus(error.message || "Generated graph refresh failed.", true));
-    });
-    builderGraphListEl?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-graph-action]");
-      if (!button) return;
-      handleGeneratedGraphAction(button).catch((error) => setBuilderStatus(error.message || "Generated graph action failed.", true));
-    });
-    builderGraphListEl?.addEventListener("change", (event) => {
-      const select = event.target.closest(".builder-graph-version-select");
-      if (!select) return;
-      handleGeneratedGraphVersionChange(select).catch((error) => setBuilderStatus(error.message || "Generated graph version change failed.", true));
+    casePlanInputsEl?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".case-input-remove");
+      if (removeButton) removeButton.closest(".case-input")?.remove();
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();
@@ -3739,7 +3638,6 @@
   async function boot() {
     renderLegend();
     initGraphSwitcher();
-    setBuilderModeFields();
     await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {
       onHover(node, event, hit) {

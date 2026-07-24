@@ -75,81 +75,48 @@
   </div>
 </aside>
 <main class="builder-panel hidden" id="builder-panel" aria-live="polite">
-  <section class="builder-card">
-    <div class="builder-card-header">
-      <div>
-        <p class="builder-kicker">Tree Builder</p>
-        <h1>Generate a graph</h1>
-      </div>
-    </div>
-    <form id="builder-form" class="builder-form">
-      <label>
-        <span>Build mode</span>
-        <select id="builder-mode">
-          <option value="name_seed">Individuals</option>
-          <option value="org_rooted">Start from organisations</option>
-          <option value="org_chained">Individuals, match on known organisations</option>
-        </select>
-      </label>
-      <label data-builder-field="seed-names">
-        <span>Seed names, one per line</span>
-        <textarea id="builder-seed-names" rows="4" placeholder="Use for organisation-chained builds"></textarea>
-      </label>
-      <label data-builder-field="roots">
-        <span>Organisation roots, one per line</span>
-        <textarea id="builder-roots" rows="4" placeholder="charity:1095626&#10;company:01234567[:suffix]"></textarea>
-      </label>
-      <label data-builder-field="target-names">
-        <span>Target names, one per line</span>
-        <textarea id="builder-target-names" rows="3" placeholder="Optional aliases for org-rooted builds"></textarea>
-      </label>
-      <div class="builder-grid">
-        <label>
-          <span>Graph title</span>
-          <input id="builder-graph-title" type="text" placeholder="Optional display title" autocomplete="off" />
-        </label>
-        <label>
-          <span>Graph key</span>
-          <input id="builder-graph-id" type="text" placeholder="Auto from title" autocomplete="off" />
-        </label>
-      </div>
-      <div class="builder-grid">
-        <label>
-          <span>Save mode</span>
-          <select id="builder-save-mode">
-            <option value="new_version">Save as new version</option>
-            <option value="overwrite_version">Overwrite version</option>
-          </select>
-        </label>
-        <label>
-          <span>Version</span>
-          <input id="builder-graph-version" type="number" min="1" placeholder="Auto" readonly />
-        </label>
-      </div>
-      <div class="builder-grid">
-        <label>
-          <span>Notify email</span>
-          <input id="builder-notify-email" type="email" placeholder="you@example.com" autocomplete="email" />
-        </label>
-      </div>
-      <label class="builder-checkbox">
-        <input id="builder-negative-news" type="checkbox" />
-        <span>Run negative news before bundling</span>
-      </label>
-      <input id="builder-limit" type="hidden" value="30" />
-      <div class="builder-actions">
-        <button class="builder-submit" type="submit">Generate graph</button>
-      </div>
-    </form>
-    <div class="builder-status" id="builder-status">Ready.</div>
-    <div class="builder-graph-simple-list">
-      <div class="builder-graph-simple-header">
-        <span>Generated graphs</span>
-        <button id="builder-refresh-graphs" class="toolbar-btn" type="button">Refresh</button>
-      </div>
-      <div class="builder-graph-list" id="builder-graph-list">No generated graphs loaded yet.</div>
-    </div>
-  </section>
+  <div class="case-desk">
+    <section class="case-brief">
+      <h1>New investigation</h1>
+      <form id="builder-form" class="builder-form case-form">
+        <textarea id="case-query" rows="6" aria-label="Investigation brief" placeholder="Describe what to investigate."></textarea>
+        <div class="builder-actions">
+          <button class="builder-submit" id="case-plan-submit" type="submit">
+            Review scope
+          </button>
+        </div>
+      </form>
+      <div class="builder-status" id="builder-status"></div>
+      <a class="case-open-result hidden" id="case-open-result" href="#">Open graph</a>
+
+      <section class="case-plan hidden" id="case-plan">
+        <h2 id="case-plan-title">Untitled case</h2>
+        <div class="case-inputs" id="case-plan-inputs"></div>
+        <button class="case-add-input" id="case-add-input" type="button">Add input</button>
+        <div class="case-controls">
+          <label>
+            <span>Route</span>
+            <select id="case-recipe">
+              <option value="registry-light">Registry</option>
+              <option value="address-network">Address network</option>
+            </select>
+          </label>
+          <label><span>Rounds</span><input id="case-rounds" type="number" min="1" max="10" /></label>
+          <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="10000" /></label>
+        </div>
+        <div class="case-toggles" aria-label="Optional enrichments">
+          <label><input id="case-people" type="checkbox" /><span>People</span></label>
+          <label><input id="case-sanctions" type="checkbox" /><span>Sanctions</span></label>
+          <label><input id="case-documents" type="checkbox" /><span>Documents</span></label>
+          <label><input id="case-negative-news" type="checkbox" /><span>Negative news</span></label>
+        </div>
+        <div class="builder-actions">
+          <button class="builder-submit case-run" id="case-run" type="button">Run approved scope</button>
+          <button class="case-reset" id="case-reset" type="button">Start again</button>
+        </div>
+      </section>
+    </section>
+  </div>
 </main>
 <div id="graph"></div>
 <div class="canvas-search-popover hidden" id="canvas-search-popover" aria-live="polite">
