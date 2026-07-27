@@ -1,6 +1,3 @@
-const fs = require("fs/promises");
-const path = require("path");
-
 function json(statusCode, body) {
   return {
     statusCode,
@@ -30,18 +27,25 @@ function tryParseJson(text) {
 
 function normalizeGraphKey(value) {
   const graph = String(value || "").trim().toLowerCase();
-  if (graph === "iums") return "iums";
-  if (graph === "iran") return "iran";
-  if (graph === "sevenspikes") return "sevenspikes";
-  if (graph === "expanded-mb-names" || graph === "expandedmbnames") return "expanded-mb-names";
-  return "mb";
+  if (graph === "expandedmbnames") return "expanded-mb-names";
+  return /^[a-z0-9][a-z0-9-]{0,79}$/.test(graph) ? graph : "mb";
 }
 
-async function loadGraphDataForKey(graphKey) {
+function graphDataPath(graphKey) {
   const normalizedGraphKey = normalizeGraphKey(graphKey);
-  const graphPath = path.join(process.cwd(), "netlify_graph_viewer", normalizedGraphKey, "graph-data.json");
-  const raw = await fs.readFile(graphPath, "utf8");
-  return JSON.parse(raw);
+  const staticKeys = new Set(["mb", "94-park-ave", "iums", "iran", "sevenspikes", "expanded-mb-names"]);
+  return staticKeys.has(normalizedGraphKey)
+    ? `/${normalizedGraphKey}/graph-data.json`
+    : `/generated-graphs/${normalizedGraphKey}/graph-data.json`;
+}
+
+async function loadGraphDataForKey(graphKey, event) {
+  const requestOrigin = process.env.URL || process.env.DEPLOY_PRIME_URL || new URL(event.rawUrl).origin;
+  const response = await fetch(new URL(graphDataPath(graphKey), requestOrigin), {
+    headers: event.headers?.cookie ? { Cookie: event.headers.cookie } : {},
+  });
+  if (!response.ok) throw new Error(`graph request returned ${response.status}`);
+  return response.json();
 }
 
 function shortestPath(data, sourceNodeId, targetNodeId) {
@@ -254,7 +258,7 @@ exports.handler = async function handler(event) {
 
   let data;
   try {
-    data = await loadGraphDataForKey(graphKey);
+    data = await loadGraphDataForKey(graphKey, event);
   } catch (error) {
     return json(500, { error: `Graph data is unavailable: ${error.message}` });
   }
@@ -276,8 +280,11 @@ exports.handler = async function handler(event) {
       evidence: context.evidence,
     });
   } catch (error) {
-    return json(500, {
-      error: error.message,
+    return json(200, {
+      graph: graphKey,
+      sourceNodeId,
+      targetNodeId,
+      warning: error.message,
       summary: fallbackSummary(context),
       claims: fallbackClaims(context),
       path: context.path,
@@ -285,3 +292,5 @@ exports.handler = async function handler(event) {
     });
   }
 };
+
+exports._private = { normalizeGraphKey, graphDataPath, shortestPath, buildPathContext };

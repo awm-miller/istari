@@ -312,6 +312,9 @@
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
       const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `Case status failed with ${response.status}`);
+      }
       const job = data.job || {};
       renderBuilderStdout(job);
       if (job.status === "planned") {
@@ -336,6 +339,8 @@
         return;
       }
     }
+    casePlanSubmitButton.disabled = false;
+    caseRunButton.disabled = false;
     setBuilderStatus("poll timeout; the backend job may still be running", true);
   }
 
@@ -3034,8 +3039,20 @@
       sourceKey: String(row.sourceId || ""),
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
+    const analysisSelected = viewerState.analysisNodeIds.includes(node.id);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      analysisSelected
+        ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
+        : viewerState.analysisNodeIds.length < 2
+          ? { label: "Add to connection analysis", type: "analysis_add", nodeId: node.id }
+          : null,
+      viewerState.analysisNodeIds.length === 2
+        ? { label: "Explain selected connection", type: "analysis_run" }
+        : null,
+      viewerState.analysisNodeIds.length
+        ? { label: "Clear connection selection", type: "analysis_clear" }
+        : null,
       expandableLowConfidenceNode
         ? {
             label: viewerState.expandedLowConfidenceNodeIds.has(node.id)
@@ -3196,7 +3213,9 @@
     }
     const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map((item) => [String(item.id || ""), item]));
     const claims = Array.isArray(payload.claims) ? payload.claims : [];
-    const pathItems = Array.isArray(payload.path) ? payload.path : [];
+    const pathItems = Array.isArray(payload.path?.edges)
+      ? payload.path.edges
+      : Array.isArray(payload.path) ? payload.path : [];
     const sourceNode = nodeById.get(payload.sourceNodeId);
     const targetNode = nodeById.get(payload.targetNodeId);
     return `
@@ -3624,6 +3643,9 @@
         applyViewerState();
       } else if (action.type === "analysis_add") {
         viewerState.analysisNodeIds = [...viewerState.analysisNodeIds, action.nodeId].slice(0, 2);
+        if (viewerState.analysisNodeIds.length === 2) {
+          openAnalysisView().catch(() => window.alert("Connection analysis failed."));
+        }
       } else if (action.type === "analysis_remove") {
         viewerState.analysisNodeIds = viewerState.analysisNodeIds.filter((id) => id !== action.nodeId);
       } else if (action.type === "analysis_run") {

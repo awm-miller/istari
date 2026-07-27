@@ -7,11 +7,8 @@ const DEFAULT_STORE_KEY = "overrides";
 
 function normalizeGraphKey(value) {
   const graph = String(value || "").trim().toLowerCase();
-  if (graph === "iums") return "iums";
-  if (graph === "iran") return "iran";
-  if (graph === "sevenspikes") return "sevenspikes";
-  if (graph === "expanded-mb-names" || graph === "expandedmbnames") return "expanded-mb-names";
-  return "mb";
+  if (graph === "expandedmbnames") return "expanded-mb-names";
+  return /^[a-z0-9][a-z0-9-]{0,79}$/.test(graph) ? graph : "mb";
 }
 
 function storeKeyForGraph(graphKey) {
@@ -201,3 +198,5 @@ exports.handler = async function handler(event) {
 
   return json(200, { graph: graphKey, overrides: current });
 };
+
+exports._private = { normalizeGraphKey, storeKeyForGraph };
