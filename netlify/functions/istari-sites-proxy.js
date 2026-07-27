@@ -12,7 +12,12 @@ function response(statusCode, body, contentType = "application/json; charset=utf
 }
 
 function targetPath(event) {
-  const target = String(event.queryStringParameters?.target || "").trim();
+  const requested = String(event.queryStringParameters?.target || "").trim();
+  const eventPath = String(event.path || "").trim();
+  const rawPath = event.rawUrl ? new URL(event.rawUrl).pathname : "";
+  const target = requested && requested !== "/"
+    ? requested
+    : [eventPath, rawPath].find((path) => path.startsWith("/api/") || path.startsWith("/generated-graphs/") || path === "/health") || "/";
   return target.startsWith("/") ? target : `/${target}`;
 }
 

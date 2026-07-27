@@ -9,6 +9,14 @@ test("proxy allows only Istari case and generated graph routes", () => {
   assert.equal(_private.ALLOWED_TARGET.test("/api/admin"), false);
 });
 
+test("proxy recovers the original path when Netlify drops the rewrite query", () => {
+  assert.equal(_private.targetPath({
+    path: "/api/generated-graphs",
+    rawUrl: "https://projectistari.netlify.app/api/generated-graphs",
+    queryStringParameters: {},
+  }), "/api/generated-graphs");
+});
+
 test("proxy adds the server-side token without exposing it in the response", async () => {
   const previousOrigin = process.env.ISTARI_SITES_ORIGIN;
   const previousToken = process.env.ISTARI_SITES_PROXY_TOKEN;
