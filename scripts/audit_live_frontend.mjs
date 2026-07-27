@@ -89,19 +89,59 @@ async function testGraphSwitcher(page) {
   log("graph switcher navigation and retained selection passed");
 }
 
-async function selectNodeAction(page, labelIndex, actionName) {
-  const label = page.locator(".graph-node-label").nth(labelIndex);
+async function selectNodeLocatorAction(page, label, actionName) {
   const box = await label.boundingBox();
-  assert.ok(box, `node ${labelIndex} has no hit area`);
+  assert.ok(box, `${actionName}: node has no hit area`);
   await page.mouse.click(box.x + Math.min(8, box.width / 2), box.y + (box.height / 2), { button: "right" });
   await page.getByRole("button", { name: actionName }).click();
 }
 
+async function selectNodeAction(page, labelIndex, actionName) {
+  await selectNodeLocatorAction(page, page.locator(".graph-node-label").nth(labelIndex), actionName);
+}
+
 async function testViewer(page) {
-  await openGraph(page, "94-park-ave");
+  const graph = await openGraph(page, "94-park-ave");
+  const firstEdge = graph.edges[0];
+  const sourceLabel = page.locator(`.graph-node-label[data-node-id="${firstEdge.source}"]`).first();
+  const targetLabel = page.locator(`.graph-node-label[data-node-id="${firstEdge.target}"]`).first();
+  const sourceBox = await sourceLabel.boundingBox();
+  const targetBox = await targetLabel.boundingBox();
+  assert.ok(sourceBox && targetBox, "edge endpoints have no rendered labels");
+  const edgePoint = {
+    x: ((sourceBox.x + (sourceBox.width / 2)) + (targetBox.x + (targetBox.width / 2))) / 2,
+    y: ((sourceBox.y + (sourceBox.height / 2)) + (targetBox.y + (targetBox.height / 2))) / 2,
+  };
+  await page.mouse.move(edgePoint.x, edgePoint.y);
+  await page.waitForSelector("#tooltip", { state: "visible" });
+  await page.mouse.move(20, 30);
+  await page.waitForSelector("#tooltip", { state: "hidden" });
+  await page.mouse.move(edgePoint.x, edgePoint.y);
+  await page.waitForSelector("#tooltip", { state: "visible" });
+  await page.mouse.click(edgePoint.x, edgePoint.y, { button: "right" });
+  await page.getByRole("button", { name: "View relationship evidence" }).click();
+  assert.match(await page.locator("#details-modal-body").innerText(), /Why these nodes are connected/i);
+  assert.ok(await page.getByRole("link", { name: "Open exact source" }).count());
+  await page.locator("#details-modal-close").click();
+
   const initialStats = await page.locator("#stats").innerText();
   await page.locator("#search").fill("AL-UMRAN");
   await page.waitForFunction((value) => document.querySelector("#stats")?.textContent !== value, initialStats);
+  await page.locator("#search").fill("");
+
+  await page.locator("#search").fill("AL-UMRAN");
+  const stageBox = await page.locator("#graph .graph-stage").boundingBox();
+  assert.ok(stageBox, "graph stage has no bounds");
+  await page.mouse.click(stageBox.x + 30, stageBox.y + stageBox.height - 30, { button: "right" });
+  await page.getByRole("button", { name: "Add tree..." }).click();
+  await page.locator("#canvas-search-input").fill("E&IT");
+  await page.locator('.canvas-search-result[data-node-id="org:5"]').click();
+  await page.waitForFunction(() => document.querySelector("#stats")?.textContent.includes("1 added tree"));
+  const blankLabels = await page.locator(".graph-node-label").evaluateAll((elements) =>
+    elements.filter((element) => !element.querySelector(".graph-node-text")?.textContent.trim()).length,
+  );
+  assert.equal(blankLabels, 0, "an added tree rendered blank duplicate nodes");
+  await page.locator("#compare-clear").click();
   await page.locator("#search").fill("");
 
   await page.locator('.sidebar-tab[data-tab="ranked"]').click();
@@ -122,9 +162,19 @@ async function testViewer(page) {
   await selectNodeAction(page, 1, "Add to connection analysis");
   await page.waitForSelector(".analysis-path-item", { timeout: 60_000 });
 
+  await page.locator('.sidebar-tab[data-tab="resolve"]').click();
+  await page.waitForSelector("#resolution-panel");
+  await selectNodeLocatorAction(page, sourceLabel, "Add to question selection");
+  await selectNodeLocatorAction(page, targetLabel, "Add to question selection");
+  await page.locator('.sidebar-tab[data-tab="ask"]').click();
+  await page.locator("#question-input").fill("How are these nodes connected?");
+  await page.locator("#question-submit").click();
+  await page.waitForSelector(".question-citation", { timeout: 60_000 });
+  await page.locator("#question-clear").click();
+
   await page.locator('.sidebar-tab[data-tab="map"]').click();
   await page.waitForSelector("#address-map.leaflet-container", { timeout: 30_000 });
-  log("search, filters, overlays, sidebar, ranked view, claims, connection analysis, and map passed");
+  log("hover, evidence, added trees, resolution, cited questions, filters, analysis, and map passed");
 }
 
 async function testFunctions(page) {
