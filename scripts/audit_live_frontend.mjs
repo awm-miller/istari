@@ -187,7 +187,7 @@ async function testBuilder(page) {
   await page.locator("#mode-builder").click();
   await page.waitForSelector("#builder-panel:not(.hidden)");
   await page.locator("#case-query").fill(
-    "Investigate Companies House company 00000006. Use one round and no more than 50 entities. Include sanctions, but do not include people, documents, or negative news.",
+    "Investigate Companies House company 00000006. Use one round and no more than 50 entities. Include people, sanctions, documents, and negative news.",
   );
   await page.locator("#case-plan-submit").click();
   await waitForBuilder(page, "planned", 180_000);
@@ -195,15 +195,18 @@ async function testBuilder(page) {
   await page.locator("#case-recipe").selectOption("registry-light");
   await page.locator("#case-rounds").fill("1");
   await page.locator("#case-entities").fill("50");
-  await page.locator("#case-people").uncheck();
+  await page.locator("#case-people").check();
   await page.locator("#case-sanctions").check();
-  await page.locator("#case-documents").uncheck();
-  await page.locator("#case-negative-news").uncheck();
+  await page.locator("#case-documents").check();
+  await page.locator("#case-negative-news").check();
   await page.locator("#case-run").click();
   await waitForBuilder(page, "completed", 900_000);
 
   const stdout = await page.locator("#builder-status").innerText();
   assert.match(stdout, /complete:/i, "Builder stdout has no completion marker");
+  assert.match(stdout, /Sanctions enrichment is not available/i);
+  assert.match(stdout, /Document enrichment is not available/i);
+  assert.match(stdout, /Negative-news enrichment is not available/i);
   const resultPath = await page.locator("#case-open-result").getAttribute("href");
   assert.ok(resultPath?.startsWith("/generated-graphs/"), `unexpected result path ${resultPath}`);
   await page.locator("#case-open-result").click();
@@ -212,6 +215,7 @@ async function testBuilder(page) {
   const graphKey = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1);
   const data = await graphData(page);
   const counts = validateReferents(data, graphKey);
+  assert.ok(data.nodes.some((node) => node.kind === "person"), "People discovery produced no person nodes");
   await page.locator("#graph-switcher-button").click();
   assert.equal(await page.locator(`.graph-switcher-option[data-graph-key="${graphKey}"]`).getAttribute("aria-current"), "page");
   log(`Builder completed and opened ${graphKey}: ${counts.nodes} nodes, ${counts.edges} edges`);
