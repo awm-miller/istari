@@ -229,15 +229,23 @@
     let zoomBehavior = null;
     let sceneNodes = [];
     let sceneEdges = [];
-    let sceneNodeById = new Map();
+    let sceneNodeByKey = new Map();
     let rootIds = new Set();
     let labelNodes = [];
-    const labelElementByNodeId = new Map();
-    let hoveredNodeId = "";
+    const labelElementBySceneKey = new Map();
+    let hoveredNodeKey = "";
     let hoveredEdgeKey = "";
     let draggingNode = null;
     let draggingPointerId = null;
     let suppressClickUntil = 0;
+
+    function nodeSceneKey(node) {
+      return String(node?._sceneKey || node?.id || "");
+    }
+
+    function edgeSceneKey(edge, index = 0) {
+      return String(edge?._sceneKey || edge?.id || `${edge?.source || ""}:${edge?.target || ""}:${edge?.kind || "link"}:${index}`);
+    }
 
     function syncWorldTransform(nextTransform) {
       transform = createWorldTransform(nextTransform.x, nextTransform.y, nextTransform.k);
@@ -304,7 +312,8 @@
       textElement.textContent = String(node.label || "");
       element.appendChild(textElement);
       if (node.kind !== "seed") element.appendChild(focusElementTemplate.cloneNode(true));
-      labelElementByNodeId.set(String(node.id), element);
+      element.dataset.sceneKey = nodeSceneKey(node);
+      labelElementBySceneKey.set(nodeSceneKey(node), element);
       return element;
     }
 
@@ -321,16 +330,16 @@
 
     function updateLabels() {
       labelNodes = labelCandidates();
-      const activeIds = new Set(labelNodes.map((node) => String(node.id)));
-      labelElementByNodeId.forEach((element, nodeId) => {
-        if (activeIds.has(nodeId)) return;
+      const activeKeys = new Set(labelNodes.map(nodeSceneKey));
+      labelElementBySceneKey.forEach((element, sceneKey) => {
+        if (activeKeys.has(sceneKey)) return;
         element.remove();
-        labelElementByNodeId.delete(nodeId);
+        labelElementBySceneKey.delete(sceneKey);
       });
       const fragment = document.createDocumentFragment();
       labelNodes.forEach((node) => {
-        const nodeId = String(node.id);
-        let element = labelElementByNodeId.get(nodeId);
+        const sceneKey = nodeSceneKey(node);
+        let element = labelElementBySceneKey.get(sceneKey);
         if (!element) {
           element = createLabelElement(node);
           fragment.appendChild(element);
@@ -342,7 +351,7 @@
 
     function drawHoveredNode() {
       hoverLayer.clear();
-      const node = sceneNodeById.get(hoveredNodeId);
+      const node = sceneNodeByKey.get(hoveredNodeKey);
       if (!node) return;
       const bounds = pillBounds(node);
       if (node.is_low_confidence) {
@@ -525,19 +534,19 @@
       return ((px - cx) ** 2) + ((py - cy) ** 2);
     }
 
-    function setHoveredNode(nextNodeId) {
-      const previousNode = sceneNodeById.get(hoveredNodeId);
-      const nextNode = sceneNodeById.get(nextNodeId);
+    function setHoveredNode(nextNodeKey) {
+      const previousNode = sceneNodeByKey.get(hoveredNodeKey);
+      const nextNode = sceneNodeByKey.get(nextNodeKey);
       if (previousNode) previousNode._hovered = false;
       if (nextNode) nextNode._hovered = true;
-      hoveredNodeId = nextNodeId;
+      hoveredNodeKey = nextNodeKey;
       drawHoveredNode();
       if (previousNode) {
-        const previousElement = labelElementByNodeId.get(String(previousNode.id));
+        const previousElement = labelElementBySceneKey.get(nodeSceneKey(previousNode));
         if (previousElement) updateLabelElement(previousElement, previousNode);
       }
       if (nextNode) {
-        const nextElement = labelElementByNodeId.get(String(nextNode.id));
+        const nextElement = labelElementBySceneKey.get(nodeSceneKey(nextNode));
         if (nextElement) updateLabelElement(nextElement, nextNode);
       }
     }
@@ -560,17 +569,17 @@
         draggingNode.x = transform.invertX(event.clientX - rect.left);
         draggingNode.y = transform.invertY(event.clientY - rect.top);
         drawScene({ syncLabels: false });
-        const labelElement = labelElementByNodeId.get(String(draggingNode.id));
+        const labelElement = labelElementBySceneKey.get(nodeSceneKey(draggingNode));
         if (labelElement) updateLabelElement(labelElement, draggingNode);
         options.onDrag?.(draggingNode, event);
         return;
       }
       const hit = pickHit(event.clientX, event.clientY);
-      const nodeId = hit?.node ? String(hit.node.id) : "";
-      const edgeKey = hit?.edge ? String(hit.edge._key || "") : "";
-      const hitChanged = nodeId !== hoveredNodeId || edgeKey !== hoveredEdgeKey;
-      if (nodeId !== hoveredNodeId) {
-        setHoveredNode(nodeId);
+      const nodeKey = hit?.node ? nodeSceneKey(hit.node) : "";
+      const edgeKey = hit?.edge ? edgeSceneKey(hit.edge) : "";
+      const hitChanged = nodeKey !== hoveredNodeKey || edgeKey !== hoveredEdgeKey;
+      if (nodeKey !== hoveredNodeKey) {
+        setHoveredNode(nodeKey);
       }
       hoveredEdgeKey = edgeKey;
       if (hitChanged) {
@@ -639,11 +648,14 @@
     function setGraph(graph, { fit = false } = {}) {
       sceneNodes = graph.nodes || [];
       sceneEdges = graph.edges || [];
-      sceneNodeById = new Map(sceneNodes.map((node) => [String(node.id), node]));
+      sceneNodeByKey = new Map(sceneNodes.map((node) => [nodeSceneKey(node), node]));
+      sceneEdges.forEach((edge, index) => {
+        edge._key = edgeSceneKey(edge, index);
+      });
       rootIds = new Set(graph.rootIds || []);
       sceneNodes.forEach((node) => {
         node._focused = rootIds.has(node.id);
-        node._hovered = String(node.id) === hoveredNodeId;
+        node._hovered = nodeSceneKey(node) === hoveredNodeKey;
       });
       if (fit) fitToNodes(sceneNodes);
       drawScene();

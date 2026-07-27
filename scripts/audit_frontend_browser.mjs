@@ -16,6 +16,11 @@ const contentTypes = new Map([
   [".css", "text/css"], [".html", "text/html"], [".js", "text/javascript"], [".json", "application/json"],
 ]);
 let caseStatus = "queued";
+let mergeOverrides = {
+  address: [], name: [], organisation: [], hidden: [],
+  rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
+  audit: [{ id: "audit-1", action: "reject", at: "2026-07-27T12:00:00Z", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef" }],
+};
 
 function sendJson(response, body, status = 200) {
   response.writeHead(status, { "content-type": "application/json" });
@@ -35,11 +40,21 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/.netlify/functions/merge-overrides") {
-    sendJson(response, { overrides: { address: [], name: [], organisation: [], hidden: [] } });
+    if (request.method === "POST") mergeOverrides = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: mergeOverrides.audit };
+    sendJson(response, { overrides: mergeOverrides });
     return;
   }
   if (url.pathname === "/.netlify/functions/analyze-connection" && request.method === "POST") {
     const body = await requestJson(request);
+    if (body.question) {
+      const edge = body.subgraph.edges[0];
+      sendJson(response, {
+        answer: "The selected nodes are connected by the cited visible relationship.",
+        claims: [{ text: "The visible graph supports this connection.", edge_ids: [edge.id], evidence_ids: [] }],
+        context: { nodes: body.subgraph.nodes, edges: body.subgraph.edges, evidence: [] },
+      });
+      return;
+    }
     sendJson(response, {
       sourceNodeId: body.source_id,
       targetNodeId: body.target_id,
@@ -127,6 +142,31 @@ try {
   assert.ok(await page.locator(".graph-node-label").count() >= 10, "graph labels did not render");
   assert.match(await page.locator("#stats").innerText(), /showing \d+ nodes, \d+ edges/);
 
+  const firstEdge = await page.evaluate(async () => (await (await fetch("graph-data.json")).json()).edges[0]);
+  const sourceLabel = page.locator(`.graph-node-label[data-node-id="${firstEdge.source}"]`).first();
+  const targetLabel = page.locator(`.graph-node-label[data-node-id="${firstEdge.target}"]`).first();
+  const sourceBox = await sourceLabel.boundingBox();
+  const targetBox = await targetLabel.boundingBox();
+  assert.ok(sourceBox && targetBox, "edge endpoints have no rendered labels");
+  const edgePoint = {
+    x: ((sourceBox.x + (sourceBox.width / 2)) + (targetBox.x + (targetBox.width / 2))) / 2,
+    y: ((sourceBox.y + (sourceBox.height / 2)) + (targetBox.y + (targetBox.height / 2))) / 2,
+  };
+  await page.mouse.move(edgePoint.x, edgePoint.y);
+  await page.waitForSelector("#tooltip", { state: "visible" });
+  await page.mouse.move(20, 30);
+  await page.waitForSelector("#tooltip", { state: "hidden" });
+  await page.mouse.move(edgePoint.x, edgePoint.y);
+  await page.waitForSelector("#tooltip", { state: "visible" });
+
+  await page.mouse.click(edgePoint.x, edgePoint.y, { button: "right" });
+  await page.getByRole("button", { name: "View relationship evidence" }).click();
+  assert.match(await page.locator("#details-modal-body").innerText(), /Why these nodes are connected/i);
+  assert.match(await page.locator("#details-modal-body").innerText(), /Provider:/);
+  assert.match(await page.locator("#details-modal-body").innerText(), /Provider: Companies House/);
+  assert.ok(await page.getByRole("link", { name: "Open exact source" }).count());
+  await page.locator("#details-modal-close").click();
+
   await page.locator("#graph-switcher-button").click();
   assert.equal(await page.locator('.graph-switcher-option[data-graph-key="94-park-ave"]').getAttribute("aria-current"), "page");
   assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 1);
@@ -135,6 +175,27 @@ try {
   await page.locator("#search").fill("AL-UMRAN");
   await page.waitForFunction((value) => document.querySelector("#stats")?.textContent !== value, initialStats);
   assert.ok((await page.locator("#stats").innerText()) !== initialStats, "search did not update the projection");
+  await page.locator("#search").fill("");
+
+  await page.locator("#search").fill("AL-UMRAN");
+  const stageBox = await page.locator("#graph .graph-stage").boundingBox();
+  assert.ok(stageBox, "graph stage has no bounds");
+  await page.mouse.click(stageBox.x + 30, stageBox.y + stageBox.height - 30, { button: "right" });
+  await page.getByRole("button", { name: "Add tree..." }).click();
+  await page.locator("#canvas-search-input").fill("E&IT");
+  await page.locator('.canvas-search-result[data-node-id="org:5"]').click();
+  await page.waitForFunction(() => document.querySelector("#stats")?.textContent.includes("1 added tree"));
+  const duplicateLabels = await page.locator(".graph-node-label").evaluateAll((elements) => {
+    const counts = new Map();
+    elements.forEach((element) => counts.set(element.dataset.nodeId, (counts.get(element.dataset.nodeId) || 0) + 1));
+    return {
+      duplicateCount: [...counts.values()].filter((count) => count > 1).length,
+      blankCount: elements.filter((element) => !element.querySelector(".graph-node-text")?.textContent.trim()).length,
+    };
+  });
+  assert.ok(duplicateLabels.duplicateCount > 0, "added trees did not render overlapping node instances");
+  assert.equal(duplicateLabels.blankCount, 0, "an added tree rendered blank duplicate nodes");
+  await page.locator("#compare-clear").click();
   await page.locator("#search").fill("");
 
   await page.locator('.sidebar-tab[data-tab="ranked"]').click();
@@ -149,6 +210,26 @@ try {
   await page.locator("#toggle-sidebar").click();
   assert.ok(!(await page.locator("#viewer-sidebar").evaluate((element) => element.classList.contains("open"))), "sidebar did not close");
   await page.locator("#toggle-sidebar").click();
+
+  await page.locator('.sidebar-tab[data-tab="resolve"]').click();
+  assert.match(await page.locator("#resolution-panel").innerText(), /Reviewed as different people/);
+  await page.locator('.resolution-decision [data-resolution-index]').click();
+  await page.waitForFunction(() => document.querySelector("#resolution-panel")?.textContent.includes("No manual decisions yet"));
+
+  async function chooseNodeAction(locator, actionName) {
+    const box = await locator.boundingBox();
+    assert.ok(box, `${actionName}: node has no hit area`);
+    await page.mouse.click(box.x + 8, box.y + (box.height / 2), { button: "right" });
+    await page.getByRole("button", { name: actionName }).click();
+  }
+  await chooseNodeAction(sourceLabel, "Add to question selection");
+  await chooseNodeAction(targetLabel, "Add to question selection");
+  await chooseNodeAction(targetLabel, "Ask about selected subgraph");
+  await page.locator("#question-input").fill("How are these nodes connected?");
+  await page.locator("#question-submit").click();
+  await page.waitForSelector(".question-citation");
+  assert.match(await page.locator("#question-result").innerText(), /visible graph supports this connection/i);
+  await page.locator("#question-clear").click();
 
   const firstLabel = page.locator(".graph-node-label").first();
   const firstBox = await firstLabel.boundingBox();
@@ -190,7 +271,7 @@ try {
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, switching, search, filters, overlays, sidebar, ranked view, and Builder mode.");
+  console.log("Browser audit passed: rendering, repeated edge hover, evidence, added trees, resolution, subgraph questions, and Builder mode.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

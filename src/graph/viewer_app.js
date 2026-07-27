@@ -77,6 +77,12 @@
   const sidebarTabEls = [...document.querySelectorAll(".sidebar-tab")];
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
+  const resolutionPanelEl = document.getElementById("resolution-panel");
+  const questionSelectionEl = document.getElementById("question-selection");
+  const questionInputEl = document.getElementById("question-input");
+  const questionSubmitEl = document.getElementById("question-submit");
+  const questionClearEl = document.getElementById("question-clear");
+  const questionResultEl = document.getElementById("question-result");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
@@ -134,8 +140,9 @@
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
   let leafletLoadingPromise = null;
-  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
+  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: [] };
   let mergeOverridesLoadingPromise = null;
+  let resolutionCandidatesCache = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
   let currentCaseJobId = "";
   let currentCasePlan = null;
@@ -152,6 +159,7 @@
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
     analysisNodeIds: [],
+    questionNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
@@ -1928,15 +1936,23 @@
     });
   }
 
-  function buildSceneForProjection(projection, bounds) {
+  function buildSceneForProjection(projection, bounds, sceneKey = "base") {
     const rootIds = new Set(projection.rootIds || []);
     const lowConfidenceOnlyIds = lowConfidenceOnlyVisibleNodeIdsForProjection(projection);
     const sceneNodes = allNodes
       .filter((node) => projection.visibleIds.has(node.id))
-      .map((node) => ({ ...node, _visible: true, _lowConfidenceOnlyVisible: lowConfidenceOnlyIds.has(node.id) }));
+      .map((node) => ({
+        ...node,
+        _sceneKey: `${sceneKey}:node:${node.id}`,
+        _visible: true,
+        _lowConfidenceOnlyVisible: lowConfidenceOnlyIds.has(node.id),
+      }));
     const sceneEdges = projection.edgeIds
       .filter((edge) => projection.visibleIds.has(edge.source) && projection.visibleIds.has(edge.target))
-      .map((edge) => ({ ...edge }));
+      .map((edge, index) => ({
+        ...edge,
+        _sceneKey: `${sceneKey}:edge:${edge.id || `${edge.source}:${edge.target}:${edge.kind || "link"}:${index}`}`,
+      }));
     layoutNodesInBounds(sceneNodes, sceneEdges, rootIds, bounds);
     ensureSceneMetadata(sceneNodes, sceneEdges);
     return { nodes: sceneNodes, edges: sceneEdges, rootIds: [...rootIds] };
@@ -1973,7 +1989,7 @@
         const left = outerPad + (offset * (columnWidth + gutter));
         const bounds = { left, right: left + columnWidth, top: rowTop };
         const scene = applyExpandedHiddenConnectionsToScene(
-          buildSceneForProjection(entry.projection, bounds),
+          buildSceneForProjection(entry.projection, bounds, `tree-${start + offset}`),
           bounds,
         );
         combinedNodes.push(...scene.nodes);
@@ -2346,6 +2362,11 @@
       sourceId: String(row?.sourceId || ""),
       targetId: String(row?.targetId || ""),
       leaderId: String(row?.leaderId || ""),
+      sourceLabel: String(row?.sourceLabel || ""),
+      targetLabel: String(row?.targetLabel || ""),
+      leaderLabel: String(row?.leaderLabel || ""),
+      reason: String(row?.reason || ""),
+      decidedAt: String(row?.decidedAt || ""),
     })).filter((row) => {
       if (!row.sourceId || !row.targetId || row.sourceId === row.targetId) return false;
       const key = `${row.sourceId}||${row.targetId}`;
@@ -2353,6 +2374,40 @@
       seen.add(key);
       return true;
     });
+  }
+
+  function normalizeRejectedRows(rows) {
+    return normalizeMergeOverrideRows(rows).map((row) => ({
+      ...row,
+      kind: ["address", "name", "organisation"].includes(String(row.kind || ""))
+        ? String(row.kind)
+        : String((Array.isArray(rows) ? rows : []).find((candidate) => candidate?.sourceId === row.sourceId && candidate?.targetId === row.targetId)?.kind || "name"),
+    }));
+  }
+
+  function normalizeAuditRows(rows) {
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: String(row?.id || ""),
+      action: String(row?.action || ""),
+      at: String(row?.at || ""),
+      kind: String(row?.kind || ""),
+      sourceId: String(row?.sourceId || ""),
+      targetId: String(row?.targetId || ""),
+      sourceLabel: String(row?.sourceLabel || ""),
+      targetLabel: String(row?.targetLabel || ""),
+      reason: String(row?.reason || ""),
+    })).filter((row) => row.action && row.at);
+  }
+
+  function readMergeOverrides(overrides = {}) {
+    return {
+      address: normalizeMergeOverrideRows(overrides.address),
+      name: normalizeMergeOverrideRows(overrides.name),
+      organisation: normalizeMergeOverrideRows(overrides.organisation),
+      hidden: normalizeHiddenOverrideRows(overrides.hidden),
+      rejected: normalizeRejectedRows(overrides.rejected),
+      audit: normalizeAuditRows(overrides.audit),
+    };
   }
 
   function normalizeHiddenOverrideRows(rows) {
@@ -2901,18 +2956,15 @@
       })
       .then((payload) => {
         const overrides = payload?.overrides || {};
-        mergeOverrides = {
-          address: normalizeMergeOverrideRows(overrides.address),
-          name: normalizeMergeOverrideRows(overrides.name),
-          organisation: normalizeMergeOverrideRows(overrides.organisation),
-          hidden: normalizeHiddenOverrideRows(overrides.hidden),
-        };
+        mergeOverrides = readMergeOverrides(overrides);
+        resolutionCandidatesCache = null;
         rebuildBaseGraph();
         return true;
       })
       .catch((error) => {
         console.warn(error);
-        mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
+        mergeOverrides = readMergeOverrides();
+        resolutionCandidatesCache = null;
         rebuildBaseGraph();
         return false;
       })
@@ -2933,6 +2985,10 @@
         sourceId: action.sourceKey,
         targetId: action.targetKey,
         leaderId: action.leaderKey,
+        sourceLabel: action.sourceLabel,
+        targetLabel: action.targetLabel,
+        leaderLabel: action.leaderLabel,
+        reason: action.reason,
       }),
     });
     if (!response.ok) {
@@ -2940,15 +2996,34 @@
     }
     const payload = await response.json();
     const overrides = payload?.overrides || {};
-    mergeOverrides = {
-      address: normalizeMergeOverrideRows(overrides.address),
-      name: normalizeMergeOverrideRows(overrides.name),
-      organisation: normalizeMergeOverrideRows(overrides.organisation),
-      hidden: normalizeHiddenOverrideRows(overrides.hidden),
-    };
+    mergeOverrides = readMergeOverrides(overrides);
+    resolutionCandidatesCache = null;
     viewerState.pendingMergeNodeId = "";
     rebuildBaseGraph();
     await applyViewerState();
+  }
+
+  async function persistResolutionDecision(action) {
+    const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        graph: currentGraphKey,
+        operation: String(action.operation || "add"),
+        kind: "rejected",
+        resolutionKind: action.kind,
+        sourceId: action.sourceKey,
+        targetId: action.targetKey,
+        sourceLabel: action.sourceLabel,
+        targetLabel: action.targetLabel,
+        reason: action.reason,
+      }),
+    });
+    if (!response.ok) throw new Error(`Resolution persistence failed (${response.status})`);
+    const payload = await response.json();
+    mergeOverrides = readMergeOverrides(payload?.overrides || {});
+    resolutionCandidatesCache = null;
+    if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
   }
 
   async function persistHiddenOverride(action, options = {}) {
@@ -2968,12 +3043,8 @@
     }
     const payload = await response.json();
     const overrides = payload?.overrides || {};
-    mergeOverrides = {
-      address: normalizeMergeOverrideRows(overrides.address),
-      name: normalizeMergeOverrideRows(overrides.name),
-      organisation: normalizeMergeOverrideRows(overrides.organisation),
-      hidden: normalizeHiddenOverrideRows(overrides.hidden),
-    };
+    mergeOverrides = readMergeOverrides(overrides);
+    resolutionCandidatesCache = null;
     if (options.refresh !== false) {
       rebuildBaseGraph();
       await applyViewerState();
@@ -2991,6 +3062,149 @@
     if (trimmed === "2") return action.targetKey;
     window.alert("Please enter 1 or 2.");
     return "";
+  }
+
+  function resolutionPairKey(kind, sourceKey, targetKey) {
+    return `${kind}:${[String(sourceKey || ""), String(targetKey || "")].sort().join("||")}`;
+  }
+
+  function resolutionKeysForNode(node) {
+    const kind = mergeKindForNode(node);
+    if (!kind) return [];
+    const keys = nodeMergeStableKeys(node).filter((key) => !key.startsWith("node-id:"));
+    const labels = [node.label, ...(Array.isArray(node.aliases) ? node.aliases : [])]
+      .map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+      .filter(Boolean)
+      .map((value) => `label:${value}`);
+    return uniqueValues([...keys, ...labels]);
+  }
+
+  function resolutionReason(key) {
+    if (key.startsWith("address:")) return "Same normalised address";
+    if (key.startsWith("org:")) return "Same registry identifier";
+    if (key.startsWith("person:") || key.startsWith("individual:") || key.startsWith("identity:")) return "Shared person identity key";
+    if (key.startsWith("label:")) return "Same normalised name or alias";
+    return "Shared stable identity key";
+  }
+
+  function resolutionCandidates() {
+    if (resolutionCandidatesCache) return resolutionCandidatesCache;
+    const buckets = new Map();
+    rawMainNodes.forEach((node) => {
+      const kind = mergeKindForNode(node);
+      if (!kind) return;
+      resolutionKeysForNode(node).forEach((key) => {
+        const bucketKey = `${kind}:${key}`;
+        if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
+        buckets.get(bucketKey).push(node);
+      });
+    });
+    const decided = new Set();
+    ["address", "name", "organisation"].forEach((kind) => {
+      normalizeMergeOverrideRows(mergeOverrides[kind]).forEach((row) => decided.add(resolutionPairKey(kind, row.sourceId, row.targetId)));
+    });
+    normalizeRejectedRows(mergeOverrides.rejected).forEach((row) => decided.add(resolutionPairKey(row.kind, row.sourceId, row.targetId)));
+    const candidates = new Map();
+    buckets.forEach((nodes, bucketKey) => {
+      const separator = bucketKey.indexOf(":");
+      const kind = bucketKey.slice(0, separator);
+      const sharedKey = bucketKey.slice(separator + 1);
+      const uniqueNodes = [...new Map(nodes.map((node) => [node.id, node])).values()].slice(0, 12);
+      for (let left = 0; left < uniqueNodes.length; left += 1) {
+        for (let right = left + 1; right < uniqueNodes.length; right += 1) {
+          const source = uniqueNodes[left];
+          const target = uniqueNodes[right];
+          const sourceKey = nodeMergePrimaryKey(source);
+          const targetKey = nodeMergePrimaryKey(target);
+          const pairKey = resolutionPairKey(kind, sourceKey, targetKey);
+          if (!sourceKey || !targetKey || decided.has(pairKey)) continue;
+          const current = candidates.get(pairKey) || { kind, source, target, sourceKey, targetKey, reasons: [] };
+          current.reasons = uniqueValues([...current.reasons, resolutionReason(sharedKey)]);
+          candidates.set(pairKey, current);
+        }
+      }
+    });
+    resolutionCandidatesCache = [...candidates.values()]
+      .sort((left, right) => right.reasons.length - left.reasons.length || String(left.source.label).localeCompare(String(right.source.label)))
+      .slice(0, 30);
+    return resolutionCandidatesCache;
+  }
+
+  function resolutionDecisionLabel(row, side) {
+    const explicit = String(row?.[`${side}Label`] || "").trim();
+    if (explicit) return explicit;
+    const key = String(row?.[`${side}Id`] || "");
+    const node = rawMainNodes.find((candidate) => nodeHasStableKey(candidate, key));
+    return String(node?.label || key || "node");
+  }
+
+  function renderResolutionPanel() {
+    if (!resolutionPanelEl) return;
+    const candidates = resolutionCandidates();
+    const actions = [];
+    const candidateHtml = candidates.length ? candidates.map((candidate) => {
+      const sourceLabel = String(candidate.source.label || candidate.source.id);
+      const targetLabel = String(candidate.target.label || candidate.target.id);
+      const baseAction = {
+        kind: candidate.kind,
+        sourceKey: candidate.sourceKey,
+        targetKey: candidate.targetKey,
+        sourceLabel,
+        targetLabel,
+        reason: candidate.reasons.join("; "),
+      };
+      const keepLeftIndex = actions.push({ ...baseAction, type: "merge", leaderKey: candidate.sourceKey, leaderLabel: sourceLabel }) - 1;
+      const keepRightIndex = actions.push({ ...baseAction, type: "merge", leaderKey: candidate.targetKey, leaderLabel: targetLabel }) - 1;
+      const rejectIndex = actions.push({ ...baseAction, type: "reject" }) - 1;
+      return `
+        <div class="resolution-card">
+          <div class="resolution-pair">${escapeHtml(sourceLabel)}<br>${escapeHtml(targetLabel)}</div>
+          <div class="resolution-reason">${escapeHtml(candidate.reasons.join(" · "))}</div>
+          <div class="resolution-actions">
+            <button data-resolution-index="${keepLeftIndex}">Keep first</button>
+            <button data-resolution-index="${keepRightIndex}">Keep second</button>
+            <button data-resolution-index="${rejectIndex}" data-resolution-action="reject">Not the same</button>
+          </div>
+        </div>`;
+    }).join("") : '<div class="context-menu-empty">No unresolved duplicate candidates.</div>';
+
+    const decisions = [];
+    ["address", "name", "organisation"].forEach((kind) => {
+      normalizeMergeOverrideRows(mergeOverrides[kind]).forEach((row) => decisions.push({ ...row, kind, decision: "Merged" }));
+    });
+    normalizeRejectedRows(mergeOverrides.rejected).forEach((row) => decisions.push({ ...row, decision: "Rejected" }));
+    const decisionHtml = decisions.length ? decisions.map((decision) => {
+      const sourceLabel = resolutionDecisionLabel(decision, "source");
+      const targetLabel = resolutionDecisionLabel(decision, "target");
+      const undoIndex = actions.push({
+        type: decision.decision === "Merged" ? "undo_merge" : "undo_reject",
+        kind: decision.kind,
+        sourceKey: decision.sourceId,
+        targetKey: decision.targetId,
+        sourceLabel,
+        targetLabel,
+        reason: decision.reason,
+      }) - 1;
+      return `
+        <div class="resolution-decision">
+          <div class="resolution-pair">${escapeHtml(decision.decision)}: ${escapeHtml(sourceLabel)} / ${escapeHtml(targetLabel)}</div>
+          <div class="resolution-reason">${escapeHtml(decision.reason || decision.leaderLabel || decision.kind)}</div>
+          <div class="resolution-actions"><button data-resolution-index="${undoIndex}">Undo</button></div>
+        </div>`;
+    }).join("") : '<div class="context-menu-empty">No manual decisions yet.</div>';
+
+    const auditHtml = normalizeAuditRows(mergeOverrides.audit).slice(-12).reverse().map((row) => `
+      <div class="resolution-audit">${escapeHtml(row.at.replace("T", " ").replace("Z", ""))} · ${escapeHtml(row.action.replaceAll("_", " "))} · ${escapeHtml(row.sourceLabel || row.sourceId)} / ${escapeHtml(row.targetLabel || row.targetId)}</div>
+    `).join("");
+    resolutionPanelEl._actions = actions;
+    resolutionPanelEl.innerHTML = `
+      <div class="resolution-heading">Suspected duplicates <span>${candidates.length}</span></div>
+      ${candidateHtml}
+      <div class="resolution-heading">Decisions <span>${decisions.length}</span></div>
+      ${decisionHtml}
+      <div class="resolution-heading">Audit trail</div>
+      ${auditHtml || '<div class="context-menu-empty">No decision history.</div>'}
+    `;
   }
 
   function registryActionForNode(node) {
@@ -3040,8 +3254,17 @@
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const analysisSelected = viewerState.analysisNodeIds.includes(node.id);
+    const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      questionSelected
+        ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
+        : viewerState.questionNodeIds.length < 8
+          ? { label: "Add to question selection", type: "question_add", nodeId: node.id }
+          : null,
+      viewerState.questionNodeIds.length
+        ? { label: "Ask about selected subgraph", type: "question_open" }
+        : null,
       analysisSelected
         ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
         : viewerState.analysisNodeIds.length < 2
@@ -3146,15 +3369,15 @@
     canvasSearchAnchor = { x: event.clientX, y: event.clientY };
   }
 
-  function evidenceActionsForEdge(edge) {
+  function evidenceItemsForEdge(edge) {
     const evidenceItems = [];
     const seen = new Set();
     const pushEvidence = (evidence, sourceEdge = edge) => {
       if (!evidence || typeof evidence !== "object") return;
       const url = String(evidenceActionUrl(evidence) || evidence.document_url || "").trim();
       const page = String(evidence.page_hint || evidence.page_number || "").trim();
-      const key = `${url}||${page}`;
-      if (!url || seen.has(key)) return;
+      const key = `${url}||${page}||${String(evidence.title || "")}||${String(evidence.notes || "")}`;
+      if (seen.has(key)) return;
       seen.add(key);
       evidenceItems.push({ evidence, sourceEdge });
     };
@@ -3164,7 +3387,11 @@
       (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach((item) => pushEvidence(item, pathEdge));
       if (pathEdge?.evidence) pushEvidence(pathEdge.evidence, pathEdge);
     });
-    return evidenceItems
+    return evidenceItems;
+  }
+
+  function evidenceActionsForEdge(edge) {
+    return evidenceItemsForEdge(edge)
       .map(({ evidence, sourceEdge }) => {
         const url = evidenceActionUrl(evidence);
         if (!url) return null;
@@ -3177,6 +3404,73 @@
       .filter(Boolean);
   }
 
+  function edgeDateRows(edge) {
+    const pathEdges = Array.isArray(edge?.pathEdges) ? edge.pathEdges : [];
+    const valueFor = (field) => edge?.[field] || pathEdges.find((pathEdge) => pathEdge?.[field])?.[field] || "";
+    const fields = [
+      ["Filing date", valueFor("filing_date")],
+      ["Start date", valueFor("start_date")],
+      ["End date", valueFor("end_date")],
+      ["Statement date", valueFor("statement_date")],
+      ["Record date", valueFor("date")],
+    ];
+    return fields.filter(([, value]) => String(value || "").trim());
+  }
+
+  function renderEdgeEvidenceHtml(edge) {
+    const sourceNode = displayNodeForEdgeId(edge.source, edge?._sourceNode);
+    const targetNode = displayNodeForEdgeId(edge.target, edge?._targetNode);
+    const why = plainText(tooltipLinesForEdge(edge).join(" ")) || plainText(edge.tooltip) || "No relationship explanation supplied.";
+    const dates = edgeDateRows(edge);
+    const evidence = evidenceItemsForEdge(edge);
+    const pathEdges = Array.isArray(edge?.pathEdges) ? edge.pathEdges : [];
+    const evidenceProvider = (() => {
+      const url = String(evidenceActionUrl(evidence[0]?.evidence) || "").toLowerCase();
+      if (url.includes("company-information.service.gov.uk")) return "Companies House";
+      if (url.includes("charitycommission.gov.uk")) return "Charity Commission";
+      try {
+        return url ? new URL(url).hostname : "";
+      } catch (_error) {
+        return "";
+      }
+    })();
+    const sourceProvider = String(edge?.source_provider || edge?.provider || pathEdges.find((pathEdge) => pathEdge?.source_provider)?.source_provider || evidenceProvider || "Not supplied");
+    const confidence = String(edge?.confidence || pathEdges.find((pathEdge) => pathEdge?.confidence)?.confidence || "Not supplied");
+    return `
+      <div class="analysis-selection">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>
+      <div class="analysis-section">
+        <div class="analysis-section-title">Why these nodes are connected</div>
+        <div class="analysis-text">${escapeHtml(why)}</div>
+      </div>
+      <div class="analysis-claim-meta">Relationship: ${escapeHtml(edgeSubtitle(edge) || edge.kind || "link")}<br>Provider: ${escapeHtml(sourceProvider)}<br>Confidence: ${escapeHtml(confidence)}${dates.map(([label, value]) => `<br>${escapeHtml(label)}: ${escapeHtml(value)}`).join("")}</div>
+      <div class="analysis-section">
+        <div class="analysis-section-title">Source records</div>
+        ${evidence.length ? evidence.map(({ evidence: item }, index) => {
+          const url = evidenceActionUrl(item);
+          const details = [item.filing_date || item.date, item.filing_description, item.page_hint ? `Page: ${item.page_hint}` : "", item.page_number ? `Page ${item.page_number}` : "", item.notes]
+            .map((value) => String(value || "").trim()).filter(Boolean);
+          return `
+            <div class="analysis-claim">
+              <div class="analysis-claim-header">
+                <div class="analysis-claim-index">${index + 1}</div>
+                <div class="analysis-claim-text">${escapeHtml(evidenceDisplayTitle(item, "Registry record"))}</div>
+              </div>
+              ${details.length ? `<div class="analysis-claim-note">${escapeHtml(details.join(" · "))}</div>` : ""}
+              <div class="analysis-claim-evidence">${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Open exact source</a>` : '<span class="dim">No source URL supplied.</span>'}</div>
+            </div>`;
+        }).join("") : '<div class="context-menu-empty">No source record is attached to this relationship.</div>'}
+      </div>
+    `;
+  }
+
+  function openEdgeEvidenceView(edge) {
+    openDetailsModal({
+      title: "Relationship evidence",
+      status: `${edgeSubtitle(edge) || edge.kind || "Link"} · ${edge.confidence || "confidence unavailable"}`,
+      bodyHtml: renderEdgeEvidenceHtml(edge),
+    });
+  }
+
   function openEdgeContextMenu(edge, event) {
     event.preventDefault();
     event.stopPropagation();
@@ -3184,6 +3478,7 @@
     const sourceNode = displayNodeForEdgeId(edge.source, edge?._sourceNode);
     const targetNode = displayNodeForEdgeId(edge.target, edge?._targetNode);
     const actions = [
+      { type: "edge_details", label: "View relationship evidence", edge },
       ...(edge?.kind === "hidden_connection"
         ? [{ type: "hidden_connection_expand", label: "Expand indirect path", edge }]
         : []),
@@ -3193,9 +3488,7 @@
     contextMenuEl.innerHTML = [
       `<div class="context-menu-title">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>`,
       `<div class="context-menu-subtitle">${escapeHtml(edgeSubtitle(edge) || "link")}</div>`,
-      actions.length
-        ? actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join("")
-        : '<div class="context-menu-empty">No evidence is available for this link yet.</div>',
+      actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join(""),
     ].join("");
     contextMenuEl.style.display = "block";
     contextMenuEl.style.left = `${Math.max(10, Math.min(event.clientX, window.innerWidth - 260))}px`;
@@ -3205,6 +3498,133 @@
   function closeContextMenu() {
     contextMenuEl.style.display = "none";
     contextMenuEl._actions = [];
+  }
+
+  function renderQuestionSelection() {
+    if (!questionSelectionEl) return;
+    viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id, index, ids) => ids.indexOf(id) === index && nodeById.has(id)).slice(0, 8);
+    const labels = viewerState.questionNodeIds.map((id) => nodeById.get(id)?.label || id);
+    questionSelectionEl.textContent = labels.length
+      ? `Selected: ${labels.join(" · ")}`
+      : "Select nodes from their context menus.";
+    questionSubmitEl.disabled = !labels.length;
+  }
+
+  function shortestVisiblePath(sourceId, targetId) {
+    const adjacency = new Map();
+    visibleEdges.forEach((edge) => {
+      if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+      if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+      adjacency.get(edge.source).push({ next: edge.target, edge });
+      adjacency.get(edge.target).push({ next: edge.source, edge });
+    });
+    const queue = [sourceId];
+    const visited = new Set(queue);
+    const previous = new Map();
+    while (queue.length) {
+      const current = queue.shift();
+      if (current === targetId) break;
+      for (const step of adjacency.get(current) || []) {
+        if (visited.has(step.next)) continue;
+        visited.add(step.next);
+        previous.set(step.next, { from: current, edge: step.edge });
+        queue.push(step.next);
+      }
+    }
+    if (!visited.has(targetId)) return [];
+    const edges = [];
+    let cursor = targetId;
+    while (cursor !== sourceId) {
+      const step = previous.get(cursor);
+      if (!step) return [];
+      edges.unshift(step.edge);
+      cursor = step.from;
+    }
+    return edges;
+  }
+
+  function buildQuestionSubgraph() {
+    const selected = viewerState.questionNodeIds.filter((id) => nodeById.has(id));
+    const collectedEdges = [];
+    if (selected.length === 1) {
+      visibleEdges.filter((edge) => edge.source === selected[0] || edge.target === selected[0]).slice(0, 40).forEach((edge) => collectedEdges.push(edge));
+    } else {
+      for (let index = 1; index < selected.length; index += 1) {
+        shortestVisiblePath(selected[0], selected[index]).forEach((edge) => collectedEdges.push(edge));
+      }
+    }
+    const uniqueEdges = [...new Map(collectedEdges.map((edge, index) => {
+      const key = `${edge.source}||${edge.target}||${edge.kind || ""}||${edge.role_type || ""}`;
+      return [key, { ...edge, id: String(edge.id || `visible-edge-${index + 1}`) }];
+    })).values()].slice(0, 100);
+    const nodeIds = new Set(selected);
+    uniqueEdges.forEach((edge) => {
+      nodeIds.add(edge.source);
+      nodeIds.add(edge.target);
+    });
+    const nodes = [...nodeIds].map((id) => nodeById.get(id)).filter(Boolean).slice(0, 60).map((node) => ({
+      id: node.id,
+      label: node.label || node.id,
+      kind: node.kind,
+    }));
+    const allowedIds = new Set(nodes.map((node) => node.id));
+    const edges = uniqueEdges.filter((edge) => allowedIds.has(edge.source) && allowedIds.has(edge.target)).map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      source_label: nodeById.get(edge.source)?.label || edge.source,
+      target: edge.target,
+      target_label: nodeById.get(edge.target)?.label || edge.target,
+      kind: edge.kind,
+      phrase: edge.phrase || edge.role_type || "is linked to",
+      confidence: edge.confidence || "",
+      evidence: edge.evidence,
+      evidence_items: edge.evidence_items,
+    }));
+    return { nodes, edges };
+  }
+
+  function renderQuestionAnswer(payload) {
+    const edges = new Map((Array.isArray(payload?.context?.edges) ? payload.context.edges : []).map((edge) => [String(edge.id), edge]));
+    const evidence = new Map((Array.isArray(payload?.context?.evidence) ? payload.context.evidence : []).map((item) => [String(item.id), item]));
+    const claims = Array.isArray(payload?.claims) ? payload.claims : [];
+    questionResultEl.innerHTML = `
+      <div class="analysis-text">${escapeHtml(payload?.answer || "No answer returned.").replaceAll("\n", "<br>")}</div>
+      ${claims.map((claim) => `
+        <div class="analysis-claim">
+          <div class="analysis-claim-text">${escapeHtml(claim.text || "")}</div>
+          ${(Array.isArray(claim.edge_ids) ? claim.edge_ids : []).map((id) => edges.get(String(id))).filter(Boolean).map((edge) => `
+            <div class="question-citation">
+              ${escapeHtml(edge.source_label || edge.source_id)} ${escapeHtml(edge.phrase || "is linked to")} ${escapeHtml(edge.target_label || edge.target_id)} · ${escapeHtml(edge.confidence || "confidence unavailable")}
+              ${(Array.isArray(edge.evidence_ids) ? edge.evidence_ids : []).map((id) => evidence.get(String(id))).filter(Boolean).map((item) => {
+                const url = evidenceActionUrl(item);
+                return url ? ` · <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>` : "";
+              }).join("")}
+            </div>
+          `).join("")}
+        </div>
+      `).join("")}
+    `;
+  }
+
+  async function askSelectedSubgraph() {
+    const question = String(questionInputEl.value || "").trim();
+    if (!question) throw new Error("Enter a question first.");
+    const subgraph = buildQuestionSubgraph();
+    if (!subgraph.edges.length) throw new Error("The selected nodes have no visible connecting path.");
+    questionSubmitEl.disabled = true;
+    questionResultEl.innerHTML = '<div class="analysis-empty">Reading the selected visible relationships...</div>';
+    try {
+      const response = await fetch(graphFunctionUrl(ANALYZE_CONNECTION_URL), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ graph: currentGraphKey, question, subgraph }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Subgraph question failed (${response.status})`);
+      renderQuestionAnswer(payload);
+    } finally {
+      questionSubmitEl.disabled = false;
+    }
   }
 
   function renderAnalysisHtml(payload) {
@@ -3436,6 +3856,8 @@
     }, { fit: !options?.preserveViewport });
     renderExtraTreeSummary();
     renderScorePanel();
+    if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
+    renderQuestionSelection();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
       openMapView().catch(() => {});
@@ -3533,10 +3955,45 @@
       viewerState.rankedCategory = nextCategory;
       renderScorePanel();
     });
+    resolutionPanelEl?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-resolution-index]");
+      if (!button) return;
+      const action = (resolutionPanelEl._actions || [])[Number(button.dataset.resolutionIndex || -1)];
+      if (!action) return;
+      button.disabled = true;
+      try {
+        if (action.type === "merge") {
+          await persistMergeOverride({ ...action, operation: "add" });
+        } else if (action.type === "reject") {
+          await persistResolutionDecision({ ...action, operation: "add" });
+        } else if (action.type === "undo_merge") {
+          await persistMergeOverride({ ...action, operation: "remove" });
+        } else if (action.type === "undo_reject") {
+          await persistResolutionDecision({ ...action, operation: "remove" });
+        }
+      } catch (error) {
+        console.error(error);
+        window.alert("Resolution decision could not be saved.");
+      } finally {
+        button.disabled = false;
+      }
+    });
+    questionSubmitEl?.addEventListener("click", () => {
+      askSelectedSubgraph().catch((error) => {
+        questionResultEl.innerHTML = `<div class="analysis-error">${escapeHtml(error.message || "Question failed.")}</div>`;
+      });
+    });
+    questionClearEl?.addEventListener("click", () => {
+      viewerState.questionNodeIds = [];
+      questionInputEl.value = "";
+      questionResultEl.innerHTML = "";
+      renderQuestionSelection();
+    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
         setSidebarTab(tabName);
+        if (tabName === "resolve") renderResolutionPanel();
         if (tabName === "map") {
           openMapView().catch(() => {});
         }
@@ -3555,9 +4012,21 @@
       } else
       if (action.type === "open_url" && action.url) {
         window.open(action.url, "_blank", "noopener,noreferrer");
+      } else if (action.type === "edge_details") {
+        openEdgeEvidenceView(action.edge);
       } else if (action.type === "node_claims") {
         const node = nodeById.get(action.nodeId);
         if (node) openNodeAttributionView(node);
+      } else if (action.type === "question_add") {
+        viewerState.questionNodeIds = [...viewerState.questionNodeIds, action.nodeId].slice(0, 8);
+        renderQuestionSelection();
+      } else if (action.type === "question_remove") {
+        viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id) => id !== action.nodeId);
+        renderQuestionSelection();
+      } else if (action.type === "question_open") {
+        setSidebarTab("ask");
+        toggleSidebar(true);
+        questionInputEl.focus();
       } else if (action.type === "low_confidence_expand" || action.type === "low_confidence_collapse") {
         viewerState.searchQuery = "";
         searchInput.value = "";
@@ -3575,7 +4044,7 @@
         const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}" and display "${leaderLabel}"? This will persist across graph rebuilds.`);
         if (!confirmed) return;
         try {
-          await persistMergeOverride({ ...action, operation: "add", leaderKey });
+          await persistMergeOverride({ ...action, operation: "add", leaderKey, leaderLabel });
         } catch (error) {
           console.error(error);
           window.alert("Persisted merge failed.");

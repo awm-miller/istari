@@ -33,8 +33,15 @@ class GraphRenderingTests(unittest.TestCase):
         html = render_html({"nodes": [], "edges": []})
 
         self.assertIn("function drawHoveredNode()", html)
-        self.assertIn("const hitChanged = nodeId !== hoveredNodeId || edgeKey !== hoveredEdgeKey", html)
-        self.assertNotIn('setHoveredNode(nextNodeId) {\n      const previousNode = sceneNodes.find', html)
+        self.assertIn("const hitChanged = nodeKey !== hoveredNodeKey || edgeKey !== hoveredEdgeKey", html)
+        self.assertIn("edge._key = edgeSceneKey(edge, index)", html)
+        self.assertNotIn('setHoveredNode(nextNodeKey) {\n      const previousNode = sceneNodes.find', html)
+
+    def test_added_tree_duplicates_receive_distinct_render_keys(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('_sceneKey: `${sceneKey}:node:${node.id}`', html)
+        self.assertIn("labelElementBySceneKey", html)
 
     def test_render_payload_removes_only_unused_and_duplicate_fields(self) -> None:
         evidence = {"document_url": "https://example.test/evidence", "notes": "Filed record"}

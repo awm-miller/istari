@@ -1094,6 +1094,96 @@ body.builder-mode #compact-legend {{
 .tools-actions .toolbar-btn {{
   min-width: 150px;
 }}
+.resolution-panel,
+.question-panel {{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}}
+.resolution-heading {{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  color: var(--text-bright);
+  font-size: 12px;
+  font-weight: 700;
+}}
+.resolution-heading span {{
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 500;
+}}
+.resolution-card,
+.resolution-decision {{
+  border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 10px;
+  padding: 11px;
+  background: rgba(255,255,255,0.025);
+}}
+.resolution-pair {{
+  color: var(--text-bright);
+  font-size: 12px;
+  line-height: 1.4;
+}}
+.resolution-reason,
+.resolution-audit {{
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.45;
+}}
+.resolution-actions,
+.question-actions {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}}
+.resolution-actions button,
+.question-actions button {{
+  border: 1px solid rgba(88,166,255,0.24);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: rgba(88,166,255,0.1);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 10px;
+}}
+.resolution-actions button[data-resolution-action="reject"] {{
+  border-color: rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+}}
+.question-selection {{
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}}
+#question-input {{
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px;
+  background: rgba(8,12,18,0.6);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 12px;
+}}
+.question-result {{
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}}
+.question-citation {{
+  border-left: 2px solid rgba(88,166,255,0.45);
+  padding: 7px 9px;
+  background: rgba(88,166,255,0.06);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.45;
+}}
 .viewer-sidebar {{
   position: fixed;
   top: 74px;

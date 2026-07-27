@@ -45,6 +45,8 @@
     <button class="sidebar-tab active" data-tab="legend" type="button">Filter</button>
     <button class="sidebar-tab" data-tab="map" type="button">Map</button>
     <button class="sidebar-tab" data-tab="ranked" type="button">Ranked</button>
+    <button class="sidebar-tab" data-tab="resolve" type="button">Resolve</button>
+    <button class="sidebar-tab" data-tab="ask" type="button">Ask</button>
   </div>
   <div class="sidebar-body">
     <div class="sidebar-pane active" data-pane="legend">
@@ -71,6 +73,20 @@
     </div>
     <div class="sidebar-pane" data-pane="ranked">
       <div class="score-panel" id="score-panel"></div>
+    </div>
+    <div class="sidebar-pane" data-pane="resolve">
+      <div class="resolution-panel" id="resolution-panel"></div>
+    </div>
+    <div class="sidebar-pane" data-pane="ask">
+      <div class="question-panel" id="question-panel">
+        <div class="question-selection" id="question-selection">Select nodes from their context menus.</div>
+        <textarea id="question-input" rows="4" placeholder="How are these organisations connected?"></textarea>
+        <div class="question-actions">
+          <button id="question-submit" type="button">Ask selected subgraph</button>
+          <button id="question-clear" type="button">Clear</button>
+        </div>
+        <div class="question-result" id="question-result"></div>
+      </div>
     </div>
   </div>
 </aside>

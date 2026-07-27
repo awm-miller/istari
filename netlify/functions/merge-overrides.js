@@ -16,14 +16,25 @@ function storeKeyForGraph(graphKey) {
   return normalizedGraphKey === "mb" ? DEFAULT_STORE_KEY : `${DEFAULT_STORE_KEY}:${normalizedGraphKey}`;
 }
 
-function normalizeRow(sourceId, targetId, leaderId = "") {
+function optionalText(value) {
+  return String(value || "").trim();
+}
+
+function normalizeRow(sourceId, targetId, leaderId = "", metadata = {}) {
   const source = String(sourceId || "");
   const target = String(targetId || "");
   const leader = String(leaderId || "");
   if (!source || !target || source === target) return null;
-  return leader
-    ? { sourceId: source, targetId: target, leaderId: leader }
-    : { sourceId: source, targetId: target };
+  return {
+    sourceId: source,
+    targetId: target,
+    ...(leader ? { leaderId: leader } : {}),
+    ...(optionalText(metadata.sourceLabel) ? { sourceLabel: optionalText(metadata.sourceLabel) } : {}),
+    ...(optionalText(metadata.targetLabel) ? { targetLabel: optionalText(metadata.targetLabel) } : {}),
+    ...(optionalText(metadata.leaderLabel) ? { leaderLabel: optionalText(metadata.leaderLabel) } : {}),
+    ...(optionalText(metadata.reason) ? { reason: optionalText(metadata.reason) } : {}),
+    ...(optionalText(metadata.decidedAt) ? { decidedAt: optionalText(metadata.decidedAt) } : {}),
+  };
 }
 
 function normalizeHiddenRow(nodeId, label = "") {
@@ -33,8 +44,8 @@ function normalizeHiddenRow(nodeId, label = "") {
   return text ? { nodeId: node, label: text } : { nodeId: node };
 }
 
-function upsertUnique(rows, sourceId, targetId, leaderId = "") {
-  const row = normalizeRow(sourceId, targetId, leaderId);
+function upsertUnique(rows, sourceId, targetId, leaderId = "", metadata = {}) {
+  const row = normalizeRow(sourceId, targetId, leaderId, metadata);
   if (!row) return;
   const existingIndex = rows.findIndex((entry) => entry.sourceId === row.sourceId && entry.targetId === row.targetId);
   if (existingIndex >= 0) {
@@ -66,29 +77,62 @@ function removeHiddenRow(rows, nodeId) {
   return rows.filter((row) => row.nodeId !== target);
 }
 
+function normalizeRejectedRow(row) {
+  const normalized = normalizeRow(row?.sourceId, row?.targetId, "", row);
+  if (!normalized) return null;
+  return { ...normalized, kind: optionalText(row?.kind) || "name" };
+}
+
+function normalizeAuditRow(row) {
+  const action = optionalText(row?.action);
+  const at = optionalText(row?.at);
+  if (!action || !at) return null;
+  return {
+    id: optionalText(row?.id) || `${at}:${action}`,
+    action,
+    at,
+    kind: optionalText(row?.kind),
+    sourceId: optionalText(row?.sourceId),
+    targetId: optionalText(row?.targetId),
+    sourceLabel: optionalText(row?.sourceLabel),
+    targetLabel: optionalText(row?.targetLabel),
+    reason: optionalText(row?.reason),
+  };
+}
+
+function appendAudit(current, entry) {
+  current.audit = [...current.audit, normalizeAuditRow(entry)].filter(Boolean).slice(-200);
+}
+
 function normalizeOverrides(overrides) {
-  const normalized = { address: [], name: [], organisation: [], hidden: [] };
+  const normalized = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: [] };
   if (!overrides || typeof overrides !== "object") {
     return normalized;
   }
 
   for (const row of Array.isArray(overrides.address) ? overrides.address : []) {
-    upsertUnique(normalized.address, row?.sourceId, row?.targetId, row?.leaderId);
+    upsertUnique(normalized.address, row?.sourceId, row?.targetId, row?.leaderId, row);
   }
 
   for (const kind of ["name", "person", "identity"]) {
     for (const row of Array.isArray(overrides[kind]) ? overrides[kind] : []) {
-      upsertUnique(normalized.name, row?.sourceId, row?.targetId, row?.leaderId);
+      upsertUnique(normalized.name, row?.sourceId, row?.targetId, row?.leaderId, row);
     }
   }
 
   for (const row of Array.isArray(overrides.organisation) ? overrides.organisation : []) {
-    upsertUnique(normalized.organisation, row?.sourceId, row?.targetId, row?.leaderId);
+    upsertUnique(normalized.organisation, row?.sourceId, row?.targetId, row?.leaderId, row);
   }
 
   for (const row of Array.isArray(overrides.hidden) ? overrides.hidden : []) {
     upsertHiddenUnique(normalized.hidden, row?.nodeId, row?.label);
   }
+  for (const row of Array.isArray(overrides.rejected) ? overrides.rejected : []) {
+    const normalizedRow = normalizeRejectedRow(row);
+    if (normalizedRow) upsertUnique(normalized.rejected, normalizedRow.sourceId, normalizedRow.targetId, "", normalizedRow);
+  }
+  normalized.rejected = normalized.rejected.map((row) => ({ ...row, kind: optionalText(overrides.rejected?.find((candidate) => candidate.sourceId === row.sourceId && candidate.targetId === row.targetId)?.kind) || "name" }));
+  normalized.audit = (Array.isArray(overrides.audit) ? overrides.audit : []).map(normalizeAuditRow).filter(Boolean).slice(-200);
   return normalized;
 }
 
@@ -167,7 +211,16 @@ exports.handler = async function handler(event) {
   const leaderId = String(payload.leaderId || "");
   const nodeId = String(payload.nodeId || payload.sourceId || "");
   const label = String(payload.label || "");
-  if (!["address", "name", "organisation", "hidden"].includes(kind)) {
+  const resolutionKind = String(payload.resolutionKind || payload.mergeKind || "name");
+  const decidedAt = new Date().toISOString();
+  const metadata = {
+    sourceLabel: payload.sourceLabel,
+    targetLabel: payload.targetLabel,
+    leaderLabel: payload.leaderLabel,
+    reason: payload.reason,
+    decidedAt,
+  };
+  if (!["address", "name", "organisation", "hidden", "rejected"].includes(kind)) {
     return json(400, { error: "Unsupported override kind." });
   }
   if (!["add", "remove"].includes(operation)) {
@@ -185,6 +238,29 @@ exports.handler = async function handler(event) {
     await store.setJSON(storeKey, current);
     return json(200, { graph: graphKey, overrides: current });
   }
+  if (kind === "rejected") {
+    if (!sourceId || !targetId || sourceId === targetId || !["address", "name", "organisation"].includes(resolutionKind)) {
+      return json(400, { error: "Invalid rejected pair." });
+    }
+    if (operation === "remove") {
+      current.rejected = removeRow(current.rejected, sourceId, targetId);
+    } else {
+      upsertUnique(current.rejected, sourceId, targetId, "", metadata);
+      const row = current.rejected.find((entry) => entry.sourceId === sourceId && entry.targetId === targetId);
+      if (row) row.kind = resolutionKind;
+    }
+    appendAudit(current, {
+      id: `${Date.now()}:${operation}:rejected`,
+      action: operation === "add" ? "reject" : "undo_reject",
+      at: decidedAt,
+      kind: resolutionKind,
+      sourceId,
+      targetId,
+      ...metadata,
+    });
+    await store.setJSON(storeKey, current);
+    return json(200, { graph: graphKey, overrides: current });
+  }
   if (!sourceId || !targetId || sourceId === targetId) {
     return json(400, { error: "Invalid merge pair." });
   }
@@ -192,11 +268,20 @@ exports.handler = async function handler(event) {
   if (operation === "remove") {
     current[kind] = removeRow(current[kind], sourceId, targetId);
   } else {
-    upsertUnique(current[kind], sourceId, targetId, leaderId);
+    upsertUnique(current[kind], sourceId, targetId, leaderId, metadata);
   }
+  appendAudit(current, {
+    id: `${Date.now()}:${operation}:${kind}`,
+    action: operation === "add" ? "merge" : "undo_merge",
+    at: decidedAt,
+    kind,
+    sourceId,
+    targetId,
+    ...metadata,
+  });
   await store.setJSON(storeKey, current);
 
   return json(200, { graph: graphKey, overrides: current });
 };
 
-exports._private = { normalizeGraphKey, storeKeyForGraph };
+exports._private = { normalizeGraphKey, storeKeyForGraph, normalizeOverrides };
