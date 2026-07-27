@@ -2,6 +2,7 @@
   "scripts": {
     "audit:frontend": "node scripts/audit_frontend.mjs",
     "audit:browser": "node scripts/audit_frontend_browser.mjs",
+    "audit:live": "node scripts/audit_live_frontend.mjs",
     "audit": "npm run audit:frontend && npm run audit:browser"
   },
   "dependencies": {

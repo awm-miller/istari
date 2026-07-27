@@ -21,6 +21,14 @@ function targetPath(event) {
   return target.startsWith("/") ? target : `/${target}`;
 }
 
+function sanitizeUpstreamBody(body, contentType) {
+  if (!String(contentType).toLowerCase().includes("text/html")) return body;
+  return body.replace(
+    /<script>\(function\(\)\{function c\(\)\{[\s\S]*?\/cdn-cgi\/challenge-platform\/scripts\/jsd\/main\.js[\s\S]*?<\/script>/g,
+    "",
+  );
+}
+
 exports.handler = async function handler(event) {
   const origin = String(process.env.ISTARI_SITES_ORIGIN || "").replace(/\/$/, "");
   const token = String(process.env.ISTARI_SITES_PROXY_TOKEN || "");
@@ -50,14 +58,15 @@ exports.handler = async function handler(event) {
       body: ["GET", "HEAD"].includes(event.httpMethod) ? undefined : body,
     });
     const upstreamBody = await upstream.text();
+    const upstreamContentType = upstream.headers.get("content-type") || "application/octet-stream";
     return response(
       upstream.status,
-      upstreamBody,
-      upstream.headers.get("content-type") || "application/octet-stream",
+      sanitizeUpstreamBody(upstreamBody, upstreamContentType),
+      upstreamContentType,
     );
   } catch (error) {
     return response(502, { ok: false, error: error.message || "Istari discovery service is unavailable." });
   }
 };
 
-exports._private = { targetPath, ALLOWED_TARGET };
+exports._private = { targetPath, sanitizeUpstreamBody, ALLOWED_TARGET };

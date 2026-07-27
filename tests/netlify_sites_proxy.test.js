@@ -17,6 +17,12 @@ test("proxy recovers the original path when Netlify drops the rewrite query", ()
   }), "/api/generated-graphs");
 });
 
+test("proxy strips only the injected Cloudflare challenge from generated HTML", () => {
+  const html = '<main>graph</main><script>(function(){function c(){var a="/cdn-cgi/challenge-platform/scripts/jsd/main.js";}})();</script></body>';
+  assert.equal(_private.sanitizeUpstreamBody(html, "text/html; charset=utf-8"), "<main>graph</main></body>");
+  assert.equal(_private.sanitizeUpstreamBody(html, "application/json"), html);
+});
+
 test("proxy adds the server-side token without exposing it in the response", async () => {
   const previousOrigin = process.env.ISTARI_SITES_ORIGIN;
   const previousToken = process.env.ISTARI_SITES_PROXY_TOKEN;
