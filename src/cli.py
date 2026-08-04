@@ -9,6 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.cases.openrouter import OpenRouterCaseParser
+from src.cases.runner import CaseRunner
+from src.cases.spec import load_case_spec, write_case_spec
 from src.charity_commission.client import CharityCommissionClient
 from src.companies_house.client import CompaniesHouseClient
 from src.config import load_settings
@@ -45,7 +48,7 @@ def _json_safe(value):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Registry-only MVP pipeline.")
+    parser = argparse.ArgumentParser(description="Case-oriented graph discovery and registry pipeline.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init-db", help="Create the SQLite schema.")
@@ -189,6 +192,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also test a live Gemini API call (incurs tiny charge).",
     )
+
+    plan_case_parser = subparsers.add_parser(
+        "plan-case",
+        help="Translate a natural-language discovery request into a validated case YAML file.",
+    )
+    plan_case_parser.add_argument("query", nargs="+", help="Natural-language discovery request.")
+    plan_case_parser.add_argument("--out", default="", help="Output YAML or JSON path.")
+    plan_case_parser.add_argument("--case-id", default="", help="Override the generated case id.")
+    plan_case_parser.add_argument("--title", default="", help="Override the generated title.")
+    plan_case_parser.add_argument("--model", default="", help="Override OPENROUTER_CASE_MODEL.")
+    plan_case_parser.add_argument("--workspace", default="data/cases", help="Case workspace root.")
+
+    run_case_parser = subparsers.add_parser(
+        "run-case",
+        help="Run or resume a validated Istari case specification.",
+    )
+    run_case_parser.add_argument("spec", help="Case YAML or JSON path.")
+    run_case_parser.add_argument("--workspace", default="data/cases", help="Case workspace root.")
+    run_case_parser.add_argument("--force", action="store_true", help="Create a new graph version even if complete.")
+
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Plan and run a case directly from a natural-language request.",
+    )
+    discover_parser.add_argument("query", nargs="+", help="Natural-language discovery request.")
+    discover_parser.add_argument("--case-id", default="", help="Override the generated case id.")
+    discover_parser.add_argument("--title", default="", help="Override the generated title.")
+    discover_parser.add_argument("--model", default="", help="Override OPENROUTER_CASE_MODEL.")
+    discover_parser.add_argument("--workspace", default="data/cases", help="Case workspace root.")
+    discover_parser.add_argument("--plan-only", action="store_true", help="Write the case YAML without running it.")
 
     web_parser = subparsers.add_parser("web-ui", help="Run the MVP Flask UI.")
     web_parser.add_argument("--host", default="127.0.0.1")
@@ -357,6 +390,41 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
+    if args.command == "plan-case":
+        query = " ".join(args.query)
+        spec = OpenRouterCaseParser.from_settings(settings, model=str(args.model or "")).parse(
+            query,
+            case_id=str(args.case_id or ""),
+            title=str(args.title or ""),
+        )
+        output_path = Path(args.out) if args.out else Path(args.workspace) / spec.id / "case.yaml"
+        write_case_spec(spec, output_path)
+        print(json.dumps({"ok": True, "case": spec.to_dict(), "path": str(output_path)}, indent=2))
+        return
+
+    if args.command == "run-case":
+        spec = load_case_spec(Path(args.spec))
+        result = CaseRunner(workspace=Path(args.workspace), settings=settings).run(spec, force=bool(args.force))
+        print(json.dumps(_json_safe(result), indent=2, ensure_ascii=False, default=str))
+        return
+
+    if args.command == "discover":
+        query = " ".join(args.query)
+        spec = OpenRouterCaseParser.from_settings(settings, model=str(args.model or "")).parse(
+            query,
+            case_id=str(args.case_id or ""),
+            title=str(args.title or ""),
+        )
+        workspace = Path(args.workspace)
+        spec_path = workspace / spec.id / "case.yaml"
+        write_case_spec(spec, spec_path)
+        if args.plan_only:
+            print(json.dumps({"ok": True, "case": spec.to_dict(), "path": str(spec_path)}, indent=2))
+            return
+        result = CaseRunner(workspace=workspace, settings=settings).run(spec)
+        print(json.dumps(_json_safe(result), indent=2, ensure_ascii=False, default=str))
+        return
+
     if args.command in {"init-db", "step1-seed", "step2-orgs", "add-org", "pdf-enrich", "step3-people", "run-name", "run-orgs", "run-seeds", "resume-run"}:
         _startup_stop_other_pipeline_processes()
 

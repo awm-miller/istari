@@ -17,7 +17,12 @@ class CharitySearchClient(Protocol):
 
 
 class CompaniesSearchClient(Protocol):
-    def search_companies(self, query: str, items_per_page: int = 20) -> dict[str, Any]:
+    def search_companies(
+        self,
+        query: str,
+        items_per_page: int = 20,
+        start_index: int = 0,
+    ) -> dict[str, Any]:
         ...
 
 

@@ -1,10 +1,15 @@
 (function () {
-  const rawMainNodes = {nodes_json};
-  const rawMainEdges = {edges_json}.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
+  const graphDataElement = document.getElementById("graph-data");
+  const graphData = JSON.parse(graphDataElement.textContent);
+  graphDataElement.remove();
+  const rawMainNodes = Array.isArray(graphData.nodes) ? graphData.nodes : [];
+  const rawMainEdges = (Array.isArray(graphData.edges) ? graphData.edges : [])
+    .filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
   const LOW_CONFIDENCE_DATA_URL = "graph-data-open-letters.json";
   const LOW_CONFIDENCE_NODES_DATA_URL = "graph-data-low-confidence-nodes.json";
   const GRAPH_OPTIONS = [
     { key: "mb", label: "MB", path: "/mb/" },
+    { key: "94-park-ave", label: "94 park ave", path: "/94-park-ave/" },
     { key: "iums", label: "IUMS", path: "/iums/" },
     { key: "iran", label: "Iran", path: "/iran/" },
     { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
@@ -13,6 +18,8 @@
   const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
+  const LEAFLET_CSS_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+  const LEAFLET_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
 
   const COLORS = {
     amber: 0xfacc15,
@@ -37,20 +44,29 @@
   const modeBuilderButton = document.getElementById("mode-builder");
   const builderPanelEl = document.getElementById("builder-panel");
   const builderFormEl = document.getElementById("builder-form");
-  const builderModeInput = document.getElementById("builder-mode");
-  const builderModeFieldEls = [...document.querySelectorAll("[data-builder-field]")];
-  const builderSeedNamesInput = document.getElementById("builder-seed-names");
-  const builderRootsInput = document.getElementById("builder-roots");
-  const builderTargetNamesInput = document.getElementById("builder-target-names");
-  const builderGraphIdInput = document.getElementById("builder-graph-id");
-  const builderGraphTitleInput = document.getElementById("builder-graph-title");
-  const builderSaveModeInput = document.getElementById("builder-save-mode");
-  const builderGraphVersionInput = document.getElementById("builder-graph-version");
-  const builderNotifyEmailInput = document.getElementById("builder-notify-email");
-  const builderNegativeNewsInput = document.getElementById("builder-negative-news");
-  const builderLimitInput = document.getElementById("builder-limit");
-  const builderRefreshGraphsButton = document.getElementById("builder-refresh-graphs");
-  const builderGraphListEl = document.getElementById("builder-graph-list");
+  const caseQueryInput = document.getElementById("case-query");
+  const casePlanSubmitButton = document.getElementById("case-plan-submit");
+  const casePlanEl = document.getElementById("case-plan");
+  const casePlanTitleEl = document.getElementById("case-plan-title");
+  const casePlanSubjectsEl = document.getElementById("case-plan-subjects");
+  const casePlanSegmentsEl = document.getElementById("case-plan-segments");
+  const caseAddSegmentButton = document.getElementById("case-add-segment");
+  const casePlanInputsEl = document.getElementById("case-plan-inputs");
+  const caseAddInputButton = document.getElementById("case-add-input");
+  const caseRecipeInput = document.getElementById("case-recipe");
+  const caseRoundsInput = document.getElementById("case-rounds");
+  const caseEntitiesInput = document.getElementById("case-entities");
+  const caseMinimumOccupancyInput = document.getElementById("case-minimum-occupancy");
+  const caseMaxAddressesInput = document.getElementById("case-max-addresses");
+  const caseAreaControlEls = [...document.querySelectorAll(".case-area-control")];
+  const caseAreaNoteEl = document.getElementById("case-area-note");
+  const casePeopleInput = document.getElementById("case-people");
+  const caseSanctionsInput = document.getElementById("case-sanctions");
+  const caseDocumentsInput = document.getElementById("case-documents");
+  const caseNegativeNewsInput = document.getElementById("case-negative-news");
+  const caseRunButton = document.getElementById("case-run");
+  const caseResetButton = document.getElementById("case-reset");
+  const caseOpenResultEl = document.getElementById("case-open-result");
   const builderStatusEl = document.getElementById("builder-status");
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
@@ -68,6 +84,12 @@
   const sidebarTabEls = [...document.querySelectorAll(".sidebar-tab")];
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
+  const resolutionPanelEl = document.getElementById("resolution-panel");
+  const questionSelectionEl = document.getElementById("question-selection");
+  const questionInputEl = document.getElementById("question-input");
+  const questionSubmitEl = document.getElementById("question-submit");
+  const questionClearEl = document.getElementById("question-clear");
+  const questionResultEl = document.getElementById("question-result");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
@@ -77,7 +99,8 @@
   const detailsModalBodyEl = document.getElementById("details-modal-body");
   const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
-  const currentGraphKey = detectGraphKey(window.location.pathname);
+  const currentGeneratedGraphId = detectGeneratedGraphId(window.location.pathname);
+  const currentGraphKey = currentGeneratedGraphId || detectGraphKey(window.location.pathname);
   const BUILDER_API_BASE = String(window.ISTARI_API_BASE || "").replace(/\/$/, "");
 
   let showIdentitiesInput;
@@ -123,10 +146,13 @@
   let addressCoordinateByNodeId = new Map();
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
-  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
+  let leafletLoadingPromise = null;
+  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: [] };
   let mergeOverridesLoadingPromise = null;
+  let resolutionCandidatesCache = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
-  let generatedGraphs = [];
+  let currentCaseJobId = "";
+  let currentCasePlan = null;
 
   const viewerState = {
     searchQuery: "",
@@ -140,21 +166,32 @@
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
     analysisNodeIds: [],
+    questionNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
+  let tooltipWidth = 0;
+  let tooltipHeight = 0;
 
   function detectGraphKey(pathname) {
     const path = String(pathname || "").toLowerCase();
-    if (path.startsWith("/iums/") || path === "/iums") return "iums";
-    if (path.startsWith("/iran/") || path === "/iran") return "iran";
-    if (path.startsWith("/sevenspikes/") || path === "/sevenspikes") return "sevenspikes";
-    if (path.startsWith("/expanded-mb-names/") || path === "/expanded-mb-names") return "expanded-mb-names";
-    if (path.startsWith("/mb/") || path === "/mb") return "mb";
-    return "mb";
+    const option = GRAPH_OPTIONS.find(({ path: optionPath }) => (
+      path === optionPath || path === optionPath.slice(0, -1) || path.startsWith(optionPath)
+    ));
+    return option?.key || GRAPH_OPTIONS[0].key;
+  }
+
+  function detectGeneratedGraphId(pathname) {
+    const match = String(pathname || "").match(/^\/generated-graphs\/([^/]+)(?:\/|$)/i);
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (_error) {
+      return match[1];
+    }
   }
 
   function graphFunctionUrl(baseUrl) {
@@ -167,78 +204,35 @@
     return `${BUILDER_API_BASE}${path}`;
   }
 
-  function splitLines(value) {
-    return String(value || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  }
-
-  function sanitizeBuilderGraphId(value) {
-    let safe = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    while (safe.includes("--")) safe = safe.replaceAll("--", "-");
-    return safe.slice(0, 80);
-  }
-
-  function builderGraphKey() {
-    return sanitizeBuilderGraphId(
-      builderGraphIdInput?.value
-      || builderGraphTitleInput?.value
-      || splitLines(builderSeedNamesInput?.value)[0]
-      || "",
-    );
-  }
-
-  function versionNumber(value) {
-    const number = Number(String(value || "").replace(/^v/i, ""));
-    return Number.isFinite(number) && number > 0 ? number : 0;
-  }
-
-  function nextBuilderVersion() {
-    const graphKey = builderGraphKey();
-    const graph = generatedGraphs.find((entry) => String(entry.id || "") === graphKey);
-    const versions = Array.isArray(graph?.versions) ? graph.versions : [];
-    const latest = versions.reduce((max, version) => Math.max(max, versionNumber(version.version)), 0);
-    return latest + 1;
-  }
-
-  function updateBuilderVersionInput() {
-    if (!builderGraphVersionInput) return;
-    const saveMode = String(builderSaveModeInput?.value || "new_version");
-    if (saveMode === "overwrite_version") {
-      builderGraphVersionInput.readOnly = false;
-      builderGraphVersionInput.placeholder = "Version";
-      if (!builderGraphVersionInput.value) {
-        builderGraphVersionInput.value = String(Math.max(1, nextBuilderVersion() - 1));
-      }
-      return;
-    }
-    builderGraphVersionInput.value = String(nextBuilderVersion());
-    builderGraphVersionInput.readOnly = true;
-    builderGraphVersionInput.placeholder = "Auto";
-  }
-
   function setBuilderStatus(message, isError = false) {
     if (!builderStatusEl) return;
-    builderStatusEl.textContent = message;
+    if (!message) {
+      builderStatusEl.textContent = "";
+      builderStatusEl.classList.remove("error");
+      return;
+    }
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false });
+    const line = `[${timestamp}] ${message}`;
+    const existing = builderStatusEl.textContent.trimEnd();
+    if (!existing.endsWith(line)) {
+      builderStatusEl.textContent = existing ? `${existing}\n${line}` : line;
+    }
     builderStatusEl.classList.toggle("error", !!isError);
+    builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
   }
 
-  function setBuilderModeFields() {
-    const mode = String(builderModeInput?.value || "name_seed");
-    const visibleFields = new Set();
-    if (mode === "name_seed") {
-      visibleFields.add("seed-names");
-    } else if (mode === "org_rooted") {
-      visibleFields.add("roots");
-      visibleFields.add("target-names");
-    } else if (mode === "org_chained") {
-      visibleFields.add("seed-names");
-      visibleFields.add("roots");
-    }
-    builderModeFieldEls.forEach((element) => {
-      element.classList.toggle("hidden", !visibleFields.has(String(element.dataset.builderField || "")));
+  function renderBuilderStdout(job = {}) {
+    if (!builderStatusEl) return;
+    const lines = (Array.isArray(job.stdout) ? job.stdout : []).map((entry) => {
+      const timestamp = new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour12: false });
+      return `[${timestamp}] ${String(entry.message || "")}`;
     });
+    if (job.error && !lines.some((line) => line.includes(job.error))) {
+      lines.push(`[error] ${job.error}`);
+    }
+    builderStatusEl.textContent = lines.join("\n");
+    builderStatusEl.classList.toggle("error", job.status === "failed");
+    builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
   }
 
   function setAppMode(mode) {
@@ -252,27 +246,148 @@
     }
   }
 
-  function builderPayload() {
-    const mode = String(builderModeInput?.value || "name_seed");
-    const saveMode = String(builderSaveModeInput?.value || "new_version");
-    const seedNames = splitLines(builderSeedNamesInput?.value);
-    const payload = {
-      mode,
-      seed_name: mode === "name_seed" ? String(seedNames[0] || "").trim() : String(builderGraphTitleInput?.value || "").trim(),
-      seed_names: mode === "name_seed" || mode === "org_chained" ? seedNames : [],
-      roots: mode === "org_rooted" || mode === "org_chained" ? splitLines(builderRootsInput?.value) : [],
-      target_names: mode === "org_rooted" ? splitLines(builderTargetNamesInput?.value) : [],
-      graph_id: String(builderGraphIdInput?.value || builderGraphTitleInput?.value || "").trim(),
-      graph_title: String(builderGraphTitleInput?.value || "").trim(),
-      save_mode: saveMode,
-      notify_email: String(builderNotifyEmailInput?.value || "").trim(),
-      run_negative_news: !!builderNegativeNewsInput?.checked,
-      limit: Number(builderLimitInput?.value || 30),
-    };
-    if (saveMode === "overwrite_version") {
-      payload.graph_version = String(builderGraphVersionInput?.value || "").trim();
+  function renderCasePlan(plan) {
+    currentCasePlan = plan;
+    casePlanTitleEl.textContent = plan.title || "Untitled case";
+    const subjects = Array.isArray(plan.subjects) ? plan.subjects : [];
+    const segments = Array.isArray(plan.segments) ? plan.segments : [];
+    casePlanSubjectsEl.innerHTML = subjects.map(renderCaseSubject).join("");
+    casePlanSubjectsEl.classList.toggle("hidden", !subjects.length);
+    casePlanSegmentsEl.innerHTML = segments.map(renderCaseSegment).join("");
+    casePlanSegmentsEl.classList.toggle("hidden", !segments.length);
+    caseAddSegmentButton.classList.toggle("hidden", !segments.length);
+    casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
+    caseRecipeInput.value = plan.recipe || "registry-light";
+    caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
+    caseEntitiesInput.value = String(plan.policy?.max_entities || 500);
+    caseMinimumOccupancyInput.value = String(plan.policy?.minimum_occupancy || 3);
+    caseMaxAddressesInput.value = String(plan.policy?.max_addresses || 200);
+    updateAreaControls();
+    casePeopleInput.checked = (plan.policy?.leaf_kinds || ["person"]).includes("person");
+    caseSanctionsInput.checked = plan.enrichments?.sanctions !== false;
+    caseDocumentsInput.checked = !!plan.enrichments?.documents;
+    caseNegativeNewsInput.checked = !!plan.enrichments?.negative_news;
+    casePlanEl.classList.remove("hidden");
+    casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  const CASE_OPERATIONS = [
+    "resolve_subjects",
+    "discover_addresses",
+    "load_registry_records",
+    "expand_address_occupants",
+    "expand_organisations",
+    "include_people",
+    "area_clusters",
+    "sanctions",
+    "documents",
+    "negative_news",
+  ];
+
+  function renderCaseSubject(subject = {}) {
+    const entities = Array.isArray(subject.entities) ? subject.entities : [];
+    const addresses = Array.isArray(subject.addresses) ? subject.addresses : [];
+    const entityRows = entities.map((entity) => {
+      const registry = entity.registry_type === "external"
+        ? "public entity"
+        : `${entity.registry_type || "registry"} ${entity.registry_number || ""}`.trim();
+      return `<div class="case-subject-fact"><span>${escapeHtml(entity.label || "Unlabelled entity")}</span><small>${escapeHtml(registry)}</small>${renderEvidenceLinks(entity.evidence)}</div>`;
+    }).join("");
+    const addressRows = addresses.map((address) => (
+      `<div class="case-subject-fact"><span>${escapeHtml(address.value || "")}</span><small>${escapeHtml(address.address_type || "address")}</small>${renderEvidenceLinks(address.evidence)}</div>`
+    )).join("");
+    return `<section class="case-subject"><h3>${escapeHtml(subject.label || "Subject")}</h3>${entityRows}${addressRows}</section>`;
+  }
+
+  function renderEvidenceLinks(evidence) {
+    const links = (Array.isArray(evidence) ? evidence : []).map((item) => {
+      const url = safeExternalUrl(item.url);
+      if (!url) return "";
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">source</a>`;
+    }).filter(Boolean);
+    return links.length ? `<span class="case-source-links">${links.join("")}</span>` : "";
+  }
+
+  function safeExternalUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+    } catch (_error) {
+      return "";
     }
-    return payload;
+  }
+
+  function renderCaseSegment(segment = {}) {
+    const operation = CASE_OPERATIONS.includes(segment.operation) ? segment.operation : "resolve_subjects";
+    const options = CASE_OPERATIONS.map((value) => (
+      `<option value="${value}"${value === operation ? " selected" : ""}>${caseOperationLabel(value)}</option>`
+    )).join("");
+    return `
+      <div class="case-segment">
+        <input class="case-segment-enabled" type="checkbox" aria-label="Enable operation"${segment.enabled !== false ? " checked" : ""} />
+        <select class="case-segment-operation" aria-label="Operation">${options}</select>
+        <input class="case-segment-limit" type="number" min="1" max="5000" aria-label="Result limit" value="${Number(segment.max_results) || 100}" />
+        <button class="case-segment-remove" type="button" aria-label="Remove operation">Remove</button>
+      </div>
+    `;
+  }
+
+  function caseOperationLabel(operation) {
+    return String(operation || "").replaceAll("_", " ");
+  }
+
+  function renderCaseInput(input = {}) {
+    const kind = String(input.kind || "person");
+    const options = ["person", "company", "charity", "address", "area"].map((value) => (
+      `<option value="${value}"${value === kind ? " selected" : ""}>${value}</option>`
+    )).join("");
+    return `
+      <div class="case-input">
+        <select class="case-input-kind" aria-label="Input type">${options}</select>
+        <input class="case-input-value" type="text" aria-label="Input value" value="${escapeHtml(input.value || "")}" />
+        <button class="case-input-remove" type="button" aria-label="Remove input">Remove</button>
+      </div>
+    `;
+  }
+
+  function approvedCasePlan() {
+    const plan = JSON.parse(JSON.stringify(currentCasePlan || {}));
+    plan.policy = plan.policy || {};
+    plan.enrichments = plan.enrichments || {};
+    plan.recipe = caseRecipeInput.value;
+    plan.inputs = [...casePlanInputsEl.querySelectorAll(".case-input")].map((row) => ({
+      kind: row.querySelector(".case-input-kind").value,
+      value: row.querySelector(".case-input-value").value.trim(),
+    })).filter((input) => input.value);
+    plan.segments = [...casePlanSegmentsEl.querySelectorAll(".case-segment")].map((row, index) => {
+      const operation = row.querySelector(".case-segment-operation").value;
+      return {
+        id: `${index + 1}-${operation}`,
+        operation,
+        label: caseOperationLabel(operation),
+        enabled: row.querySelector(".case-segment-enabled").checked,
+        max_results: Number(row.querySelector(".case-segment-limit").value || 100),
+      };
+    });
+    const hasResearchMaterial = (Array.isArray(plan.subjects) ? plan.subjects : []).some((subject) => (
+      (Array.isArray(subject.entities) && subject.entities.length) || (Array.isArray(subject.addresses) && subject.addresses.length)
+    ));
+    if (!plan.inputs.length && !hasResearchMaterial) throw new Error("Add an input or retain a resolved subject.");
+    plan.policy.max_rounds = Number(caseRoundsInput.value || 2);
+    plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
+    plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
+    plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
+    plan.policy.leaf_kinds = casePeopleInput.checked ? ["person"] : [];
+    plan.enrichments.sanctions = !!caseSanctionsInput.checked;
+    plan.enrichments.documents = !!caseDocumentsInput.checked;
+    plan.enrichments.negative_news = !!caseNegativeNewsInput.checked;
+    return plan;
+  }
+
+  function updateAreaControls() {
+    const isArea = caseRecipeInput?.value === "area-clusters";
+    caseAreaControlEls.forEach((element) => element.classList.toggle("hidden", !isArea));
+    caseAreaNoteEl?.classList.toggle("hidden", !isArea);
   }
 
   async function postBuilderJson(path, payload) {
@@ -289,46 +404,90 @@
   }
 
   async function submitBuilderJob() {
-    setBuilderStatus("Submitting graph build...");
-    const data = await postBuilderJson("/api/tree-jobs", builderPayload());
+    const query = String(caseQueryInput?.value || "").trim();
+    if (!query) throw new Error("Write a short investigation brief first.");
+    casePlanSubmitButton.disabled = true;
+    caseOpenResultEl.classList.add("hidden");
+    casePlanEl.classList.add("hidden");
+    setBuilderStatus(`$ plan ${query}`);
+    const data = await postBuilderJson("/api/case-jobs", { query });
     const job = data.job || {};
-    setBuilderStatus(`Graph build queued.\nJob ID: ${job.id || "unknown"}\nYou will receive an email when it is ready if SMTP is configured.`);
-    if (job.id) pollBuilderJob(job.id).catch((error) => console.warn("Job polling failed", error));
+    renderBuilderStdout(job);
+    currentCaseJobId = String(job.id || "");
+    if (!currentCaseJobId) throw new Error("The case planner did not return a job id.");
+    await pollBuilderJob(currentCaseJobId);
   }
 
   async function pollBuilderJob(jobId) {
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      const response = await fetch(builderApiUrl(`/api/tree-jobs/${encodeURIComponent(jobId)}`));
+    for (let attempt = 0; attempt < 360; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
+      const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `Case status failed with ${response.status}`);
+      }
       const job = data.job || {};
+      renderBuilderStdout(job);
+      if (job.status === "planned") {
+        renderCasePlan(job.plan || {});
+        casePlanSubmitButton.disabled = false;
+        return;
+      }
       if (job.status === "completed") {
-        const graph = job.result?.graph || {};
+        const graph = job.result?.artifact || {};
         const path = graph.path || "";
-        setBuilderStatus(path ? `Graph ready.\n${graph.title || jobId}\nOpen: ${path}` : `Graph job ${jobId} completed.`);
+        if (path) {
+          caseOpenResultEl.href = path;
+          caseOpenResultEl.classList.remove("hidden");
+        }
+        caseRunButton.disabled = false;
         await loadGeneratedGraphOptions();
         return;
       }
       if (job.status === "failed") {
-        setBuilderStatus(job.error || `Graph job ${jobId} failed.`, true);
+        casePlanSubmitButton.disabled = false;
+        caseRunButton.disabled = false;
         return;
       }
-      setBuilderStatus(`Graph job ${jobId} is ${job.status || "running"}...`);
     }
-    setBuilderStatus(`Graph job ${jobId} is still running. You will receive an email when it is ready.`);
+    casePlanSubmitButton.disabled = false;
+    caseRunButton.disabled = false;
+    setBuilderStatus("poll timeout; the backend job may still be running", true);
   }
 
-  async function deleteBuilderJson(path) {
-    const response = await fetch(builderApiUrl(path), { method: "DELETE" });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.ok === false) {
-      throw new Error(data.error || `Delete failed with ${response.status}`);
-    }
-    return data;
+  async function runPlannedCase() {
+    if (!currentCaseJobId || !currentCasePlan) throw new Error("Draft a case scope first.");
+    caseRunButton.disabled = true;
+    setBuilderStatus("$ run approved scope");
+    const data = await postBuilderJson(`/api/case-jobs/${encodeURIComponent(currentCaseJobId)}/run`, {
+      plan: approvedCasePlan(),
+    });
+    renderBuilderStdout(data.job || {});
+    await pollBuilderJob(currentCaseJobId);
+  }
+
+  function resetCaseDesk() {
+    currentCaseJobId = "";
+    currentCasePlan = null;
+    casePlanEl.classList.add("hidden");
+    caseOpenResultEl.classList.add("hidden");
+    casePlanSubmitButton.disabled = false;
+    caseRunButton.disabled = false;
+    setBuilderStatus("");
+    caseQueryInput?.focus();
   }
 
   function currentGraphOption() {
-    return GRAPH_OPTIONS.find((option) => option.key === currentGraphKey) || GRAPH_OPTIONS[0];
+    return GRAPH_OPTIONS.find((option) => option.key === currentGraphKey) || null;
+  }
+
+  function setGraphSwitcherSelection(optionEl, label) {
+    graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option").forEach((element) => {
+      const isActive = element === optionEl;
+      element.classList.toggle("active", isActive);
+      element.setAttribute("aria-current", isActive ? "page" : "false");
+    });
+    graphSwitcherLabelEl.textContent = label;
   }
 
   function setGraphSwitcherOpen(isOpen) {
@@ -341,9 +500,9 @@
   function initGraphSwitcher() {
     if (!graphSwitcherEl || !graphSwitcherButtonEl || !graphSwitcherLabelEl || !graphSwitcherMenuEl) return;
     const activeOption = currentGraphOption();
-    graphSwitcherLabelEl.textContent = activeOption.label;
+    graphSwitcherLabelEl.textContent = activeOption?.label || document.title || currentGeneratedGraphId || "Graph";
     graphSwitcherOptionEls.forEach((optionEl) => {
-      const isActive = optionEl.dataset.graphKey === currentGraphKey;
+      const isActive = !currentGeneratedGraphId && optionEl.dataset.graphKey === currentGraphKey;
       optionEl.classList.toggle("active", isActive);
       optionEl.setAttribute("aria-current", isActive ? "page" : "false");
     });
@@ -355,6 +514,7 @@
       optionEl.addEventListener("click", () => {
         const selected = GRAPH_OPTIONS.find((option) => option.key === optionEl.dataset.graphKey);
         if (!selected) return;
+        setGraphSwitcherSelection(optionEl, selected.label);
         setGraphSwitcherOpen(false);
         window.location.assign(selected.path);
       });
@@ -380,111 +540,30 @@
     if (!response.ok) return;
     const data = await response.json();
     const graphs = Array.isArray(data.graphs) ? data.graphs : [];
-    generatedGraphs = graphs;
     graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option.generated").forEach((element) => element.remove());
     graphs.forEach((graph) => {
       const path = String(graph.path || "");
       const title = String(graph.title || graph.id || "").trim();
-      if (!path || !title) return;
+      const graphId = String(graph.id || detectGeneratedGraphId(path)).trim();
+      if (!path || !title || !graphId) return;
       const button = document.createElement("button");
       button.className = "graph-switcher-option generated";
       button.type = "button";
       button.role = "menuitem";
+      button.dataset.graphKey = graphId;
       button.textContent = title;
+      const isActive = graphId.toLowerCase() === currentGeneratedGraphId.toLowerCase();
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-current", isActive ? "page" : "false");
       button.addEventListener("click", () => {
+        setGraphSwitcherSelection(button, title);
         setGraphSwitcherOpen(false);
         window.location.assign(path);
       });
       graphSwitcherMenuEl.appendChild(button);
+      if (isActive) setGraphSwitcherSelection(button, title);
     });
-    renderGeneratedGraphManager(graphs);
-    updateBuilderVersionInput();
     return graphs;
-  }
-
-  function renderGeneratedGraphManager(graphs) {
-    if (!builderGraphListEl) return;
-    if (!graphs.length) {
-      builderGraphListEl.textContent = "No saved generated graphs yet.";
-      return;
-    }
-    builderGraphListEl.innerHTML = graphs.map((graph) => {
-      const versions = Array.isArray(graph.versions) ? graph.versions : [];
-      const activeVersion = String(graph.active_version || versions[0]?.version || "");
-      const versionOptions = versions.map((version) => {
-        const value = String(version.version || "");
-        return `<option value="${escapeHtml(value)}"${value === activeVersion ? " selected" : ""}>${escapeHtml(value)}</option>`;
-      }).join("");
-      return `
-        <div class="builder-graph-row">
-          <div class="builder-graph-row-title">
-            <strong>${escapeHtml(graph.title || graph.id)}</strong>
-            <span>${escapeHtml(graph.id)}</span>
-          </div>
-          <div class="builder-graph-row-controls">
-            <select class="builder-graph-version-select" data-graph-id="${escapeHtml(graph.id)}" ${versionOptions ? "" : "disabled"}>
-              ${versionOptions || '<option value="">No versions</option>'}
-            </select>
-            <button class="toolbar-btn" type="button" data-graph-action="open-active" data-graph-id="${escapeHtml(graph.id)}">Open</button>
-            <button class="toolbar-btn danger" type="button" data-graph-action="delete-selected-version" data-graph-id="${escapeHtml(graph.id)}">Delete version</button>
-            <button class="toolbar-btn danger" type="button" data-graph-action="delete-graph" data-graph-id="${escapeHtml(graph.id)}">Delete graph</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-  }
-
-  async function handleGeneratedGraphVersionChange(select) {
-    const graphId = String(select.dataset.graphId || "");
-    const version = String(select.value || "");
-    if (!graphId || !version) return;
-    await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
-    setBuilderStatus(`${graphId} ${version} is now active.`);
-    await loadGeneratedGraphOptions();
-  }
-
-  async function handleGeneratedGraphAction(button) {
-    const graphId = String(button.dataset.graphId || "");
-    const version = String(button.dataset.version || "");
-    const action = String(button.dataset.graphAction || "");
-    if (!graphId) return;
-    if (action === "open-active") {
-      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/`);
-      return;
-    }
-    if (action === "open-version" && version) {
-      window.location.assign(`/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}/`);
-      return;
-    }
-    if (action === "activate-version" && version) {
-      await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/active`, { version });
-      setBuilderStatus(`${graphId} ${version} is now active.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-version" && version) {
-      if (!window.confirm(`Delete ${graphId} ${version}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(version)}`);
-      setBuilderStatus(`${graphId} ${version} deleted.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-selected-version") {
-      const select = button.closest(".builder-graph-row")?.querySelector(".builder-graph-version-select");
-      const selectedVersion = String(select?.value || "");
-      if (!selectedVersion) return;
-      if (!window.confirm(`Delete ${graphId} ${selectedVersion}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}/versions/${encodeURIComponent(selectedVersion)}`);
-      setBuilderStatus(`${graphId} ${selectedVersion} deleted.`);
-      await loadGeneratedGraphOptions();
-      return;
-    }
-    if (action === "delete-graph") {
-      if (!window.confirm(`Delete all versions of ${graphId}?`)) return;
-      await deleteBuilderJson(`/api/generated-graphs/${encodeURIComponent(graphId)}`);
-      setBuilderStatus(`${graphId} deleted.`);
-      await loadGeneratedGraphOptions();
-    }
   }
 
   function escapeHtml(value) {
@@ -1868,13 +1947,23 @@
     const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
     const edgeAdjacency = buildEdgeAdjacency(nodes, edges);
     const fallbackCenter = bounds.left + ((bounds.right - bounds.left) / 2);
+    nodes.forEach((node) => {
+      node._pillWidth = pillWidth(node);
+      node._pillHeight = pillHeight(node);
+    });
     let curY = bounds.top + 72;
     [1, 2, 3, 4].forEach((lane) => {
       const laneNodes = nodes.filter((node) => Number(node.lane || 0) === lane);
+      const neighborXByNodeId = new Map(
+        laneNodes.map((node) => [node.id, avgNeighborX(node, edgeAdjacency, nodeLookup, fallbackCenter)]),
+      );
+      const lowConfidenceAnchorByNodeId = lane === 2
+        ? new Map(laneNodes.map((node) => [node.id, lowConfidenceLaneAnchorX(node, edgeAdjacency, nodeLookup)]))
+        : new Map();
       laneNodes.sort((left, right) => {
         if (lane === 2) {
-          const leftAnchor = lowConfidenceLaneAnchorX(left, edgeAdjacency, nodeLookup);
-          const rightAnchor = lowConfidenceLaneAnchorX(right, edgeAdjacency, nodeLookup);
+          const leftAnchor = lowConfidenceAnchorByNodeId.get(left.id);
+          const rightAnchor = lowConfidenceAnchorByNodeId.get(right.id);
           if (leftAnchor != null || rightAnchor != null) {
             if (leftAnchor == null) return 1;
             if (rightAnchor == null) return -1;
@@ -1884,7 +1973,7 @@
         }
         const connectionDiff = nodeConnectionOrderScore(right) - nodeConnectionOrderScore(left);
         if (connectionDiff !== 0) return connectionDiff;
-        const neighborDiff = avgNeighborX(left, edgeAdjacency, nodeLookup, fallbackCenter) - avgNeighborX(right, edgeAdjacency, nodeLookup, fallbackCenter);
+        const neighborDiff = neighborXByNodeId.get(left.id) - neighborXByNodeId.get(right.id);
         if (neighborDiff !== 0) return neighborDiff;
         return String(left.label || "").localeCompare(String(right.label || ""));
       });
@@ -1898,7 +1987,7 @@
       let currentRow = [];
       let currentWidth = 0;
       laneNodes.forEach((node) => {
-        const nodeWidth = pillWidth(node);
+        const nodeWidth = node._pillWidth;
         const nextWidth = currentRow.length ? currentWidth + spacing + nodeWidth : nodeWidth;
         if (currentRow.length && nextWidth > maxRowW) {
           rows.push(currentRow);
@@ -1910,17 +1999,15 @@
         }
       });
       if (currentRow.length) rows.push(currentRow);
-      const rowStep = rows.length ? Math.max(...rows.flat().map((node) => pillHeight(node))) + rowGap : 0;
+      const rowStep = rows.length ? Math.max(...rows.flat().map((node) => node._pillHeight)) + rowGap : 0;
       rows.forEach((row, rowIndex) => {
-        const rowW = row.reduce((sum, node) => sum + pillWidth(node), 0) + (spacing * Math.max(0, row.length - 1));
+        const rowW = row.reduce((sum, node) => sum + node._pillWidth, 0) + (spacing * Math.max(0, row.length - 1));
         let cx = usableMin + Math.max(0, (maxRowW - rowW) / 2);
         const rowY = curY + (rowIndex * rowStep);
         row.forEach((node) => {
-          const widthForNode = pillWidth(node);
+          const widthForNode = node._pillWidth;
           node.x = cx + (widthForNode / 2);
           node.y = rowY;
-          node._pillWidth = widthForNode;
-          node._pillHeight = pillHeight(node);
           node._focused = rootIds.has(node.id);
           node._searchHit = viewerState.searchQuery && String(node.label || "").toLowerCase().includes(viewerState.searchQuery.toLowerCase());
           node._rankScore = nodeRankScore(node);
@@ -1952,15 +2039,23 @@
     });
   }
 
-  function buildSceneForProjection(projection, bounds) {
+  function buildSceneForProjection(projection, bounds, sceneKey = "base") {
     const rootIds = new Set(projection.rootIds || []);
     const lowConfidenceOnlyIds = lowConfidenceOnlyVisibleNodeIdsForProjection(projection);
     const sceneNodes = allNodes
       .filter((node) => projection.visibleIds.has(node.id))
-      .map((node) => ({ ...node, _visible: true, _lowConfidenceOnlyVisible: lowConfidenceOnlyIds.has(node.id) }));
+      .map((node) => ({
+        ...node,
+        _sceneKey: `${sceneKey}:node:${node.id}`,
+        _visible: true,
+        _lowConfidenceOnlyVisible: lowConfidenceOnlyIds.has(node.id),
+      }));
     const sceneEdges = projection.edgeIds
       .filter((edge) => projection.visibleIds.has(edge.source) && projection.visibleIds.has(edge.target))
-      .map((edge) => ({ ...edge }));
+      .map((edge, index) => ({
+        ...edge,
+        _sceneKey: `${sceneKey}:edge:${edge.id || `${edge.source}:${edge.target}:${edge.kind || "link"}:${index}`}`,
+      }));
     layoutNodesInBounds(sceneNodes, sceneEdges, rootIds, bounds);
     ensureSceneMetadata(sceneNodes, sceneEdges);
     return { nodes: sceneNodes, edges: sceneEdges, rootIds: [...rootIds] };
@@ -1997,7 +2092,7 @@
         const left = outerPad + (offset * (columnWidth + gutter));
         const bounds = { left, right: left + columnWidth, top: rowTop };
         const scene = applyExpandedHiddenConnectionsToScene(
-          buildSceneForProjection(entry.projection, bounds),
+          buildSceneForProjection(entry.projection, bounds, `tree-${start + offset}`),
           bounds,
         );
         combinedNodes.push(...scene.nodes);
@@ -2017,14 +2112,16 @@
     if (!lines?.length) return;
     tooltip.innerHTML = lines.join("<br>");
     tooltip.style.display = "block";
+    tooltipWidth = tooltip.offsetWidth;
+    tooltipHeight = tooltip.offsetHeight;
     positionTooltip(event);
   }
 
   function positionTooltip(event) {
     if (!event) return;
     const pad = 14;
-    const width = tooltip.offsetWidth;
-    const height = tooltip.offsetHeight;
+    const width = tooltipWidth;
+    const height = tooltipHeight;
     let x = event.clientX + pad;
     let y = event.clientY - 10;
     if (x + width > window.innerWidth - 10) x = event.clientX - width - pad;
@@ -2368,6 +2465,11 @@
       sourceId: String(row?.sourceId || ""),
       targetId: String(row?.targetId || ""),
       leaderId: String(row?.leaderId || ""),
+      sourceLabel: String(row?.sourceLabel || ""),
+      targetLabel: String(row?.targetLabel || ""),
+      leaderLabel: String(row?.leaderLabel || ""),
+      reason: String(row?.reason || ""),
+      decidedAt: String(row?.decidedAt || ""),
     })).filter((row) => {
       if (!row.sourceId || !row.targetId || row.sourceId === row.targetId) return false;
       const key = `${row.sourceId}||${row.targetId}`;
@@ -2375,6 +2477,40 @@
       seen.add(key);
       return true;
     });
+  }
+
+  function normalizeRejectedRows(rows) {
+    return normalizeMergeOverrideRows(rows).map((row) => ({
+      ...row,
+      kind: ["address", "name", "organisation"].includes(String(row.kind || ""))
+        ? String(row.kind)
+        : String((Array.isArray(rows) ? rows : []).find((candidate) => candidate?.sourceId === row.sourceId && candidate?.targetId === row.targetId)?.kind || "name"),
+    }));
+  }
+
+  function normalizeAuditRows(rows) {
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: String(row?.id || ""),
+      action: String(row?.action || ""),
+      at: String(row?.at || ""),
+      kind: String(row?.kind || ""),
+      sourceId: String(row?.sourceId || ""),
+      targetId: String(row?.targetId || ""),
+      sourceLabel: String(row?.sourceLabel || ""),
+      targetLabel: String(row?.targetLabel || ""),
+      reason: String(row?.reason || ""),
+    })).filter((row) => row.action && row.at);
+  }
+
+  function readMergeOverrides(overrides = {}) {
+    return {
+      address: normalizeMergeOverrideRows(overrides.address),
+      name: normalizeMergeOverrideRows(overrides.name),
+      organisation: normalizeMergeOverrideRows(overrides.organisation),
+      hidden: normalizeHiddenOverrideRows(overrides.hidden),
+      rejected: normalizeRejectedRows(overrides.rejected),
+      audit: normalizeAuditRows(overrides.audit),
+    };
   }
 
   function normalizeHiddenOverrideRows(rows) {
@@ -2923,18 +3059,15 @@
       })
       .then((payload) => {
         const overrides = payload?.overrides || {};
-        mergeOverrides = {
-          address: normalizeMergeOverrideRows(overrides.address),
-          name: normalizeMergeOverrideRows(overrides.name),
-          organisation: normalizeMergeOverrideRows(overrides.organisation),
-          hidden: normalizeHiddenOverrideRows(overrides.hidden),
-        };
+        mergeOverrides = readMergeOverrides(overrides);
+        resolutionCandidatesCache = null;
         rebuildBaseGraph();
         return true;
       })
       .catch((error) => {
         console.warn(error);
-        mergeOverrides = { address: [], name: [], organisation: [], hidden: [] };
+        mergeOverrides = readMergeOverrides();
+        resolutionCandidatesCache = null;
         rebuildBaseGraph();
         return false;
       })
@@ -2955,6 +3088,10 @@
         sourceId: action.sourceKey,
         targetId: action.targetKey,
         leaderId: action.leaderKey,
+        sourceLabel: action.sourceLabel,
+        targetLabel: action.targetLabel,
+        leaderLabel: action.leaderLabel,
+        reason: action.reason,
       }),
     });
     if (!response.ok) {
@@ -2962,15 +3099,34 @@
     }
     const payload = await response.json();
     const overrides = payload?.overrides || {};
-    mergeOverrides = {
-      address: normalizeMergeOverrideRows(overrides.address),
-      name: normalizeMergeOverrideRows(overrides.name),
-      organisation: normalizeMergeOverrideRows(overrides.organisation),
-      hidden: normalizeHiddenOverrideRows(overrides.hidden),
-    };
+    mergeOverrides = readMergeOverrides(overrides);
+    resolutionCandidatesCache = null;
     viewerState.pendingMergeNodeId = "";
     rebuildBaseGraph();
     await applyViewerState();
+  }
+
+  async function persistResolutionDecision(action) {
+    const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        graph: currentGraphKey,
+        operation: String(action.operation || "add"),
+        kind: "rejected",
+        resolutionKind: action.kind,
+        sourceId: action.sourceKey,
+        targetId: action.targetKey,
+        sourceLabel: action.sourceLabel,
+        targetLabel: action.targetLabel,
+        reason: action.reason,
+      }),
+    });
+    if (!response.ok) throw new Error(`Resolution persistence failed (${response.status})`);
+    const payload = await response.json();
+    mergeOverrides = readMergeOverrides(payload?.overrides || {});
+    resolutionCandidatesCache = null;
+    if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
   }
 
   async function persistHiddenOverride(action, options = {}) {
@@ -2990,12 +3146,8 @@
     }
     const payload = await response.json();
     const overrides = payload?.overrides || {};
-    mergeOverrides = {
-      address: normalizeMergeOverrideRows(overrides.address),
-      name: normalizeMergeOverrideRows(overrides.name),
-      organisation: normalizeMergeOverrideRows(overrides.organisation),
-      hidden: normalizeHiddenOverrideRows(overrides.hidden),
-    };
+    mergeOverrides = readMergeOverrides(overrides);
+    resolutionCandidatesCache = null;
     if (options.refresh !== false) {
       rebuildBaseGraph();
       await applyViewerState();
@@ -3013,6 +3165,149 @@
     if (trimmed === "2") return action.targetKey;
     window.alert("Please enter 1 or 2.");
     return "";
+  }
+
+  function resolutionPairKey(kind, sourceKey, targetKey) {
+    return `${kind}:${[String(sourceKey || ""), String(targetKey || "")].sort().join("||")}`;
+  }
+
+  function resolutionKeysForNode(node) {
+    const kind = mergeKindForNode(node);
+    if (!kind) return [];
+    const keys = nodeMergeStableKeys(node).filter((key) => !key.startsWith("node-id:"));
+    const labels = [node.label, ...(Array.isArray(node.aliases) ? node.aliases : [])]
+      .map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+      .filter(Boolean)
+      .map((value) => `label:${value}`);
+    return uniqueValues([...keys, ...labels]);
+  }
+
+  function resolutionReason(key) {
+    if (key.startsWith("address:")) return "Same normalised address";
+    if (key.startsWith("org:")) return "Same registry identifier";
+    if (key.startsWith("person:") || key.startsWith("individual:") || key.startsWith("identity:")) return "Shared person identity key";
+    if (key.startsWith("label:")) return "Same normalised name or alias";
+    return "Shared stable identity key";
+  }
+
+  function resolutionCandidates() {
+    if (resolutionCandidatesCache) return resolutionCandidatesCache;
+    const buckets = new Map();
+    rawMainNodes.forEach((node) => {
+      const kind = mergeKindForNode(node);
+      if (!kind) return;
+      resolutionKeysForNode(node).forEach((key) => {
+        const bucketKey = `${kind}:${key}`;
+        if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
+        buckets.get(bucketKey).push(node);
+      });
+    });
+    const decided = new Set();
+    ["address", "name", "organisation"].forEach((kind) => {
+      normalizeMergeOverrideRows(mergeOverrides[kind]).forEach((row) => decided.add(resolutionPairKey(kind, row.sourceId, row.targetId)));
+    });
+    normalizeRejectedRows(mergeOverrides.rejected).forEach((row) => decided.add(resolutionPairKey(row.kind, row.sourceId, row.targetId)));
+    const candidates = new Map();
+    buckets.forEach((nodes, bucketKey) => {
+      const separator = bucketKey.indexOf(":");
+      const kind = bucketKey.slice(0, separator);
+      const sharedKey = bucketKey.slice(separator + 1);
+      const uniqueNodes = [...new Map(nodes.map((node) => [node.id, node])).values()].slice(0, 12);
+      for (let left = 0; left < uniqueNodes.length; left += 1) {
+        for (let right = left + 1; right < uniqueNodes.length; right += 1) {
+          const source = uniqueNodes[left];
+          const target = uniqueNodes[right];
+          const sourceKey = nodeMergePrimaryKey(source);
+          const targetKey = nodeMergePrimaryKey(target);
+          const pairKey = resolutionPairKey(kind, sourceKey, targetKey);
+          if (!sourceKey || !targetKey || decided.has(pairKey)) continue;
+          const current = candidates.get(pairKey) || { kind, source, target, sourceKey, targetKey, reasons: [] };
+          current.reasons = uniqueValues([...current.reasons, resolutionReason(sharedKey)]);
+          candidates.set(pairKey, current);
+        }
+      }
+    });
+    resolutionCandidatesCache = [...candidates.values()]
+      .sort((left, right) => right.reasons.length - left.reasons.length || String(left.source.label).localeCompare(String(right.source.label)))
+      .slice(0, 30);
+    return resolutionCandidatesCache;
+  }
+
+  function resolutionDecisionLabel(row, side) {
+    const explicit = String(row?.[`${side}Label`] || "").trim();
+    if (explicit) return explicit;
+    const key = String(row?.[`${side}Id`] || "");
+    const node = rawMainNodes.find((candidate) => nodeHasStableKey(candidate, key));
+    return String(node?.label || key || "node");
+  }
+
+  function renderResolutionPanel() {
+    if (!resolutionPanelEl) return;
+    const candidates = resolutionCandidates();
+    const actions = [];
+    const candidateHtml = candidates.length ? candidates.map((candidate) => {
+      const sourceLabel = String(candidate.source.label || candidate.source.id);
+      const targetLabel = String(candidate.target.label || candidate.target.id);
+      const baseAction = {
+        kind: candidate.kind,
+        sourceKey: candidate.sourceKey,
+        targetKey: candidate.targetKey,
+        sourceLabel,
+        targetLabel,
+        reason: candidate.reasons.join("; "),
+      };
+      const keepLeftIndex = actions.push({ ...baseAction, type: "merge", leaderKey: candidate.sourceKey, leaderLabel: sourceLabel }) - 1;
+      const keepRightIndex = actions.push({ ...baseAction, type: "merge", leaderKey: candidate.targetKey, leaderLabel: targetLabel }) - 1;
+      const rejectIndex = actions.push({ ...baseAction, type: "reject" }) - 1;
+      return `
+        <div class="resolution-card">
+          <div class="resolution-pair">${escapeHtml(sourceLabel)}<br>${escapeHtml(targetLabel)}</div>
+          <div class="resolution-reason">${escapeHtml(candidate.reasons.join(" · "))}</div>
+          <div class="resolution-actions">
+            <button data-resolution-index="${keepLeftIndex}">Keep first</button>
+            <button data-resolution-index="${keepRightIndex}">Keep second</button>
+            <button data-resolution-index="${rejectIndex}" data-resolution-action="reject">Not the same</button>
+          </div>
+        </div>`;
+    }).join("") : '<div class="context-menu-empty">No unresolved duplicate candidates.</div>';
+
+    const decisions = [];
+    ["address", "name", "organisation"].forEach((kind) => {
+      normalizeMergeOverrideRows(mergeOverrides[kind]).forEach((row) => decisions.push({ ...row, kind, decision: "Merged" }));
+    });
+    normalizeRejectedRows(mergeOverrides.rejected).forEach((row) => decisions.push({ ...row, decision: "Rejected" }));
+    const decisionHtml = decisions.length ? decisions.map((decision) => {
+      const sourceLabel = resolutionDecisionLabel(decision, "source");
+      const targetLabel = resolutionDecisionLabel(decision, "target");
+      const undoIndex = actions.push({
+        type: decision.decision === "Merged" ? "undo_merge" : "undo_reject",
+        kind: decision.kind,
+        sourceKey: decision.sourceId,
+        targetKey: decision.targetId,
+        sourceLabel,
+        targetLabel,
+        reason: decision.reason,
+      }) - 1;
+      return `
+        <div class="resolution-decision">
+          <div class="resolution-pair">${escapeHtml(decision.decision)}: ${escapeHtml(sourceLabel)} / ${escapeHtml(targetLabel)}</div>
+          <div class="resolution-reason">${escapeHtml(decision.reason || decision.leaderLabel || decision.kind)}</div>
+          <div class="resolution-actions"><button data-resolution-index="${undoIndex}">Undo</button></div>
+        </div>`;
+    }).join("") : '<div class="context-menu-empty">No manual decisions yet.</div>';
+
+    const auditHtml = normalizeAuditRows(mergeOverrides.audit).slice(-12).reverse().map((row) => `
+      <div class="resolution-audit">${escapeHtml(row.at.replace("T", " ").replace("Z", ""))} · ${escapeHtml(row.action.replaceAll("_", " "))} · ${escapeHtml(row.sourceLabel || row.sourceId)} / ${escapeHtml(row.targetLabel || row.targetId)}</div>
+    `).join("");
+    resolutionPanelEl._actions = actions;
+    resolutionPanelEl.innerHTML = `
+      <div class="resolution-heading">Suspected duplicates <span>${candidates.length}</span></div>
+      ${candidateHtml}
+      <div class="resolution-heading">Decisions <span>${decisions.length}</span></div>
+      ${decisionHtml}
+      <div class="resolution-heading">Audit trail</div>
+      ${auditHtml || '<div class="context-menu-empty">No decision history.</div>'}
+    `;
   }
 
   function registryActionForNode(node) {
@@ -3061,8 +3356,29 @@
       sourceKey: String(row.sourceId || ""),
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
+    const analysisSelected = viewerState.analysisNodeIds.includes(node.id);
+    const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      questionSelected
+        ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
+        : viewerState.questionNodeIds.length < 8
+          ? { label: "Add to question selection", type: "question_add", nodeId: node.id }
+          : null,
+      viewerState.questionNodeIds.length
+        ? { label: "Ask about selected subgraph", type: "question_open" }
+        : null,
+      analysisSelected
+        ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
+        : viewerState.analysisNodeIds.length < 2
+          ? { label: "Add to connection analysis", type: "analysis_add", nodeId: node.id }
+          : null,
+      viewerState.analysisNodeIds.length === 2
+        ? { label: "Explain selected connection", type: "analysis_run" }
+        : null,
+      viewerState.analysisNodeIds.length
+        ? { label: "Clear connection selection", type: "analysis_clear" }
+        : null,
       expandableLowConfidenceNode
         ? {
             label: viewerState.expandedLowConfidenceNodeIds.has(node.id)
@@ -3156,15 +3472,15 @@
     canvasSearchAnchor = { x: event.clientX, y: event.clientY };
   }
 
-  function evidenceActionsForEdge(edge) {
+  function evidenceItemsForEdge(edge) {
     const evidenceItems = [];
     const seen = new Set();
     const pushEvidence = (evidence, sourceEdge = edge) => {
       if (!evidence || typeof evidence !== "object") return;
       const url = String(evidenceActionUrl(evidence) || evidence.document_url || "").trim();
       const page = String(evidence.page_hint || evidence.page_number || "").trim();
-      const key = `${url}||${page}`;
-      if (!url || seen.has(key)) return;
+      const key = `${url}||${page}||${String(evidence.title || "")}||${String(evidence.notes || "")}`;
+      if (seen.has(key)) return;
       seen.add(key);
       evidenceItems.push({ evidence, sourceEdge });
     };
@@ -3174,7 +3490,11 @@
       (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach((item) => pushEvidence(item, pathEdge));
       if (pathEdge?.evidence) pushEvidence(pathEdge.evidence, pathEdge);
     });
-    return evidenceItems
+    return evidenceItems;
+  }
+
+  function evidenceActionsForEdge(edge) {
+    return evidenceItemsForEdge(edge)
       .map(({ evidence, sourceEdge }) => {
         const url = evidenceActionUrl(evidence);
         if (!url) return null;
@@ -3187,6 +3507,73 @@
       .filter(Boolean);
   }
 
+  function edgeDateRows(edge) {
+    const pathEdges = Array.isArray(edge?.pathEdges) ? edge.pathEdges : [];
+    const valueFor = (field) => edge?.[field] || pathEdges.find((pathEdge) => pathEdge?.[field])?.[field] || "";
+    const fields = [
+      ["Filing date", valueFor("filing_date")],
+      ["Start date", valueFor("start_date")],
+      ["End date", valueFor("end_date")],
+      ["Statement date", valueFor("statement_date")],
+      ["Record date", valueFor("date")],
+    ];
+    return fields.filter(([, value]) => String(value || "").trim());
+  }
+
+  function renderEdgeEvidenceHtml(edge) {
+    const sourceNode = displayNodeForEdgeId(edge.source, edge?._sourceNode);
+    const targetNode = displayNodeForEdgeId(edge.target, edge?._targetNode);
+    const why = plainText(tooltipLinesForEdge(edge).join(" ")) || plainText(edge.tooltip) || "No relationship explanation supplied.";
+    const dates = edgeDateRows(edge);
+    const evidence = evidenceItemsForEdge(edge);
+    const pathEdges = Array.isArray(edge?.pathEdges) ? edge.pathEdges : [];
+    const evidenceProvider = (() => {
+      const url = String(evidenceActionUrl(evidence[0]?.evidence) || "").toLowerCase();
+      if (url.includes("company-information.service.gov.uk")) return "Companies House";
+      if (url.includes("charitycommission.gov.uk")) return "Charity Commission";
+      try {
+        return url ? new URL(url).hostname : "";
+      } catch (_error) {
+        return "";
+      }
+    })();
+    const sourceProvider = String(edge?.source_provider || edge?.provider || pathEdges.find((pathEdge) => pathEdge?.source_provider)?.source_provider || evidenceProvider || "Not supplied");
+    const confidence = String(edge?.confidence || pathEdges.find((pathEdge) => pathEdge?.confidence)?.confidence || "Not supplied");
+    return `
+      <div class="analysis-selection">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>
+      <div class="analysis-section">
+        <div class="analysis-section-title">Why these nodes are connected</div>
+        <div class="analysis-text">${escapeHtml(why)}</div>
+      </div>
+      <div class="analysis-claim-meta">Relationship: ${escapeHtml(edgeSubtitle(edge) || edge.kind || "link")}<br>Provider: ${escapeHtml(sourceProvider)}<br>Confidence: ${escapeHtml(confidence)}${dates.map(([label, value]) => `<br>${escapeHtml(label)}: ${escapeHtml(value)}`).join("")}</div>
+      <div class="analysis-section">
+        <div class="analysis-section-title">Source records</div>
+        ${evidence.length ? evidence.map(({ evidence: item }, index) => {
+          const url = evidenceActionUrl(item);
+          const details = [item.filing_date || item.date, item.filing_description, item.page_hint ? `Page: ${item.page_hint}` : "", item.page_number ? `Page ${item.page_number}` : "", item.notes]
+            .map((value) => String(value || "").trim()).filter(Boolean);
+          return `
+            <div class="analysis-claim">
+              <div class="analysis-claim-header">
+                <div class="analysis-claim-index">${index + 1}</div>
+                <div class="analysis-claim-text">${escapeHtml(evidenceDisplayTitle(item, "Registry record"))}</div>
+              </div>
+              ${details.length ? `<div class="analysis-claim-note">${escapeHtml(details.join(" · "))}</div>` : ""}
+              <div class="analysis-claim-evidence">${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Open exact source</a>` : '<span class="dim">No source URL supplied.</span>'}</div>
+            </div>`;
+        }).join("") : '<div class="context-menu-empty">No source record is attached to this relationship.</div>'}
+      </div>
+    `;
+  }
+
+  function openEdgeEvidenceView(edge) {
+    openDetailsModal({
+      title: "Relationship evidence",
+      status: `${edgeSubtitle(edge) || edge.kind || "Link"} · ${edge.confidence || "confidence unavailable"}`,
+      bodyHtml: renderEdgeEvidenceHtml(edge),
+    });
+  }
+
   function openEdgeContextMenu(edge, event) {
     event.preventDefault();
     event.stopPropagation();
@@ -3194,6 +3581,7 @@
     const sourceNode = displayNodeForEdgeId(edge.source, edge?._sourceNode);
     const targetNode = displayNodeForEdgeId(edge.target, edge?._targetNode);
     const actions = [
+      { type: "edge_details", label: "View relationship evidence", edge },
       ...(edge?.kind === "hidden_connection"
         ? [{ type: "hidden_connection_expand", label: "Expand indirect path", edge }]
         : []),
@@ -3203,9 +3591,7 @@
     contextMenuEl.innerHTML = [
       `<div class="context-menu-title">${escapeHtml(sourceNode?.label || edge.source)} to ${escapeHtml(targetNode?.label || edge.target)}</div>`,
       `<div class="context-menu-subtitle">${escapeHtml(edgeSubtitle(edge) || "link")}</div>`,
-      actions.length
-        ? actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join("")
-        : '<div class="context-menu-empty">No evidence is available for this link yet.</div>',
+      actions.map((action, index) => `<button type="button" class="context-menu-item" data-action-index="${index}">${escapeHtml(action.label)}</button>`).join(""),
     ].join("");
     contextMenuEl.style.display = "block";
     contextMenuEl.style.left = `${Math.max(10, Math.min(event.clientX, window.innerWidth - 260))}px`;
@@ -3217,13 +3603,142 @@
     contextMenuEl._actions = [];
   }
 
+  function renderQuestionSelection() {
+    if (!questionSelectionEl) return;
+    viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id, index, ids) => ids.indexOf(id) === index && nodeById.has(id)).slice(0, 8);
+    const labels = viewerState.questionNodeIds.map((id) => nodeById.get(id)?.label || id);
+    questionSelectionEl.textContent = labels.length
+      ? `Selected: ${labels.join(" · ")}`
+      : "Select nodes from their context menus.";
+    questionSubmitEl.disabled = !labels.length;
+  }
+
+  function shortestVisiblePath(sourceId, targetId) {
+    const adjacency = new Map();
+    visibleEdges.forEach((edge) => {
+      if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+      if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+      adjacency.get(edge.source).push({ next: edge.target, edge });
+      adjacency.get(edge.target).push({ next: edge.source, edge });
+    });
+    const queue = [sourceId];
+    const visited = new Set(queue);
+    const previous = new Map();
+    while (queue.length) {
+      const current = queue.shift();
+      if (current === targetId) break;
+      for (const step of adjacency.get(current) || []) {
+        if (visited.has(step.next)) continue;
+        visited.add(step.next);
+        previous.set(step.next, { from: current, edge: step.edge });
+        queue.push(step.next);
+      }
+    }
+    if (!visited.has(targetId)) return [];
+    const edges = [];
+    let cursor = targetId;
+    while (cursor !== sourceId) {
+      const step = previous.get(cursor);
+      if (!step) return [];
+      edges.unshift(step.edge);
+      cursor = step.from;
+    }
+    return edges;
+  }
+
+  function buildQuestionSubgraph() {
+    const selected = viewerState.questionNodeIds.filter((id) => nodeById.has(id));
+    const collectedEdges = [];
+    if (selected.length === 1) {
+      visibleEdges.filter((edge) => edge.source === selected[0] || edge.target === selected[0]).slice(0, 40).forEach((edge) => collectedEdges.push(edge));
+    } else {
+      for (let index = 1; index < selected.length; index += 1) {
+        shortestVisiblePath(selected[0], selected[index]).forEach((edge) => collectedEdges.push(edge));
+      }
+    }
+    const uniqueEdges = [...new Map(collectedEdges.map((edge, index) => {
+      const key = `${edge.source}||${edge.target}||${edge.kind || ""}||${edge.role_type || ""}`;
+      return [key, { ...edge, id: String(edge.id || `visible-edge-${index + 1}`) }];
+    })).values()].slice(0, 100);
+    const nodeIds = new Set(selected);
+    uniqueEdges.forEach((edge) => {
+      nodeIds.add(edge.source);
+      nodeIds.add(edge.target);
+    });
+    const nodes = [...nodeIds].map((id) => nodeById.get(id)).filter(Boolean).slice(0, 60).map((node) => ({
+      id: node.id,
+      label: node.label || node.id,
+      kind: node.kind,
+    }));
+    const allowedIds = new Set(nodes.map((node) => node.id));
+    const edges = uniqueEdges.filter((edge) => allowedIds.has(edge.source) && allowedIds.has(edge.target)).map((edge) => ({
+      id: edge.id,
+      source: edge.source,
+      source_label: nodeById.get(edge.source)?.label || edge.source,
+      target: edge.target,
+      target_label: nodeById.get(edge.target)?.label || edge.target,
+      kind: edge.kind,
+      phrase: edge.phrase || edge.role_type || "is linked to",
+      confidence: edge.confidence || "",
+      evidence: edge.evidence,
+      evidence_items: edge.evidence_items,
+    }));
+    return { nodes, edges };
+  }
+
+  function renderQuestionAnswer(payload) {
+    const edges = new Map((Array.isArray(payload?.context?.edges) ? payload.context.edges : []).map((edge) => [String(edge.id), edge]));
+    const evidence = new Map((Array.isArray(payload?.context?.evidence) ? payload.context.evidence : []).map((item) => [String(item.id), item]));
+    const claims = Array.isArray(payload?.claims) ? payload.claims : [];
+    questionResultEl.innerHTML = `
+      <div class="analysis-text">${escapeHtml(payload?.answer || "No answer returned.").replaceAll("\n", "<br>")}</div>
+      ${claims.map((claim) => `
+        <div class="analysis-claim">
+          <div class="analysis-claim-text">${escapeHtml(claim.text || "")}</div>
+          ${(Array.isArray(claim.edge_ids) ? claim.edge_ids : []).map((id) => edges.get(String(id))).filter(Boolean).map((edge) => `
+            <div class="question-citation">
+              ${escapeHtml(edge.source_label || edge.source_id)} ${escapeHtml(edge.phrase || "is linked to")} ${escapeHtml(edge.target_label || edge.target_id)} · ${escapeHtml(edge.confidence || "confidence unavailable")}
+              ${(Array.isArray(edge.evidence_ids) ? edge.evidence_ids : []).map((id) => evidence.get(String(id))).filter(Boolean).map((item) => {
+                const url = evidenceActionUrl(item);
+                return url ? ` · <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>` : "";
+              }).join("")}
+            </div>
+          `).join("")}
+        </div>
+      `).join("")}
+    `;
+  }
+
+  async function askSelectedSubgraph() {
+    const question = String(questionInputEl.value || "").trim();
+    if (!question) throw new Error("Enter a question first.");
+    const subgraph = buildQuestionSubgraph();
+    if (!subgraph.edges.length) throw new Error("The selected nodes have no visible connecting path.");
+    questionSubmitEl.disabled = true;
+    questionResultEl.innerHTML = '<div class="analysis-empty">Reading the selected visible relationships...</div>';
+    try {
+      const response = await fetch(graphFunctionUrl(ANALYZE_CONNECTION_URL), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ graph: currentGraphKey, question, subgraph }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || `Subgraph question failed (${response.status})`);
+      renderQuestionAnswer(payload);
+    } finally {
+      questionSubmitEl.disabled = false;
+    }
+  }
+
   function renderAnalysisHtml(payload) {
     if (!payload || typeof payload !== "object") {
       return '<div class="analysis-error">Connection analysis returned an invalid payload.</div>';
     }
     const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map((item) => [String(item.id || ""), item]));
     const claims = Array.isArray(payload.claims) ? payload.claims : [];
-    const pathItems = Array.isArray(payload.path) ? payload.path : [];
+    const pathItems = Array.isArray(payload.path?.edges)
+      ? payload.path.edges
+      : Array.isArray(payload.path) ? payload.path : [];
     const sourceNode = nodeById.get(payload.sourceNodeId);
     const targetNode = nodeById.get(payload.targetNodeId);
     return `
@@ -3292,8 +3807,40 @@
     scorePanelEl.innerHTML = renderAnalysisHtml(payload);
   }
 
-  function ensureAddressMap() {
+  function loadExternalAsset(tagName, url) {
+    const attribute = tagName === "link" ? "href" : "src";
+    const existing = document.querySelector(`${tagName}[${attribute}="${url}"]`);
+    if (existing?.dataset.loaded === "true") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const element = existing || document.createElement(tagName);
+      element.addEventListener("load", () => {
+        element.dataset.loaded = "true";
+        resolve();
+      }, { once: true });
+      element.addEventListener("error", () => reject(new Error(`Failed to load ${url}`)), { once: true });
+      if (existing) return;
+      element[attribute] = url;
+      if (tagName === "link") element.rel = "stylesheet";
+      document.head.appendChild(element);
+    });
+  }
+
+  function ensureLeafletLoaded() {
+    if (window.L) return Promise.resolve();
+    if (!leafletLoadingPromise) {
+      leafletLoadingPromise = Promise.all([
+        loadExternalAsset("link", LEAFLET_CSS_URL),
+        loadExternalAsset("script", LEAFLET_SCRIPT_URL),
+      ]).then(() => undefined).finally(() => {
+        leafletLoadingPromise = null;
+      });
+    }
+    return leafletLoadingPromise;
+  }
+
+  async function ensureAddressMap() {
     if (addressMap) return;
+    await ensureLeafletLoaded();
     addressMap = L.map("address-map", { zoomControl: true });
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -3377,8 +3924,8 @@
   }
 
   async function openMapView() {
-    ensureAddressMap();
     setSidebarTab("map");
+    await ensureAddressMap();
     const ok = await ensureAddressCoordinatesLoaded();
     if (!ok) {
       addressMarkersLayer.clearLayers();
@@ -3409,12 +3956,11 @@
       nodes: visibleNodes,
       edges: visibleEdges,
       rootIds: scene.rootIds,
-    });
+    }, { fit: !options?.preserveViewport });
     renderExtraTreeSummary();
-    if (!options?.preserveViewport) {
-      renderer.fitToNodes(visibleNodes);
-    }
     renderScorePanel();
+    if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
+    renderQuestionSelection();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
       openMapView().catch(() => {});
@@ -3429,31 +3975,34 @@
     modeBuilderButton?.addEventListener("click", () => setAppMode("builder"));
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
-      submitBuilderJob().catch((error) => setBuilderStatus(error.message || "Graph build failed to start.", true));
+      submitBuilderJob().catch((error) => {
+        casePlanSubmitButton.disabled = false;
+        setBuilderStatus(error.message || "Case planning failed to start.", true);
+      });
     });
-    builderModeInput?.addEventListener("change", () => {
-      setBuilderModeFields();
-      updateBuilderVersionInput();
+    caseRunButton?.addEventListener("click", () => {
+      runPlannedCase().catch((error) => {
+        caseRunButton.disabled = false;
+        setBuilderStatus(error.message || "Case discovery failed to start.", true);
+      });
     });
-    [builderGraphTitleInput, builderGraphIdInput, builderSeedNamesInput].forEach((input) => {
-      input?.addEventListener("input", updateBuilderVersionInput);
+    caseResetButton?.addEventListener("click", resetCaseDesk);
+    caseRecipeInput?.addEventListener("change", updateAreaControls);
+    caseAddInputButton?.addEventListener("click", () => {
+      casePlanInputsEl.insertAdjacentHTML("beforeend", renderCaseInput());
+      casePlanInputsEl.querySelector(".case-input:last-child .case-input-value")?.focus();
     });
-    builderSaveModeInput?.addEventListener("change", () => {
-      if (builderGraphVersionInput) builderGraphVersionInput.value = "";
-      updateBuilderVersionInput();
+    caseAddSegmentButton?.addEventListener("click", () => {
+      casePlanSegmentsEl.classList.remove("hidden");
+      casePlanSegmentsEl.insertAdjacentHTML("beforeend", renderCaseSegment({ operation: "expand_address_occupants", enabled: false, max_results: 100 }));
     });
-    builderRefreshGraphsButton?.addEventListener("click", () => {
-      loadGeneratedGraphOptions().catch((error) => setBuilderStatus(error.message || "Generated graph refresh failed.", true));
+    casePlanInputsEl?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".case-input-remove");
+      if (removeButton) removeButton.closest(".case-input")?.remove();
     });
-    builderGraphListEl?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-graph-action]");
-      if (!button) return;
-      handleGeneratedGraphAction(button).catch((error) => setBuilderStatus(error.message || "Generated graph action failed.", true));
-    });
-    builderGraphListEl?.addEventListener("change", (event) => {
-      const select = event.target.closest(".builder-graph-version-select");
-      if (!select) return;
-      handleGeneratedGraphVersionChange(select).catch((error) => setBuilderStatus(error.message || "Generated graph version change failed.", true));
+    casePlanSegmentsEl?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".case-segment-remove");
+      if (removeButton) removeButton.closest(".case-segment")?.remove();
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();
@@ -3518,10 +4067,45 @@
       viewerState.rankedCategory = nextCategory;
       renderScorePanel();
     });
+    resolutionPanelEl?.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-resolution-index]");
+      if (!button) return;
+      const action = (resolutionPanelEl._actions || [])[Number(button.dataset.resolutionIndex || -1)];
+      if (!action) return;
+      button.disabled = true;
+      try {
+        if (action.type === "merge") {
+          await persistMergeOverride({ ...action, operation: "add" });
+        } else if (action.type === "reject") {
+          await persistResolutionDecision({ ...action, operation: "add" });
+        } else if (action.type === "undo_merge") {
+          await persistMergeOverride({ ...action, operation: "remove" });
+        } else if (action.type === "undo_reject") {
+          await persistResolutionDecision({ ...action, operation: "remove" });
+        }
+      } catch (error) {
+        console.error(error);
+        window.alert("Resolution decision could not be saved.");
+      } finally {
+        button.disabled = false;
+      }
+    });
+    questionSubmitEl?.addEventListener("click", () => {
+      askSelectedSubgraph().catch((error) => {
+        questionResultEl.innerHTML = `<div class="analysis-error">${escapeHtml(error.message || "Question failed.")}</div>`;
+      });
+    });
+    questionClearEl?.addEventListener("click", () => {
+      viewerState.questionNodeIds = [];
+      questionInputEl.value = "";
+      questionResultEl.innerHTML = "";
+      renderQuestionSelection();
+    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
         setSidebarTab(tabName);
+        if (tabName === "resolve") renderResolutionPanel();
         if (tabName === "map") {
           openMapView().catch(() => {});
         }
@@ -3540,9 +4124,21 @@
       } else
       if (action.type === "open_url" && action.url) {
         window.open(action.url, "_blank", "noopener,noreferrer");
+      } else if (action.type === "edge_details") {
+        openEdgeEvidenceView(action.edge);
       } else if (action.type === "node_claims") {
         const node = nodeById.get(action.nodeId);
         if (node) openNodeAttributionView(node);
+      } else if (action.type === "question_add") {
+        viewerState.questionNodeIds = [...viewerState.questionNodeIds, action.nodeId].slice(0, 8);
+        renderQuestionSelection();
+      } else if (action.type === "question_remove") {
+        viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id) => id !== action.nodeId);
+        renderQuestionSelection();
+      } else if (action.type === "question_open") {
+        setSidebarTab("ask");
+        toggleSidebar(true);
+        questionInputEl.focus();
       } else if (action.type === "low_confidence_expand" || action.type === "low_confidence_collapse") {
         viewerState.searchQuery = "";
         searchInput.value = "";
@@ -3560,7 +4156,7 @@
         const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}" and display "${leaderLabel}"? This will persist across graph rebuilds.`);
         if (!confirmed) return;
         try {
-          await persistMergeOverride({ ...action, operation: "add", leaderKey });
+          await persistMergeOverride({ ...action, operation: "add", leaderKey, leaderLabel });
         } catch (error) {
           console.error(error);
           window.alert("Persisted merge failed.");
@@ -3628,6 +4224,9 @@
         applyViewerState();
       } else if (action.type === "analysis_add") {
         viewerState.analysisNodeIds = [...viewerState.analysisNodeIds, action.nodeId].slice(0, 2);
+        if (viewerState.analysisNodeIds.length === 2) {
+          openAnalysisView().catch(() => window.alert("Connection analysis failed."));
+        }
       } else if (action.type === "analysis_remove") {
         viewerState.analysisNodeIds = viewerState.analysisNodeIds.filter((id) => id !== action.nodeId);
       } else if (action.type === "analysis_run") {
@@ -3664,7 +4263,6 @@
   async function boot() {
     renderLegend();
     initGraphSwitcher();
-    setBuilderModeFields();
     await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {
       onHover(node, event, hit) {
@@ -3681,6 +4279,9 @@
       onEdgeHover(edge, event) {
         if (!edge) return;
         showTooltip(event, tooltipLinesForEdge(edge));
+      },
+      onPointerMove(event) {
+        positionTooltip(event);
       },
       onContextMenu(node, event) {
         openContextMenu(node, event);

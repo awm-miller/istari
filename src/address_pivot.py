@@ -10,10 +10,10 @@ from urllib import error, request
 
 from src.addresses import (
     NormalizedAddress,
+    addresses_match,
     address_dork_query,
     extract_company_addresses,
     extract_charity_addresses,
-    first_address_line,
 )
 from src.charity_commission.client import CharityCommissionClient
 from src.charity_commission.expansion import build_charity_record
@@ -26,6 +26,7 @@ log = logging.getLogger("istari.address_pivot")
 
 _COMPANY_SITE = "find-and-update.company-information.service.gov.uk/company"
 _CHARITY_SITE = "register-of-charities.charitycommission.gov.uk"
+_COMPANY_SEARCH_LIMIT = 500
 
 
 class AddressPivotSearcher:
@@ -50,54 +51,67 @@ class AddressPivotSearcher:
         source_registry_number: str,
         source_suffix: int,
     ) -> list[dict[str, Any]]:
+        try:
+            rows = self.find_organisations(address)
+        except Exception as exc:
+            log.warning("  Address pivot failed for %s: %s", address.label, exc)
+            return []
+        discovered = {
+            (str(row["registry_type"]), str(row["registry_number"]), int(row.get("suffix", 0))): row
+            for row in rows
+        }
+        for key in list(discovered):
+            if key == (source_registry_type, source_registry_number, source_suffix):
+                del discovered[key]
+        return list(discovered.values())
+
+    def find_organisations(self, address: NormalizedAddress) -> list[dict[str, Any]]:
         discovered: dict[tuple[str, str, int], dict[str, Any]] = {}
         for row in self._search_companies(address):
             key = ("company", str(row["registry_number"]), int(row.get("suffix", 0)))
-            if key == (source_registry_type, source_registry_number, source_suffix):
-                continue
             discovered[key] = row
         if self.settings.serper_api_key:
             for row in self._search_charities(address):
                 key = ("charity", str(row["registry_number"]), int(row.get("suffix", 0)))
-                if key == (source_registry_type, source_registry_number, source_suffix):
-                    continue
                 discovered[key] = row
         return list(discovered.values())
 
     def _search_companies(self, address: NormalizedAddress) -> list[dict[str, Any]]:
-        search_terms = [term for term in [first_address_line(address.label), address.postcode or ""] if term]
-        if not search_terms:
+        query = address.label.strip()
+        if not query:
             return []
-        query = " ".join(search_terms)
         rows = []
         seen_numbers: set[str] = set()
         try:
-            search_results = self.companies_house_client.search_companies(query, items_per_page=20)
+            search_results = self.companies_house_client.search_companies_advanced(
+                location=query,
+                size=_COMPANY_SEARCH_LIMIT,
+            )
         except Exception as exc:
-            log.warning("  Address pivot: company search failed for %s: %s", query, exc)
-            return []
-        for result in search_results.get("items", []):
-            company_number = str(result.get("company_number") or "").upper().strip()
-            if not company_number:
+            raise RuntimeError(f"Companies House address search failed for {query}: {exc}") from exc
+
+        items = search_results.get("items", [])
+        for result in items if isinstance(items, list) else []:
+            if not isinstance(result, dict):
                 continue
-            if company_number in seen_numbers:
+            company_number = str(result.get("company_number") or "").upper().strip()
+            if not company_number or company_number in seen_numbers:
                 continue
             seen_numbers.add(company_number)
-            try:
-                profile = self.companies_house_client.get_company_profile(company_number)
-            except Exception as exc:
-                log.warning("  Address pivot: company profile lookup failed for %s: %s", company_number, exc)
-                continue
-            if not _has_matching_address(address, extract_company_addresses(profile)):
+            result_address = result.get("registered_office_address")
+            if not isinstance(result_address, dict) or not _has_matching_address(
+                address,
+                extract_company_addresses({"registered_office_address": result_address}),
+            ):
                 continue
             rows.append(
                 {
                     "registry_type": "company",
                     "registry_number": company_number,
                     "suffix": 0,
-                    "name": str(profile.get("company_name") or company_number).strip(),
-                    "status": profile.get("company_status"),
-                    "metadata": profile,
+                    "name": str(result.get("company_name") or company_number).strip(),
+                    "status": result.get("company_status"),
+                    "metadata": {"registered_office_address": result_address},
                     "source": "address_pivot_company",
                 }
             )
@@ -191,7 +205,24 @@ def build_organisation_record(row: dict[str, Any]) -> OrganisationRecord:
 
 
 def _has_matching_address(target: NormalizedAddress, candidates: list[NormalizedAddress]) -> bool:
-    return any(candidate.normalized_key == target.normalized_key for candidate in candidates)
+    return any(
+        addresses_match(target, candidate) or _numbered_street_query_matches(target, candidate)
+        for candidate in candidates
+    )
+
+
+def _numbered_street_query_matches(target: NormalizedAddress, candidate: NormalizedAddress) -> bool:
+    if target.postcode:
+        return False
+    target_key = _flat_address_key(target)
+    candidate_key = _flat_address_key(candidate)
+    if not re.search(r"\d", target_key):
+        return False
+    return candidate_key == target_key or candidate_key.startswith(f"{target_key} ")
+
+
+def _flat_address_key(address: NormalizedAddress) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", address.normalized_key.upper())).strip()
 
 
 def _extract_charity_number_from_title(title: str) -> str | None:

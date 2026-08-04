@@ -81,6 +81,41 @@ def first_address_line(label: str) -> str:
     return next((part.strip() for part in str(label).split(",") if part.strip()), "")
 
 
+def normalize_address_label(value: Any) -> NormalizedAddress:
+    label = _clean_part(value)
+    if not label:
+        raise ValueError("Address cannot be empty.")
+    postcode_match = re.search(
+        r"\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b",
+        label,
+        flags=re.IGNORECASE,
+    )
+    postcode = postcode_match.group(1) if postcode_match else ""
+    without_postcode = label
+    if postcode_match:
+        without_postcode = f"{label[:postcode_match.start()]} {label[postcode_match.end():]}"
+    parts = [_clean_part(part) for part in without_postcode.split(",")]
+    parts = [part for part in parts if part]
+    addresses = _build_addresses(
+        parts,
+        postcode=postcode,
+        country=None,
+        source_kind="case_input",
+        raw_payload={"value": label},
+    )
+    if not addresses:
+        raise ValueError(f"Could not normalise address: {label}")
+    return addresses[0]
+
+
+def addresses_match(left: NormalizedAddress, right: NormalizedAddress) -> bool:
+    left_postcode = _normalize_postcode(left.postcode)
+    right_postcode = _normalize_postcode(right.postcode)
+    if left_postcode and right_postcode and left_postcode != right_postcode:
+        return False
+    return _address_comparison_key(left) == _address_comparison_key(right)
+
+
 def _build_addresses(
     parts: list[Any],
     *,
@@ -145,3 +180,15 @@ def _normalize_postcode(value: Any) -> str:
 def _normalize_fragment(value: str) -> str:
     text = re.sub(r"[^A-Z0-9]+", " ", str(value).upper()).strip()
     return re.sub(r"\s+", " ", text)
+
+
+def _address_comparison_key(address: NormalizedAddress) -> str:
+    postcode = _normalize_postcode(address.postcode).replace(" ", "")
+    countries = {"ENGLAND", "SCOTLAND", "WALES", "NORTHERN IRELAND", "UNITED KINGDOM", "UK"}
+    parts = []
+    for part in str(address.normalized_key or "").split("|"):
+        normalized = _normalize_fragment(part)
+        if not normalized or normalized in countries or normalized.replace(" ", "") == postcode:
+            continue
+        parts.append(normalized)
+    return _normalize_fragment(" ".join(parts))

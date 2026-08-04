@@ -1,8 +1,15 @@
 {
+  "scripts": {
+    "audit:frontend": "node scripts/audit_frontend.mjs",
+    "audit:browser": "node scripts/audit_frontend_browser.mjs",
+    "audit:live": "node scripts/audit_live_frontend.mjs",
+    "audit": "npm run audit:frontend && npm run audit:browser"
+  },
   "dependencies": {
-    "@netlify/blobs": "^10.7.4"
+    "@netlify/blobs": "^10.7.10"
   },
   "devDependencies": {
-    "netlify-cli": "^24.8.1"
+    "netlify-cli": "^24.8.1",
+    "playwright-core": "^1.62.0"
   }
 }

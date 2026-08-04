@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Any
 
@@ -165,9 +166,7 @@ class ResolutionService:
             len(unique_groups),
         )
 
-        total = len(unresolved)
-        processed = 0
-        known_birth_month_years_by_frontier: dict[str, set[tuple[int, int]]] = {}
+        group_contexts = []
         for group in unique_groups:
             _representative_row, representative_candidate = max(
                 group,
@@ -177,9 +176,28 @@ class ResolutionService:
                 representative_candidate,
                 default_seed_name=str(run["seed_name"]),
             )
+            group_contexts.append((group, representative_candidate, frontier_name))
+
+        workers = min(matcher.settings.resolution_workers, max(1, len(group_contexts)))
+        log.info("Resolution workers: %d", workers)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="istari-resolution") as executor:
+            base_decisions = list(
+                executor.map(
+                    lambda context: matcher.resolve(context[2], context[1]),
+                    group_contexts,
+                )
+            )
+
+        total = len(unresolved)
+        processed = 0
+        known_birth_month_years_by_frontier: dict[str, set[tuple[int, int]]] = {}
+        for (group, representative_candidate, frontier_name), base_decision in zip(
+            group_contexts,
+            base_decisions,
+            strict=True,
+        ):
             frontier_key = normalize_name(frontier_name)
             known_birth_month_years = known_birth_month_years_by_frontier.setdefault(frontier_key, set())
-            base_decision = matcher.resolve(frontier_name, representative_candidate)
             base_decision = apply_low_information_name_guard(
                 seed_name=frontier_name,
                 candidate=representative_candidate,
