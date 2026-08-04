@@ -4,6 +4,9 @@ import { chromium } from "playwright-core";
 
 const baseUrl = String(process.env.ISTARI_LIVE_URL || "https://projectistari.netlify.app").replace(/\/$/, "");
 const password = String(process.env.ISTARI_PRODUCTION_PASSWORD || "");
+const areaQuery = String(process.env.ISTARI_AREA_QUERY || "").trim();
+const areaExpectedInput = String(process.env.ISTARI_AREA_EXPECTED_INPUT || "Whitechapel Road").trim();
+const areaPlanOnly = String(process.env.ISTARI_AREA_PLAN_ONLY || "").trim() === "1";
 const browserCandidates = [
   process.env.PLAYWRIGHT_BROWSER_PATH,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -271,6 +274,46 @@ async function testBuilder(page) {
   log(`Builder completed and opened ${graphKey}: ${counts.nodes} nodes, ${counts.edges} edges`);
 }
 
+async function testAreaBuilder(page, query) {
+  await page.goto(`${baseUrl}/94-park-ave/`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".graph-node-label", { timeout: 60_000 });
+  await page.locator("#mode-builder").click();
+  await page.waitForSelector("#builder-panel:not(.hidden)");
+  await page.locator("#case-query").fill(query);
+  await page.locator("#case-plan-submit").click();
+  await waitForBuilder(page, "planned", 180_000);
+
+  assert.equal(await page.locator("#case-recipe").inputValue(), "area-clusters");
+  assert.equal(await page.locator(".case-input-kind").first().inputValue(), "area");
+  assert.equal((await page.locator(".case-input-value").first().inputValue()).toLowerCase(), areaExpectedInput.toLowerCase());
+  assert.equal(await page.locator("#case-minimum-occupancy").inputValue(), "3");
+  assert.equal(await page.locator("#case-rounds").inputValue(), "0");
+  assert.equal(await page.locator("#case-people").isChecked(), false);
+  if (areaPlanOnly) {
+    log(`Area planner preserved ${areaExpectedInput} with the area-clusters route`);
+    return;
+  }
+  await page.locator("#case-run").click();
+  await waitForBuilder(page, "completed", 900_000);
+
+  const stdout = await page.locator("#builder-status").innerText();
+  assert.match(stdout, /Charity area coverage .* can be incomplete/i);
+  await page.locator("#case-open-result").click();
+  await page.waitForURL(/\/generated-graphs\//, { timeout: 30_000 });
+  await page.waitForSelector(".graph-node-label", { timeout: 60_000 });
+  const data = await graphData(page);
+  const graphKey = new URL(page.url()).pathname.split("/").filter(Boolean).at(-1);
+  const counts = validateReferents(data, graphKey);
+  const addressIds = new Set(data.nodes.filter((node) => node.kind === "address").map((node) => String(node.id)));
+  assert.ok(addressIds.size, "Area discovery produced no qualifying addresses");
+  for (const addressId of addressIds) {
+    const occupancy = data.edges.filter((edge) => edge.kind === "address_link"
+      && (String(edge.source) === addressId || String(edge.target) === addressId)).length;
+    assert.ok(occupancy >= 3, `${addressId} has occupancy ${occupancy}, expected at least 3`);
+  }
+  log(`Area Builder completed ${graphKey}: ${addressIds.size} qualifying addresses, ${counts.nodes} nodes, ${counts.edges} edges`);
+}
+
 async function testMobile(context) {
   const page = await context.newPage();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -300,6 +343,12 @@ try {
   await authenticate(page);
   runtimeErrors.length = 0;
   log("password gate passed");
+  if (areaQuery) {
+    await testAreaBuilder(page, areaQuery);
+    assert.deepEqual(runtimeErrors, [], `browser runtime errors:\n${runtimeErrors.join("\n")}`);
+    log("production area Builder audit passed");
+    process.exitCode = 0;
+  } else {
   await testGraphSwitcher(page);
   for (const graphKey of staticGraphs) await openGraph(page, graphKey);
   await testViewer(page);
@@ -309,6 +358,7 @@ try {
   await testBuilder(page);
   assert.deepEqual(runtimeErrors, [], `browser runtime errors:\n${runtimeErrors.join("\n")}`);
   log("production frontend audit passed");
+  }
 } finally {
   await browser.close();
 }
