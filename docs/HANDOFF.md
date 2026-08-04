@@ -15,7 +15,7 @@ server-side proxy token.
 ## Service boundary
 
 Netlify owns the viewer, Builder, graph-specific functions, password gate, and
-scheduled job pump. ChatGPT Sites owns natural-language planning, registry
+15-minute background job pump. ChatGPT Sites owns natural-language planning, registry
 adapters, the durable work queue, graph checkpoints, immutable graph versions,
 and generated graph responses.
 
@@ -73,6 +73,7 @@ deploy the saved version. Do not deploy an uncommitted archive.
 1. Open `/mb/`, select Builder, and submit a natural-language brief.
 2. Confirm researched subjects, exact entities, addresses, evidence links, and editable operations appear before approval.
 3. Change an operation or limit, approve the plan, and confirm stdout advances without duplicate work.
+   Planning output should show model passes and public web or registry tool status, never hidden chain-of-thought.
 4. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
 5. Check repeated edge tooltips, graph selection, duplicate resolution, selected-subgraph questions, and immutable version URLs.
 6. Check Sites worker logs after the run and treat any 5xx response as a failed acceptance test.

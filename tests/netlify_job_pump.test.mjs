@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { config, pumpJobs } from "../netlify/functions/istari-job-pump.mjs";
+import { config as backgroundConfig, runBackgroundPump } from "../netlify/functions/istari-job-pump-background.mjs";
 
 test("scheduled pump calls only the protected internal backend route", async () => {
   process.env.ISTARI_SITES_ORIGIN = "https://backend.example/";
@@ -21,4 +22,12 @@ test("scheduled pump fails closed when credentials are absent", async () => {
   delete process.env.ISTARI_SITES_ORIGIN;
   delete process.env.ISTARI_SITES_PROXY_TOKEN;
   await assert.rejects(() => pumpJobs(), /not configured/);
+});
+
+test("background pump uses asynchronous Netlify execution", async () => {
+  process.env.ISTARI_SITES_ORIGIN = "https://backend.example";
+  process.env.ISTARI_SITES_PROXY_TOKEN = "server-secret";
+  assert.equal(backgroundConfig.background, true);
+  const result = await runBackgroundPump(async () => Response.json({ ok: true, results: [] }));
+  assert.deepEqual(result, { ok: true, results: [] });
 });

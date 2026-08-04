@@ -403,6 +403,11 @@
     return data;
   }
 
+  async function startBuilderPump() {
+    const response = await fetch("/.netlify/functions/istari-job-pump-background", { method: "POST" });
+    if (!response.ok) throw new Error(`Case worker failed to start with ${response.status}`);
+  }
+
   async function submitBuilderJob() {
     const query = String(caseQueryInput?.value || "").trim();
     if (!query) throw new Error("Write a short investigation brief first.");
@@ -415,6 +420,7 @@
     renderBuilderStdout(job);
     currentCaseJobId = String(job.id || "");
     if (!currentCaseJobId) throw new Error("The case planner did not return a job id.");
+    await startBuilderPump();
     await pollBuilderJob(currentCaseJobId);
   }
 
@@ -463,6 +469,7 @@
       plan: approvedCasePlan(),
     });
     renderBuilderStdout(data.job || {});
+    await startBuilderPump();
     await pollBuilderJob(currentCaseJobId);
   }
 

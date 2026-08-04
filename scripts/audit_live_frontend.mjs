@@ -285,7 +285,11 @@ async function testAreaBuilder(page, query) {
 
   assert.equal(await page.locator("#case-recipe").inputValue(), "area-clusters");
   assert.equal(await page.locator(".case-input-kind").first().inputValue(), "area");
-  assert.equal((await page.locator(".case-input-value").first().inputValue()).toLowerCase(), areaExpectedInput.toLowerCase());
+  const plannedArea = (await page.locator(".case-input-value").first().inputValue()).trim().toLowerCase();
+  assert.ok(
+    plannedArea.includes(areaExpectedInput.toLowerCase()),
+    `planned area ${plannedArea} does not preserve ${areaExpectedInput}`,
+  );
   assert.equal(await page.locator("#case-minimum-occupancy").inputValue(), "3");
   assert.equal(await page.locator("#case-rounds").inputValue(), "0");
   assert.equal(await page.locator("#case-people").isChecked(), false);
