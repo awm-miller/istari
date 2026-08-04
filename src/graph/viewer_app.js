@@ -46,6 +46,7 @@
   const builderFormEl = document.getElementById("builder-form");
   const caseQueryInput = document.getElementById("case-query");
   const casePlanSubmitButton = document.getElementById("case-plan-submit");
+  const caseDirectButton = document.getElementById("case-direct");
   const casePlanEl = document.getElementById("case-plan");
   const casePlanTitleEl = document.getElementById("case-plan-title");
   const casePlanSubjectsEl = document.getElementById("case-plan-subjects");
@@ -248,14 +249,14 @@
 
   function renderCasePlan(plan) {
     currentCasePlan = plan;
-    casePlanTitleEl.textContent = plan.title || "Untitled case";
+    casePlanTitleEl.value = plan.title || "Untitled case";
     const subjects = Array.isArray(plan.subjects) ? plan.subjects : [];
     const segments = Array.isArray(plan.segments) ? plan.segments : [];
     casePlanSubjectsEl.innerHTML = subjects.map(renderCaseSubject).join("");
     casePlanSubjectsEl.classList.toggle("hidden", !subjects.length);
     casePlanSegmentsEl.innerHTML = segments.map(renderCaseSegment).join("");
     casePlanSegmentsEl.classList.toggle("hidden", !segments.length);
-    caseAddSegmentButton.classList.toggle("hidden", !segments.length);
+    caseAddSegmentButton.classList.remove("hidden");
     casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
     caseRecipeInput.value = plan.recipe || "registry-light";
     caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
@@ -354,6 +355,8 @@
     const plan = JSON.parse(JSON.stringify(currentCasePlan || {}));
     plan.policy = plan.policy || {};
     plan.enrichments = plan.enrichments || {};
+    plan.title = String(casePlanTitleEl.value || "").trim();
+    if (!plan.title) throw new Error("Add a case title.");
     plan.recipe = caseRecipeInput.value;
     plan.inputs = [...casePlanInputsEl.querySelectorAll(".case-input")].map((row) => ({
       kind: row.querySelector(".case-input-kind").value,
@@ -382,6 +385,31 @@
     plan.enrichments.documents = !!caseDocumentsInput.checked;
     plan.enrichments.negative_news = !!caseNegativeNewsInput.checked;
     return plan;
+  }
+
+  function startDirectContract() {
+    currentCaseJobId = "";
+    caseOpenResultEl.classList.add("hidden");
+    setBuilderStatus("$ new research contract");
+    renderCasePlan({
+      version: 1,
+      title: "New investigation",
+      recipe: "registry-light",
+      inputs: [{ kind: "company", value: "" }],
+      subjects: [],
+      segments: [],
+      policy: {
+        pivot_kinds: ["address", "company", "charity"],
+        leaf_kinds: ["person"],
+        max_rounds: 2,
+        max_entities: 500,
+        minimum_occupancy: 3,
+        max_addresses: 50,
+      },
+      enrichments: { sanctions: true, documents: false, negative_news: false },
+    });
+    casePlanTitleEl.focus();
+    casePlanTitleEl.select();
   }
 
   function updateAreaControls() {
@@ -462,11 +490,21 @@
   }
 
   async function runPlannedCase() {
-    if (!currentCaseJobId || !currentCasePlan) throw new Error("Draft a case scope first.");
+    if (!currentCasePlan) throw new Error("Draft a case scope first.");
     caseRunButton.disabled = true;
     setBuilderStatus("$ run approved scope");
+    const plan = approvedCasePlan();
+    if (!currentCaseJobId) {
+      const created = await postBuilderJson("/api/case-jobs", { plan });
+      const job = created.job || {};
+      currentCaseJobId = String(job.id || "");
+      if (!currentCaseJobId || job.status !== "planned") {
+        throw new Error("The backend did not accept the research contract.");
+      }
+      renderBuilderStdout(job);
+    }
     const data = await postBuilderJson(`/api/case-jobs/${encodeURIComponent(currentCaseJobId)}/run`, {
-      plan: approvedCasePlan(),
+      plan,
     });
     renderBuilderStdout(data.job || {});
     await startBuilderPump();
@@ -3987,6 +4025,7 @@
         setBuilderStatus(error.message || "Case planning failed to start.", true);
       });
     });
+    caseDirectButton?.addEventListener("click", startDirectContract);
     caseRunButton?.addEventListener("click", () => {
       runPlannedCase().catch((error) => {
         caseRunButton.disabled = false;

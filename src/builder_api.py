@@ -167,6 +167,24 @@ def create_app() -> Flask:
         if flask_request.method == "OPTIONS":
             return _empty_response()
         payload = _json_payload()
+        direct_plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else None
+        if direct_plan is not None:
+            try:
+                spec = CaseSpec.from_dict(direct_plan)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": _safe_error(exc)}), 400
+            job_id = uuid.uuid4().hex
+            job = {
+                "id": job_id,
+                "status": "planned",
+                "stage": "awaiting_approval",
+                "request": {"query": "", "case_id": spec.id, "title": spec.title},
+                "plan": spec.to_dict(),
+                "result": None,
+                "error": "",
+            }
+            _write_case_job(job_id, job)
+            return jsonify({"ok": True, "job": _read_case_job(job_id)}), 202
         query = " ".join(str(payload.get("query") or "").split()).strip()
         if not query:
             return jsonify({"ok": False, "error": "Describe what Istari should investigate."}), 400

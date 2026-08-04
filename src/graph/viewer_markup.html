@@ -100,13 +100,17 @@
           <button class="builder-submit" id="case-plan-submit" type="submit">
             Review scope
           </button>
+          <button class="case-reset" id="case-direct" type="button">Fill contract directly</button>
         </div>
       </form>
       <pre class="builder-stdout" id="builder-status" aria-label="Run output"></pre>
       <a class="case-open-result hidden" id="case-open-result" href="#">Open graph</a>
 
       <section class="case-plan hidden" id="case-plan">
-        <h2 id="case-plan-title">Untitled case</h2>
+        <label class="case-title-field">
+          <span>Case title</span>
+          <input id="case-plan-title" type="text" value="Untitled case" />
+        </label>
         <div class="case-subjects hidden" id="case-plan-subjects"></div>
         <div class="case-segments hidden" id="case-plan-segments"></div>
         <button class="case-add-input hidden" id="case-add-segment" type="button">Add operation</button>

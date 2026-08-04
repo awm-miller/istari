@@ -10,8 +10,8 @@ separate Istari Juicer service on ChatGPT Sites.
 
 ## Production flow
 
-1. The Builder sends a natural-language brief to the Sites backend.
-2. OpenRouter plans researched subjects, exact entities, addresses, and editable operations.
+1. The Builder sends either a natural-language brief or a directly completed research contract to the Sites backend.
+2. Briefs use OpenRouter planning; direct contracts skip the model and open at approval.
 3. The user reviews and changes the plan before approving it.
 4. The backend runs a resumable Companies House and Charity Commission work queue.
 5. Completed graph versions appear at `/generated-graphs/<case-id>/`.

@@ -572,11 +572,31 @@ body.builder-mode #compact-legend {{
   border-top: 1px solid #39414e;
 }}
 .case-plan.hidden {{ display: none; }}
-.case-plan h2 {{
-  margin: 0;
+.case-title-field {{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}}
+.case-title-field span {{
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}}
+.case-title-field input {{
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #2a303b;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-bright);
+  padding: 8px 0;
+  font: inherit;
   font-size: 18px;
   font-weight: 600;
+  outline: none;
+}}
+.case-title-field input:focus {{
+  border-color: #79a8d2;
 }}
 .case-subjects,
 .case-segments {{

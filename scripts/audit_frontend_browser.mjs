@@ -16,6 +16,7 @@ const contentTypes = new Map([
   [".css", "text/css"], [".html", "text/html"], [".js", "text/javascript"], [".json", "application/json"],
 ]);
 let caseStatus = "queued";
+let directPlan = null;
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
@@ -65,11 +66,30 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (url.pathname === "/.netlify/functions/istari-job-pump-background" && request.method === "POST") {
+    response.writeHead(202).end();
+    return;
+  }
   if (url.pathname === "/api/generated-graphs") {
     sendJson(response, { graphs: [{ id: "generated-check", title: "Generated check", path: "/generated-graphs/generated-check/" }] });
     return;
   }
   if (url.pathname === "/api/case-jobs" && request.method === "POST") {
+    const body = await requestJson(request);
+    if (body.plan) {
+      directPlan = body.plan;
+      caseStatus = "planned";
+      sendJson(response, {
+        ok: true,
+        job: {
+          id: "abc123",
+          status: "planned",
+          plan: body.plan,
+          stdout: [{ message: "contract: ready for approval", created_at: new Date().toISOString() }],
+        },
+      }, 202);
+      return;
+    }
     caseStatus = "queued";
     sendJson(response, { ok: true, job: { id: "abc123", status: "queued", stdout: [{ message: "planner: queued", created_at: new Date().toISOString() }] } }, 202);
     return;
@@ -258,7 +278,10 @@ try {
   assert.ok(await page.locator("#builder-panel").isVisible(), "Builder did not open");
   await page.locator("#case-query").fill("Investigate company 00000006");
   await page.locator("#case-plan-submit").click();
-  await page.waitForSelector("#case-plan:not(.hidden)");
+  await page.waitForSelector("#case-plan:not(.hidden)").catch(async (error) => {
+    const status = await page.locator("#builder-status").innerText().catch(() => "");
+    throw new Error(`${error.message}\nBuilder output: ${status}\nBrowser errors: ${runtimeErrors.join(" | ")}`);
+  });
   assert.equal(await page.locator("#case-rounds").getAttribute("max"), "5");
   assert.equal(await page.locator("#case-entities").getAttribute("max"), "5000");
   await page.locator("#case-recipe").selectOption("area-clusters");
@@ -272,11 +295,22 @@ try {
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
+  await page.locator("#case-reset").click();
+  await page.locator("#case-direct").click();
+  await page.locator("#case-plan-title").fill("Direct contract audit");
+  await page.locator(".case-input-kind").first().selectOption("address");
+  await page.locator(".case-input-value").first().fill("32 Store Street, London");
+  await page.locator("#case-recipe").selectOption("address-network");
+  await page.locator("#case-run").click();
+  await page.waitForSelector("#case-open-result:not(.hidden)");
+  assert.equal(directPlan?.title, "Direct contract audit");
+  assert.deepEqual(directPlan?.inputs, [{ kind: "address", value: "32 Store Street, London" }]);
+  assert.equal(directPlan?.recipe, "address-network");
   await page.locator("#mode-viewer").click();
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, repeated edge hover, evidence, added trees, resolution, subgraph questions, and Builder mode.");
+  console.log("Browser audit passed: rendering, repeated edge hover, evidence, added trees, resolution, subgraph questions, and both Builder entry paths.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

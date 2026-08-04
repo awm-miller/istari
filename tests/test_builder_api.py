@@ -194,6 +194,28 @@ class BuilderApiTest(unittest.TestCase):
         self.assertEqual((), approved_spec.policy.leaf_kinds)
         self.assertTrue(approved_spec.enrichments.documents)
 
+    def test_direct_case_contract_skips_the_planner(self) -> None:
+        response = self.client.post(
+            "/api/case-jobs",
+            json={
+                "plan": {
+                    "version": 1,
+                    "title": "Direct contract",
+                    "recipe": "registry-light",
+                    "inputs": [{"kind": "company", "value": "00000006"}],
+                    "policy": {"max_rounds": 2, "max_entities": 500},
+                    "enrichments": {"sanctions": True},
+                }
+            },
+        )
+
+        self.assertEqual(202, response.status_code)
+        job = response.get_json()["job"]
+        self.assertEqual("planned", job["status"])
+        self.assertEqual("awaiting_approval", job["stage"])
+        self.assertEqual("Direct contract", job["plan"]["title"])
+        self.assertEqual("", job["request"]["query"])
+
     def test_discovery_failure_can_retry_the_approved_plan(self) -> None:
         spec = CaseSpec.from_dict(
             {

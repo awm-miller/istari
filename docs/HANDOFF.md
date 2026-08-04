@@ -70,7 +70,7 @@ deploy the saved version. Do not deploy an uncommitted archive.
 
 ## Acceptance checks
 
-1. Open `/mb/`, select Builder, and submit a natural-language brief.
+1. Open `/mb/`, select Builder, and test both a natural-language brief and **Fill contract directly**.
 2. Confirm researched subjects, exact entities, addresses, evidence links, and editable operations appear before approval.
 3. Change an operation or limit, approve the plan, and confirm stdout advances without duplicate work.
    Planning output should show model passes and public web or registry tool status, never hidden chain-of-thought.
