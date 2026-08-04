@@ -440,8 +440,12 @@
     return data;
   }
 
-  async function startBuilderPump() {
-    const response = await fetch("/.netlify/functions/istari-job-pump-background", { method: "POST" });
+  async function startBuilderPump(jobId) {
+    const response = await fetch("/.netlify/functions/istari-job-pump-background", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_id: String(jobId || "") }),
+    });
     if (!response.ok) throw new Error(`Case worker failed to start with ${response.status}`);
   }
 
@@ -458,7 +462,7 @@
     renderBuilderStdout(job);
     currentCaseJobId = String(job.id || "");
     if (!currentCaseJobId) throw new Error("The case planner did not return a job id.");
-    await startBuilderPump();
+    await startBuilderPump(currentCaseJobId);
     await pollBuilderJob(currentCaseJobId);
   }
 
@@ -466,6 +470,9 @@
     let consecutiveFailures = 0;
     for (let attempt = 0; attempt < 360; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
+      if (attempt > 0 && attempt % 20 === 0) {
+        void startBuilderPump(jobId).catch(() => {});
+      }
       let response;
       try {
         response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
@@ -529,7 +536,7 @@
       plan,
     });
     renderBuilderStdout(data.job || {});
-    await startBuilderPump();
+    await startBuilderPump(currentCaseJobId);
     await pollBuilderJob(currentCaseJobId);
   }
 

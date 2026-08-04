@@ -20,6 +20,7 @@ let casePollFailures = 0;
 let transientPollObserved = false;
 let directPlan = null;
 let approvedPlan = null;
+const pumpTargets = [];
 let generatedGraphDeleted = false;
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
@@ -71,6 +72,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/.netlify/functions/istari-job-pump-background" && request.method === "POST") {
+    pumpTargets.push((await requestJson(request)).job_id);
     response.writeHead(202).end();
     return;
   }
@@ -319,6 +321,7 @@ try {
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["company", "charity"]);
   assert.ok(transientPollObserved, "Builder audit did not exercise transient status recovery");
+  assert.ok(pumpTargets.length >= 2 && pumpTargets.every((jobId) => jobId === "abc123"), "Builder did not target its exact job pumps");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
   assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");

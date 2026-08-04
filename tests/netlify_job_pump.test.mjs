@@ -28,6 +28,11 @@ test("background pump uses asynchronous Netlify execution", async () => {
   process.env.ISTARI_SITES_ORIGIN = "https://backend.example";
   process.env.ISTARI_SITES_PROXY_TOKEN = "server-secret";
   assert.equal(backgroundConfig.background, true);
-  const result = await runBackgroundPump(async () => Response.json({ ok: true, results: [] }));
+  let target = "";
+  const result = await runBackgroundPump(async (url) => {
+    target = url;
+    return Response.json({ ok: true, results: [] });
+  }, "abc123");
+  assert.equal(target, "https://backend.example/api/internal/pump/abc123");
   assert.deepEqual(result, { ok: true, results: [] });
 });
