@@ -16,6 +16,8 @@ const contentTypes = new Map([
   [".css", "text/css"], [".html", "text/html"], [".js", "text/javascript"], [".json", "application/json"],
 ]);
 let caseStatus = "queued";
+let casePollFailures = 0;
+let transientPollObserved = false;
 let directPlan = null;
 let approvedPlan = null;
 let generatedGraphDeleted = false;
@@ -98,6 +100,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     caseStatus = "queued";
+    casePollFailures = 1;
     sendJson(response, { ok: true, job: { id: "abc123", status: "queued", stdout: [{ message: "planner: queued", created_at: new Date().toISOString() }] } }, 202);
     return;
   }
@@ -108,6 +111,12 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/case-jobs/abc123" && request.method === "GET") {
+    if (casePollFailures > 0) {
+      casePollFailures -= 1;
+      transientPollObserved = true;
+      sendJson(response, { ok: false, error: "Temporary upstream failure" }, 500);
+      return;
+    }
     const plan = {
       id: "audit-case",
       title: "Audit case",
@@ -161,7 +170,9 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const runtimeErrors = [];
 page.on("pageerror", (error) => runtimeErrors.push(error.message));
 page.on("console", (message) => {
-  if (message.type() === "error") runtimeErrors.push(message.text());
+  const expectedTransientPollError = transientPollObserved
+    && message.text().includes("status of 500 (Internal Server Error)");
+  if (message.type() === "error" && !expectedTransientPollError) runtimeErrors.push(message.text());
 });
 
 try {
@@ -307,6 +318,7 @@ try {
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["company", "charity"]);
+  assert.ok(transientPollObserved, "Builder audit did not exercise transient status recovery");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
   assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");

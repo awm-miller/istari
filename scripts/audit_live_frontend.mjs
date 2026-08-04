@@ -7,6 +7,10 @@ const password = String(process.env.ISTARI_PRODUCTION_PASSWORD || "");
 const areaQuery = String(process.env.ISTARI_AREA_QUERY || "").trim();
 const areaExpectedInput = String(process.env.ISTARI_AREA_EXPECTED_INPUT || "Whitechapel Road").trim();
 const areaPlanOnly = String(process.env.ISTARI_AREA_PLAN_ONLY || "").trim() === "1";
+const subjectQuery = String(process.env.ISTARI_SUBJECT_QUERY || "").trim();
+const subjectGraphTitle = String(process.env.ISTARI_SUBJECT_GRAPH_TITLE || "Agent E2E subject addresses").trim();
+const subjectGraphId = String(process.env.ISTARI_SUBJECT_GRAPH_ID || "agent-e2e-subject-addresses").trim();
+const headless = String(process.env.ISTARI_HEADLESS || "1").trim() !== "0";
 const browserCandidates = [
   process.env.PLAYWRIGHT_BROWSER_PATH,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -318,6 +322,46 @@ async function testAreaBuilder(page, query) {
   log(`Area Builder completed ${graphKey}: ${addressIds.size} qualifying addresses, ${counts.nodes} nodes, ${counts.edges} edges`);
 }
 
+async function testSubjectAddressBuilder(page, query) {
+  await page.goto(`${baseUrl}/94-park-ave/`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".graph-node-label", { timeout: 60_000 });
+  await page.locator("#mode-builder").click();
+  await page.waitForSelector("#builder-panel:not(.hidden)");
+  await page.locator("#case-query").fill(query);
+  await page.locator("#case-plan-submit").click();
+  await waitForBuilder(page, "planned", 300_000);
+
+  assert.equal(await page.locator("#case-recipe").inputValue(), "registry-light");
+  assert.ok(await page.locator("#case-plan-subjects .case-subject").count(), "planner returned no researched subject");
+  assert.ok(await page.locator("#case-plan-subjects .case-source-links a").count(), "researched subject has no evidence links");
+  await page.locator("#case-plan-title").fill(subjectGraphTitle);
+  await page.locator("#case-plan-id").fill(subjectGraphId);
+  await page.locator("#case-people").uncheck();
+  await page.locator("#case-run").click();
+  await waitForBuilder(page, "completed", 900_000);
+
+  const stdout = await page.locator("#builder-status").innerText();
+  assert.match(stdout, /complete:/i, "Builder stdout has no completion marker");
+  assert.doesNotMatch(stdout, /address_(?:companies|charities):/i, "Registry route expanded address occupants");
+  assert.ok(await page.locator("#case-progress").isVisible(), "progress strip is hidden");
+  await page.locator("#case-progress").click();
+  assert.ok(await page.locator("#run-log-sheet").isVisible(), "progress strip did not open the run log");
+  await page.locator("#run-log-close").click();
+
+  await page.locator("#case-open-result").click();
+  await page.waitForURL(new RegExp(`/generated-graphs/${subjectGraphId}/?$`), { timeout: 30_000 });
+  await page.waitForSelector(".graph-node-label", { timeout: 60_000 });
+  const data = await graphData(page);
+  const counts = validateReferents(data, subjectGraphId);
+  assert.ok(data.nodes.some((node) => node.kind === "organisation"), "subject run produced no organisation");
+  assert.ok(data.nodes.some((node) => node.kind === "address"), "subject run produced no address");
+  assert.ok(data.edges.some((edge) => edge.kind === "address_link"), "subject run produced no organisation-address relationship");
+  await page.locator("#graph-switcher-button").click();
+  assert.equal(await page.locator(`.graph-switcher-option[data-graph-key="${subjectGraphId}"]`).getAttribute("aria-current"), "page");
+  assert.ok(await page.locator(`.graph-switcher-row:has(.graph-switcher-option[data-graph-key="${subjectGraphId}"]) .graph-delete-button`).count(), "generated graph has no delete action");
+  log(`Subject Builder completed ${subjectGraphId}: ${counts.nodes} nodes, ${counts.edges} edges with valid referents`);
+}
+
 async function testMobile(context) {
   const page = await context.newPage();
   await page.setViewportSize({ width: 390, height: 844 });
@@ -329,7 +373,7 @@ async function testMobile(context) {
   await page.close();
 }
 
-const browser = await chromium.launch({ executablePath: await browserPath(), headless: true });
+const browser = await chromium.launch({ executablePath: await browserPath(), headless, slowMo: headless ? 0 : 100 });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await context.newPage();
 const runtimeErrors = [];
@@ -341,13 +385,25 @@ page.on("console", (message) => {
 });
 page.on("response", (response) => {
   if (response.status() >= 400) runtimeErrors.push(`${response.status()} ${response.url()}`);
+  const target = decodeURIComponent(new URL(response.url()).searchParams.get("target") || "");
+  if (response.request().method() === "POST" && target === "/api/case-jobs") {
+    void response.json().then((body) => {
+      const jobId = String(body?.job?.id || "");
+      if (jobId) log(`backend job ${jobId}`);
+    }).catch(() => {});
+  }
 });
 
 try {
   await authenticate(page);
   runtimeErrors.length = 0;
   log("password gate passed");
-  if (areaQuery) {
+  if (subjectQuery) {
+    await testSubjectAddressBuilder(page, subjectQuery);
+    assert.deepEqual(runtimeErrors, [], `browser runtime errors:\n${runtimeErrors.join("\n")}`);
+    log("production subject-address Builder audit passed");
+    process.exitCode = 0;
+  } else if (areaQuery) {
     await testAreaBuilder(page, areaQuery);
     assert.deepEqual(runtimeErrors, [], `browser runtime errors:\n${runtimeErrors.join("\n")}`);
     log("production area Builder audit passed");

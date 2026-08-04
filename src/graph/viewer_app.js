@@ -463,13 +463,25 @@
   }
 
   async function pollBuilderJob(jobId) {
+    let consecutiveFailures = 0;
     for (let attempt = 0; attempt < 360; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 800 : 2500));
-      const response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
+      let response;
+      try {
+        response = await fetch(builderApiUrl(`/api/case-jobs/${encodeURIComponent(jobId)}`), { cache: "no-store" });
+      } catch (error) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures < 12) continue;
+        throw error;
+      }
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.ok === false) {
+        const transient = response.status === 429 || response.status >= 500;
+        consecutiveFailures += 1;
+        if (transient && consecutiveFailures < 12) continue;
         throw new Error(data.error || `Case status failed with ${response.status}`);
       }
+      consecutiveFailures = 0;
       const job = data.job || {};
       renderBuilderStdout(job);
       if (job.status === "planned") {
