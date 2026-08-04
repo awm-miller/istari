@@ -48,6 +48,9 @@
   const casePlanSubmitButton = document.getElementById("case-plan-submit");
   const casePlanEl = document.getElementById("case-plan");
   const casePlanTitleEl = document.getElementById("case-plan-title");
+  const casePlanSubjectsEl = document.getElementById("case-plan-subjects");
+  const casePlanSegmentsEl = document.getElementById("case-plan-segments");
+  const caseAddSegmentButton = document.getElementById("case-add-segment");
   const casePlanInputsEl = document.getElementById("case-plan-inputs");
   const caseAddInputButton = document.getElementById("case-add-input");
   const caseRecipeInput = document.getElementById("case-recipe");
@@ -246,6 +249,13 @@
   function renderCasePlan(plan) {
     currentCasePlan = plan;
     casePlanTitleEl.textContent = plan.title || "Untitled case";
+    const subjects = Array.isArray(plan.subjects) ? plan.subjects : [];
+    const segments = Array.isArray(plan.segments) ? plan.segments : [];
+    casePlanSubjectsEl.innerHTML = subjects.map(renderCaseSubject).join("");
+    casePlanSubjectsEl.classList.toggle("hidden", !subjects.length);
+    casePlanSegmentsEl.innerHTML = segments.map(renderCaseSegment).join("");
+    casePlanSegmentsEl.classList.toggle("hidden", !segments.length);
+    caseAddSegmentButton.classList.toggle("hidden", !segments.length);
     casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
     caseRecipeInput.value = plan.recipe || "registry-light";
     caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
@@ -259,6 +269,71 @@
     caseNegativeNewsInput.checked = !!plan.enrichments?.negative_news;
     casePlanEl.classList.remove("hidden");
     casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  const CASE_OPERATIONS = [
+    "resolve_subjects",
+    "discover_addresses",
+    "load_registry_records",
+    "expand_address_occupants",
+    "expand_organisations",
+    "include_people",
+    "area_clusters",
+    "sanctions",
+    "documents",
+    "negative_news",
+  ];
+
+  function renderCaseSubject(subject = {}) {
+    const entities = Array.isArray(subject.entities) ? subject.entities : [];
+    const addresses = Array.isArray(subject.addresses) ? subject.addresses : [];
+    const entityRows = entities.map((entity) => {
+      const registry = entity.registry_type === "external"
+        ? "public entity"
+        : `${entity.registry_type || "registry"} ${entity.registry_number || ""}`.trim();
+      return `<div class="case-subject-fact"><span>${escapeHtml(entity.label || "Unlabelled entity")}</span><small>${escapeHtml(registry)}</small>${renderEvidenceLinks(entity.evidence)}</div>`;
+    }).join("");
+    const addressRows = addresses.map((address) => (
+      `<div class="case-subject-fact"><span>${escapeHtml(address.value || "")}</span><small>${escapeHtml(address.address_type || "address")}</small>${renderEvidenceLinks(address.evidence)}</div>`
+    )).join("");
+    return `<section class="case-subject"><h3>${escapeHtml(subject.label || "Subject")}</h3>${entityRows}${addressRows}</section>`;
+  }
+
+  function renderEvidenceLinks(evidence) {
+    const links = (Array.isArray(evidence) ? evidence : []).map((item) => {
+      const url = safeExternalUrl(item.url);
+      if (!url) return "";
+      return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">source</a>`;
+    }).filter(Boolean);
+    return links.length ? `<span class="case-source-links">${links.join("")}</span>` : "";
+  }
+
+  function safeExternalUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function renderCaseSegment(segment = {}) {
+    const operation = CASE_OPERATIONS.includes(segment.operation) ? segment.operation : "resolve_subjects";
+    const options = CASE_OPERATIONS.map((value) => (
+      `<option value="${value}"${value === operation ? " selected" : ""}>${caseOperationLabel(value)}</option>`
+    )).join("");
+    return `
+      <div class="case-segment">
+        <input class="case-segment-enabled" type="checkbox" aria-label="Enable operation"${segment.enabled !== false ? " checked" : ""} />
+        <select class="case-segment-operation" aria-label="Operation">${options}</select>
+        <input class="case-segment-limit" type="number" min="1" max="5000" aria-label="Result limit" value="${Number(segment.max_results) || 100}" />
+        <button class="case-segment-remove" type="button" aria-label="Remove operation">Remove</button>
+      </div>
+    `;
+  }
+
+  function caseOperationLabel(operation) {
+    return String(operation || "").replaceAll("_", " ");
   }
 
   function renderCaseInput(input = {}) {
@@ -284,7 +359,20 @@
       kind: row.querySelector(".case-input-kind").value,
       value: row.querySelector(".case-input-value").value.trim(),
     })).filter((input) => input.value);
-    if (!plan.inputs.length) throw new Error("Add at least one starting input.");
+    plan.segments = [...casePlanSegmentsEl.querySelectorAll(".case-segment")].map((row, index) => {
+      const operation = row.querySelector(".case-segment-operation").value;
+      return {
+        id: `${index + 1}-${operation}`,
+        operation,
+        label: caseOperationLabel(operation),
+        enabled: row.querySelector(".case-segment-enabled").checked,
+        max_results: Number(row.querySelector(".case-segment-limit").value || 100),
+      };
+    });
+    const hasResearchMaterial = (Array.isArray(plan.subjects) ? plan.subjects : []).some((subject) => (
+      (Array.isArray(subject.entities) && subject.entities.length) || (Array.isArray(subject.addresses) && subject.addresses.length)
+    ));
+    if (!plan.inputs.length && !hasResearchMaterial) throw new Error("Add an input or retain a resolved subject.");
     plan.policy.max_rounds = Number(caseRoundsInput.value || 2);
     plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
     plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
@@ -3904,9 +3992,17 @@
       casePlanInputsEl.insertAdjacentHTML("beforeend", renderCaseInput());
       casePlanInputsEl.querySelector(".case-input:last-child .case-input-value")?.focus();
     });
+    caseAddSegmentButton?.addEventListener("click", () => {
+      casePlanSegmentsEl.classList.remove("hidden");
+      casePlanSegmentsEl.insertAdjacentHTML("beforeend", renderCaseSegment({ operation: "expand_address_occupants", enabled: false, max_results: 100 }));
+    });
     casePlanInputsEl?.addEventListener("click", (event) => {
       const removeButton = event.target.closest(".case-input-remove");
       if (removeButton) removeButton.closest(".case-input")?.remove();
+    });
+    casePlanSegmentsEl?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest(".case-segment-remove");
+      if (removeButton) removeButton.closest(".case-segment")?.remove();
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();

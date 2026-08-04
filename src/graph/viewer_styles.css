@@ -578,6 +578,69 @@ body.builder-mode #compact-legend {{
   font-size: 18px;
   font-weight: 600;
 }}
+.case-subjects,
+.case-segments {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}}
+.case-subjects.hidden,
+.case-segments.hidden {{ display: none; }}
+.case-subject {{
+  padding: 12px 0;
+  border-bottom: 1px solid #252b34;
+}}
+.case-subject h3 {{
+  margin: 0 0 7px;
+  color: #d8dde5;
+  font-size: 13px;
+  font-weight: 600;
+}}
+.case-subject-fact {{
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 24px;
+  color: #aeb6c1;
+  font-size: 11px;
+}}
+.case-subject-fact small {{ color: #687280; }}
+.case-source-links {{
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}}
+.case-source-links a {{
+  color: #8eb9dc;
+  text-decoration: none;
+}}
+.case-segment {{
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 84px auto;
+  gap: 8px;
+  align-items: center;
+}}
+.case-segment-enabled {{ accent-color: #6e95b9; }}
+.case-segment select,
+.case-segment-limit {{
+  min-width: 0;
+  border: 1px solid #2a303b;
+  border-radius: 4px;
+  background: #0f1218;
+  color: #cdd2da;
+  padding: 8px 9px;
+  font-size: 11px;
+  outline: none;
+}}
+.case-segment-remove {{
+  border: 0;
+  background: transparent;
+  color: #737c89;
+  font-size: 10px;
+  cursor: pointer;
+}}
+.case-segment-remove:hover {{ color: #c4cbd4; }}
 .case-inputs {{
   display: flex;
   flex-direction: column;
