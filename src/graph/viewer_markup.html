@@ -115,11 +115,15 @@
             <select id="case-recipe">
               <option value="registry-light">Registry</option>
               <option value="address-network">Address network</option>
+              <option value="area-clusters">Area clusters</option>
             </select>
           </label>
-          <label><span>Rounds</span><input id="case-rounds" type="number" min="1" max="5" /></label>
-          <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="1000" /></label>
+          <label><span>Rounds</span><input id="case-rounds" type="number" min="0" max="5" /></label>
+          <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="5000" /></label>
+          <label class="case-area-control hidden"><span>Minimum at one address</span><input id="case-minimum-occupancy" type="number" min="2" max="100" /></label>
+          <label class="case-area-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /></label>
         </div>
+        <p class="case-area-note hidden" id="case-area-note">Streets, postcode districts such as E1, and full postcodes are supported. Organisations are grouped by building before this threshold is applied.</p>
         <div class="case-toggles" aria-label="Optional enrichments">
           <label><input id="case-people" type="checkbox" /><span>People</span></label>
           <label><input id="case-sanctions" type="checkbox" /><span>Sanctions</span></label>

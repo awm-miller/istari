@@ -528,6 +528,15 @@ body.builder-mode #compact-legend {{
   grid-template-columns: minmax(150px, 1fr) minmax(100px, 0.55fr) minmax(140px, 0.7fr);
   gap: 18px;
 }}
+.case-area-control.hidden,
+.case-area-note.hidden {{ display: none; }}
+.case-area-note {{
+  margin: 10px 0 0;
+  max-width: 620px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.55;
+}}
 .builder-actions {{
   display: flex;
   align-items: center;

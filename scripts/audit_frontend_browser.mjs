@@ -260,9 +260,14 @@ try {
   await page.locator("#case-plan-submit").click();
   await page.waitForSelector("#case-plan:not(.hidden)");
   assert.equal(await page.locator("#case-rounds").getAttribute("max"), "5");
-  assert.equal(await page.locator("#case-entities").getAttribute("max"), "1000");
+  assert.equal(await page.locator("#case-entities").getAttribute("max"), "5000");
+  await page.locator("#case-recipe").selectOption("area-clusters");
+  assert.ok(await page.locator("#case-minimum-occupancy").isVisible(), "Area occupancy control is hidden");
+  assert.ok(await page.locator("#case-max-addresses").isVisible(), "Area address ceiling is hidden");
+  await page.locator("#case-recipe").selectOption("registry-light");
   await page.locator("#case-add-input").click();
   assert.equal(await page.locator(".case-input").count(), 2);
+  assert.equal(await page.locator(".case-input-kind").last().locator('option[value="area"]').count(), 1);
   await page.locator(".case-input-remove").last().click();
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");

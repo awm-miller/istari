@@ -53,6 +53,10 @@
   const caseRecipeInput = document.getElementById("case-recipe");
   const caseRoundsInput = document.getElementById("case-rounds");
   const caseEntitiesInput = document.getElementById("case-entities");
+  const caseMinimumOccupancyInput = document.getElementById("case-minimum-occupancy");
+  const caseMaxAddressesInput = document.getElementById("case-max-addresses");
+  const caseAreaControlEls = [...document.querySelectorAll(".case-area-control")];
+  const caseAreaNoteEl = document.getElementById("case-area-note");
   const casePeopleInput = document.getElementById("case-people");
   const caseSanctionsInput = document.getElementById("case-sanctions");
   const caseDocumentsInput = document.getElementById("case-documents");
@@ -244,8 +248,11 @@
     casePlanTitleEl.textContent = plan.title || "Untitled case";
     casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
     caseRecipeInput.value = plan.recipe || "registry-light";
-    caseRoundsInput.value = String(plan.policy?.max_rounds || 2);
+    caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
     caseEntitiesInput.value = String(plan.policy?.max_entities || 500);
+    caseMinimumOccupancyInput.value = String(plan.policy?.minimum_occupancy || 3);
+    caseMaxAddressesInput.value = String(plan.policy?.max_addresses || 200);
+    updateAreaControls();
     casePeopleInput.checked = (plan.policy?.leaf_kinds || ["person"]).includes("person");
     caseSanctionsInput.checked = plan.enrichments?.sanctions !== false;
     caseDocumentsInput.checked = !!plan.enrichments?.documents;
@@ -256,7 +263,7 @@
 
   function renderCaseInput(input = {}) {
     const kind = String(input.kind || "person");
-    const options = ["person", "company", "charity", "address"].map((value) => (
+    const options = ["person", "company", "charity", "address", "area"].map((value) => (
       `<option value="${value}"${value === kind ? " selected" : ""}>${value}</option>`
     )).join("");
     return `
@@ -280,11 +287,19 @@
     if (!plan.inputs.length) throw new Error("Add at least one starting input.");
     plan.policy.max_rounds = Number(caseRoundsInput.value || 2);
     plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
+    plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
+    plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
     plan.policy.leaf_kinds = casePeopleInput.checked ? ["person"] : [];
     plan.enrichments.sanctions = !!caseSanctionsInput.checked;
     plan.enrichments.documents = !!caseDocumentsInput.checked;
     plan.enrichments.negative_news = !!caseNegativeNewsInput.checked;
     return plan;
+  }
+
+  function updateAreaControls() {
+    const isArea = caseRecipeInput?.value === "area-clusters";
+    caseAreaControlEls.forEach((element) => element.classList.toggle("hidden", !isArea));
+    caseAreaNoteEl?.classList.toggle("hidden", !isArea);
   }
 
   async function postBuilderJson(path, payload) {
@@ -3884,6 +3899,7 @@
       });
     });
     caseResetButton?.addEventListener("click", resetCaseDesk);
+    caseRecipeInput?.addEventListener("change", updateAreaControls);
     caseAddInputButton?.addEventListener("click", () => {
       casePlanInputsEl.insertAdjacentHTML("beforeend", renderCaseInput());
       casePlanInputsEl.querySelector(".case-input:last-child .case-input-value")?.focus();

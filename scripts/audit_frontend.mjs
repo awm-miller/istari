@@ -109,7 +109,7 @@ async function auditControls() {
   const controls = [
     "graph-switcher-button", "search", "mode-viewer", "mode-builder", "toggle-sidebar",
     "indirect-only", "sanctioned-only", "negative-news-only", "case-plan-submit", "case-run",
-    "case-reset", "case-add-input", "compare-clear", "details-modal-close",
+    "case-reset", "case-add-input", "case-minimum-occupancy", "case-max-addresses", "compare-clear", "details-modal-close",
     "resolution-panel", "question-selection", "question-input", "question-submit", "question-clear",
   ];
   for (const id of controls) {
