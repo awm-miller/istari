@@ -17,6 +17,7 @@ const contentTypes = new Map([
 ]);
 let caseStatus = "queued";
 let directPlan = null;
+let approvedPlan = null;
 let generatedGraphDeleted = false;
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
@@ -101,6 +102,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/case-jobs/abc123/run" && request.method === "POST") {
+    approvedPlan = (await requestJson(request)).plan;
     caseStatus = "completed";
     sendJson(response, { ok: true, job: { id: "abc123", status: "running", stdout: [{ message: "discovery: approved", created_at: new Date().toISOString() }] } }, 202);
     return;
@@ -304,6 +306,7 @@ try {
   await page.locator(".case-input-remove").last().click();
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
+  assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["company", "charity"]);
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
   assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");
@@ -326,6 +329,7 @@ try {
   assert.equal(directPlan?.id, "direct-contract-audit");
   assert.deepEqual(directPlan?.inputs, [{ kind: "address", value: "32 Store Street, London" }]);
   assert.equal(directPlan?.recipe, "address-network");
+  assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["address", "company", "charity"]);
   await page.locator("#mode-viewer").click();
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 

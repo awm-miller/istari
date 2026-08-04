@@ -381,6 +381,9 @@
     plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
     plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
     plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
+    plan.policy.pivot_kinds = plan.recipe === "address-network"
+      ? ["address", "company", "charity"]
+      : ["company", "charity"];
     plan.policy.leaf_kinds = casePeopleInput.checked ? ["person"] : [];
     plan.enrichments = { sanctions: false, documents: false, negative_news: false };
     return plan;
