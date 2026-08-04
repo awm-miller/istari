@@ -30,6 +30,12 @@ class Settings:
     pdf_enrichment_model: str
     pdf_enrichment_max_documents: int
     pdf_enrichment_max_chunks: int
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "~deepseek/deepseek-v4-flash-latest"
+    openrouter_case_reasoning_effort: str = "medium"
+    openrouter_resolution_model: str = "~deepseek/deepseek-v4-flash-latest"
+    resolution_workers: int = 4
 
 
 def load_dotenv(dotenv_path: Path) -> None:
@@ -78,7 +84,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         openai_resolution_model=os.getenv("OPENAI_RESOLUTION_MODEL", "gpt-4.1-mini"),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
         openai_web_search_context=os.getenv("OPENAI_WEB_SEARCH_CONTEXT", "medium"),
-        resolution_provider=os.getenv("RESOLUTION_PROVIDER", "gemini"),
+        resolution_provider=os.getenv("RESOLUTION_PROVIDER", "openrouter"),
         serper_api_key=os.getenv("SERPER_API_KEY"),
         serper_base_url=os.getenv("SERPER_BASE_URL", "https://google.serper.dev").rstrip("/"),
         user_agent=os.getenv("USER_AGENT", "project-istari/0.1"),
@@ -86,4 +92,16 @@ def load_settings(project_root: Path | None = None) -> Settings:
         pdf_enrichment_model=os.getenv("PDF_ENRICHMENT_MODEL", os.getenv("GEMINI_RESOLUTION_MODEL", "gemini-2.5-flash")),
         pdf_enrichment_max_documents=int(os.getenv("PDF_ENRICHMENT_MAX_DOCUMENTS", "3")),
         pdf_enrichment_max_chunks=int(os.getenv("PDF_ENRICHMENT_MAX_CHUNKS", "4")),
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openrouter_base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/"),
+        openrouter_model=os.getenv(
+            "OPENROUTER_CASE_MODEL",
+            "~deepseek/deepseek-v4-flash-latest",
+        ),
+        openrouter_case_reasoning_effort=os.getenv("OPENROUTER_CASE_REASONING_EFFORT", "medium"),
+        openrouter_resolution_model=os.getenv(
+            "OPENROUTER_RESOLUTION_MODEL",
+            "~deepseek/deepseek-v4-flash-latest",
+        ),
+        resolution_workers=max(1, int(os.getenv("RESOLUTION_WORKERS", "4"))),
     )

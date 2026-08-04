@@ -8,6 +8,7 @@ from src.config import Settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.models import CandidateMatch, ResolutionDecision
 from src.openai_api import OpenAIResponsesClient, extract_json_document, extract_output_text
+from src.openrouter_api import OpenRouterChatClient, extract_chat_content
 
 log = logging.getLogger("istari.matcher")
 
@@ -39,9 +40,18 @@ class HybridMatcher:
     high_threshold: float = 0.92
     _gemini: GeminiClient | None = field(init=False, default=None)
     _openai: OpenAIResponsesClient | None = field(init=False, default=None)
+    _openrouter: OpenRouterChatClient | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        if self.settings.resolution_provider == "gemini" and self.settings.gemini_api_key:
+        if self.settings.resolution_provider == "openrouter" and self.settings.openrouter_api_key:
+            self._openrouter = OpenRouterChatClient(
+                api_key=self.settings.openrouter_api_key,
+                base_url=self.settings.openrouter_base_url,
+                cache_dir=self.settings.cache_dir / "openrouter_resolution",
+                user_agent=self.settings.user_agent,
+            )
+            log.info("Resolution LLM: OpenRouter (%s)", self.settings.openrouter_resolution_model)
+        elif self.settings.resolution_provider == "gemini" and self.settings.gemini_api_key:
             self._gemini = GeminiClient(
                 api_key=self.settings.gemini_api_key,
                 cache_dir=self.settings.cache_dir / "gemini_resolution",
@@ -60,7 +70,7 @@ class HybridMatcher:
 
     @property
     def _has_llm(self) -> bool:
-        return self._gemini is not None or self._openai is not None
+        return self._openrouter is not None or self._gemini is not None or self._openai is not None
 
     def resolve(self, seed_name: str, candidate: CandidateMatch) -> ResolutionDecision:
         if candidate.score < self.low_threshold:
@@ -100,6 +110,8 @@ class HybridMatcher:
         prompt = _build_resolution_prompt(seed_name, candidate)
 
         try:
+            if self._openrouter is not None:
+                return self._resolve_openrouter(prompt, candidate)
             if self._gemini is not None:
                 return self._resolve_gemini(prompt, candidate)
             return self._resolve_openai(prompt, seed_name, candidate)
@@ -132,6 +144,22 @@ class HybridMatcher:
         except (ValueError, KeyError):
             document = {}
 
+        return self._decision_from_document(document, candidate, response)
+
+    def _resolve_openrouter(
+        self,
+        prompt: str,
+        candidate: CandidateMatch,
+    ) -> ResolutionDecision:
+        response = self._openrouter.create_chat_completion(
+            model=self.settings.openrouter_resolution_model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        try:
+            document = extract_json_document(extract_chat_content(response))
+        except (ValueError, KeyError):
+            document = {}
         return self._decision_from_document(document, candidate, response)
 
     def _resolve_openai(

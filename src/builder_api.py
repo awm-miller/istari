@@ -16,6 +16,9 @@ from urllib import request
 from flask import Flask, abort, jsonify, make_response, redirect, request as flask_request, send_from_directory
 
 from src.charity_commission.client import CharityCommissionClient
+from src.cases.openrouter import OpenRouterCaseParser
+from src.cases.runner import CaseRunner
+from src.cases.spec import CaseSpec
 from src.companies_house.client import CompaniesHouseClient
 from src.config import Settings, load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
@@ -30,13 +33,15 @@ from src.tree_builder import (
     execute_tree_build,
     normalize_tree_build_request,
 )
-from src.tree_graph_artifacts import build_generated_graph_bundle, list_generated_graphs
+from src.tree_graph_artifacts import build_generated_graph_bundle, list_generated_graphs, sanitize_graph_id
 from src.tree_graph_artifacts import delete_generated_graph, generated_graph_file_path, set_active_graph_version
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 JOB_DIR = Path(os.getenv("TREE_BUILDER_JOB_DIR", PROJECT_ROOT / "data" / "tree_jobs"))
 GENERATED_GRAPH_DIR = Path(os.getenv("TREE_BUILDER_GRAPH_DIR", PROJECT_ROOT / "data" / "generated_graphs"))
+CASE_JOB_DIR = Path(os.getenv("ISTARI_CASE_JOB_DIR", PROJECT_ROOT / "data" / "case_jobs"))
+CASE_WORKSPACE = Path(os.getenv("ISTARI_CASE_WORKSPACE", PROJECT_ROOT / "data" / "cases"))
 STATIC_GRAPH_DIR = Path(os.getenv("ISTARI_STATIC_GRAPH_DIR", PROJECT_ROOT / "netlify_graph_viewer"))
 STATIC_GRAPH_KEYS = frozenset({"mb", "94-park-ave", "iums", "iran", "sevenspikes", "expanded-mb-names"})
 EXECUTOR = ThreadPoolExecutor(max_workers=int(os.getenv("TREE_BUILDER_WORKERS", "1")))
@@ -68,7 +73,6 @@ def create_app() -> Flask:
     @app.route("/<graph_key>/<path:filename>", methods=["GET"])
     def static_graph_file(graph_key: str, filename: str):
         return _send_static_graph_file(graph_key, filename)
-
 
     @app.route("/health", methods=["GET", "OPTIONS"])
     def health():
@@ -158,11 +162,66 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "Job not found."}), 404
         return jsonify({"ok": True, "job": job})
 
+    @app.route("/api/case-jobs", methods=["POST", "OPTIONS"])
+    def create_case_job():
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        payload = _json_payload()
+        query = " ".join(str(payload.get("query") or "").split()).strip()
+        if not query:
+            return jsonify({"ok": False, "error": "Describe what Istari should investigate."}), 400
+        job_id = uuid.uuid4().hex
+        job = {
+            "id": job_id,
+            "status": "queued",
+            "stage": "queued",
+            "request": {
+                "query": query,
+                "case_id": " ".join(str(payload.get("case_id") or "").split()).strip(),
+                "title": " ".join(str(payload.get("title") or "").split()).strip(),
+            },
+            "plan": None,
+            "result": None,
+            "error": "",
+        }
+        _write_case_job(job_id, job)
+        EXECUTOR.submit(_plan_case_job, job_id)
+        return jsonify({"ok": True, "job": _read_case_job(job_id)}), 202
+
+    @app.route("/api/case-jobs/<job_id>", methods=["GET", "OPTIONS"])
+    def get_case_job(job_id: str):
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        job = _read_case_job(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Case job not found."}), 404
+        return jsonify({"ok": True, "job": job})
+
+    @app.route("/api/case-jobs/<job_id>/run", methods=["POST", "OPTIONS"])
+    def run_case_job(job_id: str):
+        if flask_request.method == "OPTIONS":
+            return _empty_response()
+        job = _read_case_job(job_id)
+        if not job:
+            return jsonify({"ok": False, "error": "Case job not found."}), 404
+        can_retry = job.get("status") == "failed" and job.get("stage") == "discovery_failed"
+        if job.get("status") != "planned" and not can_retry:
+            return jsonify({"ok": False, "error": "Case job must be planned before it can run."}), 409
+        payload = _json_payload()
+        try:
+            plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else job.get("plan")
+            spec = CaseSpec.from_dict(plan)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": _safe_error(exc)}), 400
+        _update_case_job(job_id, status="queued", stage="queued_for_discovery", plan=spec.to_dict(), error="")
+        EXECUTOR.submit(_run_case_job, job_id)
+        return jsonify({"ok": True, "job": _read_case_job(job_id)}), 202
+
     @app.route("/api/generated-graphs", methods=["GET", "OPTIONS"])
     def generated_graphs():
         if flask_request.method == "OPTIONS":
             return _empty_response()
-        return jsonify({"ok": True, "graphs": list_generated_graphs(GENERATED_GRAPH_DIR)})
+        return jsonify({"ok": True, "graphs": _list_all_generated_graphs()})
 
     @app.route("/api/generated-graphs/<graph_id>/active", methods=["POST", "OPTIONS"])
     def activate_generated_graph_version(graph_id: str):
@@ -170,7 +229,7 @@ def create_app() -> Flask:
             return _empty_response()
         payload = _json_payload()
         try:
-            graph = set_active_graph_version(GENERATED_GRAPH_DIR, graph_id, str(payload.get("version") or ""))
+            graph = set_active_graph_version(_graph_output_root(graph_id), graph_id, str(payload.get("version") or ""))
             return jsonify({"ok": True, "graph": graph})
         except Exception as exc:
             return jsonify({"ok": False, "error": _safe_error(exc)}), 400
@@ -180,7 +239,7 @@ def create_app() -> Flask:
         if flask_request.method == "OPTIONS":
             return _empty_response()
         try:
-            delete_generated_graph(GENERATED_GRAPH_DIR, graph_id)
+            delete_generated_graph(_graph_output_root(graph_id), graph_id)
             return jsonify({"ok": True})
         except Exception as exc:
             return jsonify({"ok": False, "error": _safe_error(exc)}), 400
@@ -190,7 +249,7 @@ def create_app() -> Flask:
         if flask_request.method == "OPTIONS":
             return _empty_response()
         try:
-            graph = delete_generated_graph(GENERATED_GRAPH_DIR, graph_id, version)
+            graph = delete_generated_graph(_graph_output_root(graph_id), graph_id, version)
             return jsonify({"ok": True, "graph": graph})
         except Exception as exc:
             return jsonify({"ok": False, "error": _safe_error(exc)}), 400
@@ -216,6 +275,52 @@ def create_app() -> Flask:
         return _send_generated_graph_file(graph_id, filename, version=version)
 
     return app
+
+
+def _plan_case_job(job_id: str) -> None:
+    try:
+        job = _read_case_job(job_id) or {}
+        case_request = job.get("request") if isinstance(job.get("request"), dict) else {}
+        settings = load_settings()
+        _update_case_job(job_id, status="planning", stage="interpreting_query", error="")
+        spec = OpenRouterCaseParser.from_settings(settings).parse(
+            str(case_request.get("query") or ""),
+            case_id=str(case_request.get("case_id") or ""),
+            title=str(case_request.get("title") or ""),
+        )
+        _update_case_job(job_id, status="planned", stage="awaiting_approval", plan=spec.to_dict())
+    except Exception as exc:
+        _update_case_job(
+            job_id,
+            status="failed",
+            stage="planning_failed",
+            error=_safe_error(exc),
+            traceback=traceback.format_exc(limit=8),
+        )
+
+
+def _run_case_job(job_id: str) -> None:
+    try:
+        job = _read_case_job(job_id) or {}
+        spec = CaseSpec.from_dict(job.get("plan"))
+        _update_case_job(job_id, status="running", stage="discovery", error="", traceback="")
+        result = CaseRunner(workspace=CASE_WORKSPACE, settings=load_settings()).run(spec)
+        _update_case_job(
+            job_id,
+            status="completed",
+            stage="completed",
+            result=_sanitize_result(result),
+            error="",
+            traceback="",
+        )
+    except Exception as exc:
+        _update_case_job(
+            job_id,
+            status="failed",
+            stage="discovery_failed",
+            error=_safe_error(exc),
+            traceback=traceback.format_exc(limit=8),
+        )
 
 
 def _run_tree_job(job_id: str, payload: dict[str, Any]) -> None:
@@ -433,6 +538,33 @@ def _update_job(job_id: str, **updates: Any) -> None:
     _write_job(job_id, job)
 
 
+def _case_job_path(job_id: str) -> Path:
+    safe_id = "".join(ch for ch in str(job_id) if ch.isalnum() or ch in {"-", "_"})
+    return CASE_JOB_DIR / f"{safe_id}.json"
+
+
+def _read_case_job(job_id: str) -> dict[str, Any] | None:
+    path = _case_job_path(job_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_case_job(job_id: str, data: dict[str, Any]) -> None:
+    CASE_JOB_DIR.mkdir(parents=True, exist_ok=True)
+    path = _case_job_path(job_id)
+    temp_path = path.with_suffix(".json.tmp")
+    with LOCK:
+        temp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        temp_path.replace(path)
+
+
+def _update_case_job(job_id: str, **updates: Any) -> None:
+    job = _read_case_job(job_id) or {"id": job_id}
+    job.update(updates)
+    _write_case_job(job_id, job)
+
+
 def _sanitize_tree_request(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if key != "credentials"}
 
@@ -475,7 +607,7 @@ def _requested_graph_title(payload: dict[str, Any], request: Any) -> str:
 
 def _send_generated_graph_file(graph_id: str, filename: str, *, version: str | None = None):
     try:
-        path = generated_graph_file_path(GENERATED_GRAPH_DIR, graph_id, filename, version)
+        path = generated_graph_file_path(_graph_output_root(graph_id), graph_id, filename, version)
     except Exception:
         abort(404)
     if not path.is_file():
@@ -492,9 +624,39 @@ def _send_static_graph_file(graph_key: str, filename: str):
     return send_from_directory(graph_dir, filename)
 
 
+def _list_all_generated_graphs() -> list[dict[str, Any]]:
+    graphs = list_generated_graphs(GENERATED_GRAPH_DIR)
+    seen = {str(graph.get("id") or "") for graph in graphs}
+    if CASE_WORKSPACE.exists():
+        for case_dir in sorted((path for path in CASE_WORKSPACE.iterdir() if path.is_dir()), reverse=True):
+            for graph in list_generated_graphs(case_dir / "artifacts"):
+                graph_id = str(graph.get("id") or "")
+                if graph_id and graph_id not in seen:
+                    graph["source"] = "case"
+                    graphs.append(graph)
+                    seen.add(graph_id)
+    return graphs
+
+
+def _graph_output_root(graph_id: str) -> Path:
+    safe_id = sanitize_graph_id(graph_id)
+    if (GENERATED_GRAPH_DIR / safe_id).is_dir():
+        return GENERATED_GRAPH_DIR
+    case_artifacts = CASE_WORKSPACE / safe_id / "artifacts"
+    if (case_artifacts / safe_id).is_dir():
+        return case_artifacts
+    return GENERATED_GRAPH_DIR
+
+
 def _safe_error(exc: Exception) -> str:
     text = str(exc)
-    for key in ("GEMINI_API_KEY", "SERPER_API_KEY", "COMPANIES_HOUSE_API_KEY", "CHARITY_COMMISSION_API_KEY"):
+    for key in (
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "SERPER_API_KEY",
+        "COMPANIES_HOUSE_API_KEY",
+        "CHARITY_COMMISSION_API_KEY",
+    ):
         text = text.replace(os.getenv(key, ""), "[redacted]") if os.getenv(key) else text
     return text
 

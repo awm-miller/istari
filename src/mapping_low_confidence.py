@@ -13,6 +13,7 @@ from typing import Any
 from src.config import Settings, load_settings
 from src.gemini_api import GeminiClient, extract_gemini_text
 from src.openai_api import OpenAIResponsesClient, extract_json_document, extract_output_text
+from src.openrouter_api import OpenRouterChatClient, extract_chat_content
 from src.search.queries import generate_name_variants, normalize_name
 
 log = logging.getLogger("istari.mapping_low_confidence")
@@ -1645,9 +1646,17 @@ class OrganisationMatchResolver:
     settings: Settings
     _gemini: GeminiClient | None = field(init=False, default=None)
     _openai: OpenAIResponsesClient | None = field(init=False, default=None)
+    _openrouter: OpenRouterChatClient | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        if self.settings.resolution_provider == "gemini" and self.settings.gemini_api_key:
+        if self.settings.resolution_provider == "openrouter" and self.settings.openrouter_api_key:
+            self._openrouter = OpenRouterChatClient(
+                api_key=self.settings.openrouter_api_key,
+                base_url=self.settings.openrouter_base_url,
+                cache_dir=self.settings.cache_dir / "openrouter_low_confidence_org_resolution",
+                user_agent=self.settings.user_agent,
+            )
+        elif self.settings.resolution_provider == "gemini" and self.settings.gemini_api_key:
             self._gemini = GeminiClient(
                 api_key=self.settings.gemini_api_key,
                 cache_dir=self.settings.cache_dir / "gemini_low_confidence_org_resolution",
@@ -1662,7 +1671,7 @@ class OrganisationMatchResolver:
 
     @property
     def has_llm(self) -> bool:
-        return self._gemini is not None or self._openai is not None
+        return self._openrouter is not None or self._gemini is not None or self._openai is not None
 
     def resolve(
         self,
@@ -1691,7 +1700,14 @@ class OrganisationMatchResolver:
             row_number=row_number,
         )
         try:
-            if self._gemini is not None:
+            if self._openrouter is not None:
+                response = self._openrouter.create_chat_completion(
+                    model=self.settings.openrouter_resolution_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                )
+                document = extract_json_document(extract_chat_content(response))
+            elif self._gemini is not None:
                 response = self._gemini.generate(
                     model=self.settings.gemini_resolution_model,
                     prompt=prompt,

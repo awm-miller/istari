@@ -162,11 +162,20 @@ def normalize_version_id(value: str) -> str:
 
 
 def _next_version_id(graph_dir: Path) -> str:
-    existing = [
+    completed = [
         int(version["version"][1:])
         for version in _list_versions(graph_dir)
         if str(version.get("version", "")).startswith("v") and str(version["version"])[1:].isdigit()
     ]
+    occupied = []
+    version_root = graph_dir / "versions"
+    if version_root.exists():
+        occupied = [
+            int(path.name[1:])
+            for path in version_root.iterdir()
+            if path.is_dir() and path.name.startswith("v") and path.name[1:].isdigit()
+        ]
+    existing = [*completed, *occupied]
     return f"v{(max(existing) + 1) if existing else 1}"
 
 

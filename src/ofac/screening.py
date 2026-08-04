@@ -556,6 +556,18 @@ class OFACScreener:
         deduped.sort(key=self._hit_priority)
         return deduped
 
+    def _public_hit(self, hit: dict[str, Any]) -> dict[str, Any]:
+        public = {
+            key: value
+            for key, value in hit.items()
+            if not str(key).startswith("_")
+        }
+        public["birth_month_years"] = [
+            [month, year]
+            for month, year in sorted(set(hit.get("birth_month_years") or set()))
+        ]
+        return public
+
     def _match_entry(self, query_norm: str, query_tokens: frozenset[str], entry: dict[str, Any]) -> dict[str, Any] | None:
         self._prepare_entry(entry)
         best_match: tuple[str, str] | None = None
@@ -609,7 +621,7 @@ class OFACScreener:
         hits = list(hits_by_key.values())
         hits = self._dedupe_hits(query_norm, hits)
         if birth_month is None or birth_year is None:
-            return hits
+            return [self._public_hit(hit) for hit in hits]
 
         verified_hits = []
         for entry in hits:
@@ -623,7 +635,7 @@ class OFACScreener:
                     "matched_birth_year": birth_year,
                 }
             )
-        return verified_hits
+        return [self._public_hit(hit) for hit in verified_hits]
 
     def screen_names(
         self,

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projectistari.net/schemas/istari-case-v1.schema.json",
+  "title": "Istari Case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "title", "recipe", "inputs", "policy", "enrichments"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
+    "title": {"type": "string", "minLength": 1},
+    "recipe": {"enum": ["registry-light", "address-network"]},
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "value"],
+        "properties": {
+          "kind": {"enum": ["person", "company", "charity", "address"]},
+          "value": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pivot_kinds", "leaf_kinds", "max_rounds", "max_entities"],
+      "properties": {
+        "pivot_kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["address", "company", "charity"]}
+        },
+        "leaf_kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"const": "person"}
+        },
+        "max_rounds": {"type": "integer", "minimum": 1, "maximum": 10},
+        "max_entities": {"type": "integer", "minimum": 1, "maximum": 10000}
+      }
+    },
+    "enrichments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sanctions", "documents", "negative_news"],
+      "properties": {
+        "sanctions": {"type": "boolean"},
+        "documents": {"type": "boolean"},
+        "negative_news": {"type": "boolean"}
+      }
+    }
+  }
+}

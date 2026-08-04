@@ -29,7 +29,7 @@ async function requestModelJson(prompt) {
   const openRouterKey = String(process.env.OPENROUTER_API_KEY || "");
   if (!openRouterKey) return null;
   const baseUrl = (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, "");
-  const model = process.env.OPENROUTER_RESOLUTION_MODEL || "deepseek/deepseek-v4-flash";
+  const model = process.env.OPENROUTER_RESOLUTION_MODEL || "~deepseek/deepseek-v4-flash-latest";
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -42,6 +42,7 @@ async function requestModelJson(prompt) {
       model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
+      provider: { data_collection: "deny", zdr: true },
     }),
   });
   if (!response.ok) throw new Error(`OpenRouter request failed: ${response.status}`);

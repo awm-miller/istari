@@ -38,13 +38,37 @@ class CompaniesHouseClient:
         )
         return self._get_json(url)
 
-    def search_companies(self, query: str, items_per_page: int = 20) -> dict[str, Any]:
+    def search_companies(
+        self,
+        query: str,
+        items_per_page: int = 20,
+        start_index: int = 0,
+    ) -> dict[str, Any]:
         self._ensure_api_key()
         encoded_query = parse.quote(query)
         url = (
             f"{self.settings.companies_house_base_url}/search/companies"
-            f"?q={encoded_query}&items_per_page={items_per_page}"
+            f"?q={encoded_query}&items_per_page={items_per_page}&start_index={start_index}"
         )
+        payload = self._get_json(url)
+        return payload if isinstance(payload, dict) else {}
+
+    def search_companies_advanced(
+        self,
+        *,
+        location: str,
+        size: int = 500,
+        start_index: int = 0,
+    ) -> dict[str, Any]:
+        self._ensure_api_key()
+        query = parse.urlencode(
+            {
+                "location": location,
+                "size": max(1, min(int(size), 5000)),
+                "start_index": max(0, int(start_index)),
+            }
+        )
+        url = f"{self.settings.companies_house_base_url}/advanced-search/companies?{query}"
         payload = self._get_json(url)
         return payload if isinstance(payload, dict) else {}
 

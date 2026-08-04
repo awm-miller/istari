@@ -7,12 +7,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src import builder_api
+from src.cases.spec import CaseSpec
 from src.config import Settings
 
 
 class _NoopExecutor:
     def submit(self, *_args, **_kwargs):
         return None
+
+
+class _ImmediateExecutor:
+    def submit(self, function, *args, **kwargs):
+        return function(*args, **kwargs)
 
 
 def _empty_settings(root: Path) -> Settings:
@@ -48,9 +54,13 @@ class BuilderApiTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self._executor = builder_api.EXECUTOR
         self._generated_graph_dir = builder_api.GENERATED_GRAPH_DIR
+        self._case_job_dir = builder_api.CASE_JOB_DIR
+        self._case_workspace = builder_api.CASE_WORKSPACE
         self._static_graph_dir = builder_api.STATIC_GRAPH_DIR
         builder_api.JOB_DIR = Path(self._tmp.name)
         builder_api.GENERATED_GRAPH_DIR = Path(self._tmp.name) / "generated"
+        builder_api.CASE_JOB_DIR = Path(self._tmp.name) / "case-jobs"
+        builder_api.CASE_WORKSPACE = Path(self._tmp.name) / "cases"
         builder_api.STATIC_GRAPH_DIR = Path(self._tmp.name) / "site"
         builder_api.EXECUTOR = _NoopExecutor()
         self.client = builder_api.create_app().test_client()
@@ -58,6 +68,8 @@ class BuilderApiTest(unittest.TestCase):
     def tearDown(self) -> None:
         builder_api.EXECUTOR = self._executor
         builder_api.GENERATED_GRAPH_DIR = self._generated_graph_dir
+        builder_api.CASE_JOB_DIR = self._case_job_dir
+        builder_api.CASE_WORKSPACE = self._case_workspace
         builder_api.STATIC_GRAPH_DIR = self._static_graph_dir
         self._tmp.cleanup()
 
@@ -129,6 +141,122 @@ class BuilderApiTest(unittest.TestCase):
         self.assertEqual("v2", activate_response.get_json()["graph"]["active_version"])
         self.assertEqual(200, delete_response.status_code)
         self.assertEqual("v1", delete_response.get_json()["graph"]["active_version"])
+
+    def test_case_job_pauses_for_plan_approval_then_runs(self) -> None:
+        spec = CaseSpec.from_dict(
+            {
+                "id": "alice-example",
+                "title": "Alice Example",
+                "inputs": [{"kind": "person", "value": "Alice Example"}],
+            }
+        )
+        builder_api.EXECUTOR = _ImmediateExecutor()
+        with patch("src.builder_api.OpenRouterCaseParser.from_settings") as parser_factory:
+            parser_factory.return_value.parse.return_value = spec
+            plan_response = self.client.post(
+                "/api/case-jobs",
+                json={"query": "Find Alice Example and her organisations"},
+            )
+
+        planned_job = plan_response.get_json()["job"]
+        self.assertEqual(202, plan_response.status_code)
+        self.assertEqual("planned", planned_job["status"])
+        self.assertEqual("awaiting_approval", planned_job["stage"])
+        edited_plan = planned_job["plan"]
+        edited_plan["recipe"] = "address-network"
+        edited_plan["inputs"] = [{"kind": "address", "value": "32 Store Street, London"}]
+        edited_plan["policy"]["max_rounds"] = 3
+        edited_plan["policy"]["max_entities"] = 750
+        edited_plan["policy"]["leaf_kinds"] = []
+        edited_plan["enrichments"]["documents"] = True
+
+        completed_state = {
+            "status": "completed",
+            "run_ids": [7],
+            "artifact": {"id": spec.id, "version": "v1", "path": f"/generated-graphs/{spec.id}/"},
+        }
+        with patch("src.builder_api.CaseRunner.run", return_value=completed_state) as run_case:
+            run_response = self.client.post(
+                f"/api/case-jobs/{planned_job['id']}/run",
+                json={"plan": edited_plan},
+            )
+
+        completed_job = run_response.get_json()["job"]
+        self.assertEqual(202, run_response.status_code)
+        self.assertEqual("completed", completed_job["status"])
+        self.assertEqual([7], completed_job["result"]["run_ids"])
+        approved_spec = run_case.call_args.args[0]
+        self.assertEqual("address-network", approved_spec.recipe)
+        self.assertEqual("address", approved_spec.inputs[0].kind)
+        self.assertEqual("32 Store Street, London", approved_spec.inputs[0].value)
+        self.assertEqual(3, approved_spec.policy.max_rounds)
+        self.assertEqual(750, approved_spec.policy.max_entities)
+        self.assertEqual((), approved_spec.policy.leaf_kinds)
+        self.assertTrue(approved_spec.enrichments.documents)
+
+    def test_discovery_failure_can_retry_the_approved_plan(self) -> None:
+        spec = CaseSpec.from_dict(
+            {
+                "id": "store-street",
+                "title": "Store Street",
+                "recipe": "address-network",
+                "inputs": [{"kind": "address", "value": "32 Store Street"}],
+            }
+        )
+        builder_api.EXECUTOR = _ImmediateExecutor()
+        with patch("src.builder_api.OpenRouterCaseParser.from_settings") as parser_factory:
+            parser_factory.return_value.parse.return_value = spec
+            planned = self.client.post(
+                "/api/case-jobs",
+                json={"query": "32 Store Street"},
+            ).get_json()["job"]
+
+        completed_state = {
+            "status": "completed",
+            "run_ids": [8],
+            "artifact": {"id": spec.id, "version": "v1", "path": "/generated-graphs/store-street/"},
+        }
+        with patch(
+            "src.builder_api.CaseRunner.run",
+            side_effect=[RuntimeError("Companies House unavailable"), completed_state],
+        ):
+            failed = self.client.post(
+                f"/api/case-jobs/{planned['id']}/run",
+                json={"plan": planned["plan"]},
+            ).get_json()["job"]
+            retried = self.client.post(
+                f"/api/case-jobs/{planned['id']}/run",
+                json={"plan": planned["plan"]},
+            ).get_json()["job"]
+
+        self.assertEqual("discovery_failed", failed["stage"])
+        self.assertTrue(failed["traceback"])
+        self.assertEqual("completed", retried["status"])
+        self.assertEqual("", retried["traceback"])
+
+    def test_case_artifact_is_listed_and_served_as_generated_graph(self) -> None:
+        graph_root = builder_api.CASE_WORKSPACE / "case-one" / "artifacts" / "case-one"
+        version_root = graph_root / "versions" / "v1"
+        version_root.mkdir(parents=True)
+        version_manifest = {
+            "id": "case-one",
+            "title": "Case One",
+            "version": "v1",
+            "path": "/generated-graphs/case-one/versions/v1/",
+        }
+        (version_root / "manifest.json").write_text(json.dumps(version_manifest), encoding="utf-8")
+        (version_root / "index.html").write_text("<h1>Case One</h1>", encoding="utf-8")
+        (graph_root / "manifest.json").write_text(
+            json.dumps({"id": "case-one", "title": "Case One", "active_version": "v1"}),
+            encoding="utf-8",
+        )
+
+        list_response = self.client.get("/api/generated-graphs")
+        graph_response = self.client.get("/generated-graphs/case-one/")
+
+        self.assertEqual(["case-one"], [graph["id"] for graph in list_response.get_json()["graphs"]])
+        self.assertEqual(200, graph_response.status_code)
+        self.assertIn(b"Case One", graph_response.data)
 
 
 if __name__ == "__main__":

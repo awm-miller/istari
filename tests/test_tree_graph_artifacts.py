@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.tree_graph_artifacts import (
     build_generated_graph_bundle,
@@ -14,6 +15,23 @@ from src.tree_graph_artifacts import (
 
 
 class TreeGraphArtifactsTest(unittest.TestCase):
+    def test_build_skips_version_directory_left_by_interrupted_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp)
+            (output_root / "interrupted" / "versions" / "v1").mkdir(parents=True)
+            with patch("src.tree_graph_artifacts.consolidate_multi_run", return_value={"nodes": [], "edges": []}), patch(
+                "src.tree_graph_artifacts.render_html",
+                return_value="<html></html>",
+            ):
+                manifest = build_generated_graph_bundle(
+                    run_ids=[1],
+                    output_root=output_root,
+                    graph_id="interrupted",
+                    title="Interrupted",
+                )
+
+        self.assertEqual("v2", manifest["version"])
+
     def test_list_generated_graphs_reads_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_dir = Path(tmp) / "abc123" / "versions" / "v1"

@@ -72,6 +72,7 @@ test("graph analysis uses the configured OpenRouter chat-completions model", asy
     const body = JSON.parse(options.body);
     assert.equal(body.model, "deepseek/test");
     assert.equal(body.messages[0].content, "question");
+    assert.deepEqual(body.provider, { data_collection: "deny", zdr: true });
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"grounded"}' } }] }));
   };
   try {
