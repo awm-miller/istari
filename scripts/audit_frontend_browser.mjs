@@ -17,6 +17,7 @@ const contentTypes = new Map([
 ]);
 let caseStatus = "queued";
 let directPlan = null;
+let generatedGraphDeleted = false;
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
@@ -71,7 +72,12 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/generated-graphs") {
-    sendJson(response, { graphs: [{ id: "generated-check", title: "Generated check", path: "/generated-graphs/generated-check/" }] });
+    sendJson(response, { graphs: generatedGraphDeleted ? [] : [{ id: "generated-check", title: "Generated check", path: "/generated-graphs/generated-check/" }] });
+    return;
+  }
+  if (url.pathname === "/api/generated-graphs/generated-check" && request.method === "DELETE") {
+    generatedGraphDeleted = true;
+    sendJson(response, { ok: true, deleted: "generated-check" });
     return;
   }
   if (url.pathname === "/api/case-jobs" && request.method === "POST") {
@@ -109,7 +115,7 @@ const server = createServer(async (request, response) => {
       enrichments: { sanctions: true, documents: false, negative_news: false },
     };
     if (caseStatus === "completed") {
-      sendJson(response, { ok: true, job: { id: "abc123", status: "completed", plan, result: { artifact: { path: "/generated-graphs/audit-case/" } }, stdout: [{ message: "complete: 4 nodes, 3 edges", created_at: new Date().toISOString() }] } });
+      sendJson(response, { ok: true, job: { id: "abc123", status: "completed", stage: "completed", plan, progress: { processed: 4, queued: 0, failed: 0, total: 4, nodes: 4, edges: 3, percent: 100 }, result: { artifact: { path: "/generated-graphs/audit-case/" } }, stdout: [{ message: "complete: 4 nodes, 3 edges", created_at: new Date().toISOString() }] } });
     } else {
       caseStatus = "planned";
       sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan, stdout: [{ message: "planner: scope ready", created_at: new Date().toISOString() }] } });
@@ -190,6 +196,10 @@ try {
   await page.locator("#graph-switcher-button").click();
   assert.equal(await page.locator('.graph-switcher-option[data-graph-key="94-park-ave"]').getAttribute("aria-current"), "page");
   assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 1);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator('.graph-delete-button[aria-label="Delete Generated check"]').click();
+  await page.waitForFunction(() => !document.querySelector('.graph-switcher-option.generated[data-graph-key="generated-check"]'));
+  assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 0);
 
   const initialStats = await page.locator("#stats").innerText();
   await page.locator("#search").fill("AL-UMRAN");
@@ -295,15 +305,25 @@ try {
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
+  assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
+  assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");
+  assert.match(await page.locator("#case-progress-detail").innerText(), /4 processed \| 0 queued \| 4 nodes \| 3 edges/);
+  await page.locator("#case-progress").click();
+  assert.ok(await page.locator("#run-log-sheet").isVisible(), "Run log sheet did not open");
+  assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
+  await page.locator("#run-log-close").click();
+  assert.ok(await page.locator("#run-log-sheet").isHidden(), "Run log sheet did not close");
   await page.locator("#case-reset").click();
   await page.locator("#case-direct").click();
   await page.locator("#case-plan-title").fill("Direct contract audit");
+  await page.locator("#case-plan-id").fill("direct-contract-audit");
   await page.locator(".case-input-kind").first().selectOption("address");
   await page.locator(".case-input-value").first().fill("32 Store Street, London");
   await page.locator("#case-recipe").selectOption("address-network");
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.equal(directPlan?.title, "Direct contract audit");
+  assert.equal(directPlan?.id, "direct-contract-audit");
   assert.deepEqual(directPlan?.inputs, [{ kind: "address", value: "32 Store Street, London" }]);
   assert.equal(directPlan?.recipe, "address-network");
   await page.locator("#mode-viewer").click();

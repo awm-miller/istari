@@ -1,4 +1,4 @@
-const ALLOWED_TARGET = /^(?:\/health|\/api\/case-jobs(?:\/[a-f0-9]+(?:\/run)?)?|\/api\/generated-graphs(?:\/[a-z0-9-]+\/data)?|\/generated-graphs\/[a-z0-9-]+(?:\/versions\/v\d+)?\/(?:graph-data\.json)?)$/;
+const ALLOWED_TARGET = /^(?:\/health|\/api\/case-jobs(?:\/[a-f0-9]+(?:\/run)?)?|\/api\/generated-graphs(?:\/[a-z0-9-]+(?:\/data)?)?|\/generated-graphs\/[a-z0-9-]+(?:\/versions\/v\d+)?\/(?:graph-data\.json)?)$/;
 
 function response(statusCode, body, contentType = "application/json; charset=utf-8") {
   return {

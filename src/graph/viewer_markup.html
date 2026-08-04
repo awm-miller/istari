@@ -103,17 +103,22 @@
           <button class="case-reset" id="case-direct" type="button">Fill contract directly</button>
         </div>
       </form>
-      <pre class="builder-stdout" id="builder-status" aria-label="Run output"></pre>
       <a class="case-open-result hidden" id="case-open-result" href="#">Open graph</a>
 
       <section class="case-plan hidden" id="case-plan">
-        <label class="case-title-field">
-          <span>Case title</span>
-          <input id="case-plan-title" type="text" value="Untitled case" />
-        </label>
+        <div class="case-name-controls">
+          <label class="case-title-field">
+            <span>Graph name</span>
+            <input id="case-plan-title" type="text" value="Untitled case" />
+            <small>Shown in the graph menu.</small>
+          </label>
+          <label class="case-title-field">
+            <span>URL key <small>optional</small></span>
+            <input id="case-plan-id" type="text" placeholder="Generated from the name" />
+            <small>Stable lowercase URL. Leave blank to generate it.</small>
+          </label>
+        </div>
         <div class="case-subjects hidden" id="case-plan-subjects"></div>
-        <div class="case-segments hidden" id="case-plan-segments"></div>
-        <button class="case-add-input hidden" id="case-add-segment" type="button">Add operation</button>
         <div class="case-inputs" id="case-plan-inputs"></div>
         <button class="case-add-input" id="case-add-input" type="button">Add input</button>
         <div class="case-controls">
@@ -124,27 +129,41 @@
               <option value="address-network">Address network</option>
               <option value="area-clusters">Area clusters</option>
             </select>
+            <small id="case-route-note"></small>
           </label>
-          <label><span>Rounds</span><input id="case-rounds" type="number" min="0" max="5" /></label>
-          <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="5000" /></label>
-          <label class="case-area-control hidden"><span>Minimum at one address</span><input id="case-minimum-occupancy" type="number" min="2" max="100" /></label>
-          <label class="case-area-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /></label>
+          <label><span>Rounds</span><input id="case-rounds" type="number" min="0" max="5" /><small>How many times new organisations and addresses can expand. People never expand.</small></label>
+          <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="5000" /><small>Hard stop for all graph nodes.</small></label>
+          <label class="case-area-control hidden"><span>Minimum occupancy</span><input id="case-minimum-occupancy" type="number" min="2" max="100" /><small>Keep buildings with at least this many companies or charities.</small></label>
+          <label class="case-area-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /><small>Maximum qualifying buildings to plot.</small></label>
         </div>
-        <p class="case-area-note hidden" id="case-area-note">Streets, postcode districts such as E1, and full postcodes are supported. Organisations are grouped by building before this threshold is applied.</p>
-        <div class="case-toggles" aria-label="Optional enrichments">
-          <label><input id="case-people" type="checkbox" /><span>People</span></label>
-          <label><input id="case-sanctions" type="checkbox" /><span>Sanctions</span></label>
-          <label><input id="case-documents" type="checkbox" /><span>Documents</span></label>
-          <label><input id="case-negative-news" type="checkbox" /><span>Negative news</span></label>
+        <p class="case-area-note hidden" id="case-area-note">Street names, postcode districts such as E1, and full postcodes are accepted as area inputs.</p>
+        <div class="case-toggles" aria-label="People">
+          <label><input id="case-people" type="checkbox" /><span>Include officers and trustees as leaves. People do not expand.</span></label>
         </div>
         <div class="builder-actions">
           <button class="builder-submit case-run" id="case-run" type="button">Run approved scope</button>
           <button class="case-reset" id="case-reset" type="button">Start again</button>
         </div>
       </section>
+      <section class="case-progress hidden" id="case-progress" role="button" tabindex="0" aria-expanded="false" aria-controls="run-log-sheet" aria-label="Open run log">
+        <div class="case-progress-summary">
+          <span id="case-progress-label">Discovery</span>
+          <span id="case-progress-percent">0%</span>
+        </div>
+        <progress id="case-progress-bar" max="100" value="0">0%</progress>
+        <div class="case-progress-detail" id="case-progress-detail"></div>
+      </section>
     </section>
   </div>
 </main>
+<div class="run-log-backdrop hidden" id="run-log-backdrop"></div>
+<section class="run-log-sheet hidden" id="run-log-sheet" role="dialog" aria-modal="true" aria-labelledby="run-log-title">
+  <div class="run-log-header">
+    <h2 id="run-log-title">Run log</h2>
+    <button id="run-log-close" type="button">Close</button>
+  </div>
+  <pre class="builder-stdout" id="builder-status" aria-label="Run output"></pre>
+</section>
 <div id="graph"></div>
 <div class="canvas-search-popover hidden" id="canvas-search-popover" aria-live="polite">
   <div class="canvas-search-title" id="canvas-search-title">Add tree</div>

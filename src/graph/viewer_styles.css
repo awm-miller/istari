@@ -120,6 +120,51 @@ body {{
   background: rgba(88,166,255,0.10);
   color: var(--text-bright);
 }}
+.graph-switcher-row {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+}}
+.graph-switcher-row .graph-switcher-option {{ min-width: 0; }}
+.graph-delete-button {{
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #77808d;
+  cursor: pointer;
+}}
+.graph-delete-button:hover,
+.graph-delete-button:focus {{
+  background: rgba(230, 96, 106, 0.13);
+  color: #e68a93;
+  outline: none;
+}}
+.graph-delete-button:disabled {{ opacity: 0.4; cursor: wait; }}
+.graph-delete-button span,
+.graph-delete-button span::before {{
+  position: absolute;
+  left: 50%;
+  display: block;
+  content: "";
+  border: 1.5px solid currentColor;
+  transform: translateX(-50%);
+}}
+.graph-delete-button span {{
+  top: 11px;
+  width: 9px;
+  height: 10px;
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+}}
+.graph-delete-button span::before {{
+  top: -4px;
+  width: 12px;
+  height: 1px;
+  border-width: 1.5px 0 0;
+}}
 .search-box {{
   display: flex;
   align-items: center;
@@ -481,6 +526,13 @@ body.builder-mode #compact-legend {{
   font-size: 11px;
   font-weight: 600;
 }}
+.case-controls label > small,
+.case-title-field > small {{
+  min-height: 30px;
+  color: #596271;
+  font-size: 10px;
+  line-height: 1.45;
+}}
 .builder-form label span small {{
   color: #454d5a;
   font-size: 9px;
@@ -577,6 +629,11 @@ body.builder-mode #compact-legend {{
   flex-direction: column;
   gap: 6px;
 }}
+.case-name-controls {{
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.8fr);
+  gap: 22px;
+}}
 .case-title-field span {{
   color: var(--text-dim);
   font-size: 11px;
@@ -598,15 +655,13 @@ body.builder-mode #compact-legend {{
 .case-title-field input:focus {{
   border-color: #79a8d2;
 }}
-.case-subjects,
-.case-segments {{
+.case-subjects {{
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-top: 20px;
 }}
-.case-subjects.hidden,
-.case-segments.hidden {{ display: none; }}
+.case-subjects.hidden {{ display: none; }}
 .case-subject {{
   padding: 12px 0;
   border-bottom: 1px solid #252b34;
@@ -635,32 +690,6 @@ body.builder-mode #compact-legend {{
   color: #8eb9dc;
   text-decoration: none;
 }}
-.case-segment {{
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 84px auto;
-  gap: 8px;
-  align-items: center;
-}}
-.case-segment-enabled {{ accent-color: #6e95b9; }}
-.case-segment select,
-.case-segment-limit {{
-  min-width: 0;
-  border: 1px solid #2a303b;
-  border-radius: 4px;
-  background: #0f1218;
-  color: #cdd2da;
-  padding: 8px 9px;
-  font-size: 11px;
-  outline: none;
-}}
-.case-segment-remove {{
-  border: 0;
-  background: transparent;
-  color: #737c89;
-  font-size: 10px;
-  cursor: pointer;
-}}
-.case-segment-remove:hover {{ color: #c4cbd4; }}
 .case-inputs {{
   display: flex;
   flex-direction: column;
@@ -743,6 +772,89 @@ body.builder-mode #compact-legend {{
   overflow-wrap: anywhere;
 }}
 .builder-stdout:empty {{ display: none; }}
+.case-progress {{
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid #252b34;
+  cursor: pointer;
+  transition: border-color 160ms ease;
+}}
+.case-progress:hover,
+.case-progress:focus {{ border-color: #79a8d2; outline: none; }}
+.case-progress.hidden {{ display: none; }}
+.case-progress-summary {{
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 9px;
+  color: #c4cbd4;
+  font-size: 11px;
+}}
+.case-progress progress {{
+  display: block;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #202630;
+  color: #79a8d2;
+}}
+.case-progress progress::-webkit-progress-bar {{ background: #202630; }}
+.case-progress progress::-webkit-progress-value {{ background: #79a8d2; }}
+.case-progress progress::-moz-progress-bar {{ background: #79a8d2; }}
+.case-progress-detail {{
+  margin-top: 9px;
+  color: #687280;
+  font: 10px/1.5 "IBM Plex Mono", "Courier New", monospace;
+}}
+.run-log-backdrop {{
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  background: rgba(4, 7, 11, 0.58);
+  backdrop-filter: blur(2px);
+}}
+.run-log-backdrop.hidden,
+.run-log-sheet.hidden {{ display: none; }}
+.run-log-sheet {{
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 90;
+  max-height: min(62vh, 620px);
+  padding: 18px max(24px, calc((100vw - 920px) / 2)) 24px;
+  border-top: 1px solid #39414e;
+  background: #0d1117;
+  box-shadow: 0 -24px 60px rgba(0, 0, 0, 0.48);
+  animation: run-log-enter 180ms ease-out;
+}}
+.run-log-header {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}}
+.run-log-header h2 {{
+  margin: 0;
+  color: #dce2ea;
+  font-size: 14px;
+  font-weight: 600;
+}}
+.run-log-header button {{
+  border: 0;
+  background: transparent;
+  color: #8f9ba8;
+  cursor: pointer;
+}}
+.run-log-sheet .builder-stdout {{
+  min-height: 180px;
+  max-height: calc(min(62vh, 620px) - 70px);
+  margin-top: 12px;
+}}
+@keyframes run-log-enter {{
+  from {{ transform: translateY(24px); opacity: 0; }}
+  to {{ transform: translateY(0); opacity: 1; }}
+}}
 .builder-stdout.error {{ color: #e68a93; }}
 .case-open-result {{
   display: inline-block;
@@ -1473,6 +1585,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
     grid-template-columns: 1fr;
     gap: 14px;
   }}
+  .case-name-controls {{ grid-template-columns: 1fr; }}
   .compare-summary {{
     order: 4;
     width: 100%;

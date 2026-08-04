@@ -16,6 +16,12 @@ separate Istari Juicer service on ChatGPT Sites.
 4. The backend runs a resumable Companies House and Charity Commission work queue.
 5. Completed graph versions appear at `/generated-graphs/<case-id>/`.
 
+The review form has one control per executable policy: graph name and optional
+URL key, route, rounds, entity ceiling, area thresholds, and optional people
+leaves. The progress strip opens the live run log. Generated graphs can be
+deleted from the graph menu after confirmation; deletion also removes their
+stored Juicer state.
+
 Discovery pivots through organisations and addresses. People are graph leaves.
 Every researched relationship keeps its source URL and exact node referents.
 

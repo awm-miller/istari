@@ -108,9 +108,9 @@ async function auditControls() {
   ]);
   const controls = [
     "graph-switcher-button", "search", "mode-viewer", "mode-builder", "toggle-sidebar",
-    "indirect-only", "sanctioned-only", "negative-news-only", "case-plan-submit", "case-direct", "case-plan-title", "case-run",
+    "indirect-only", "sanctioned-only", "negative-news-only", "case-plan-submit", "case-direct", "case-plan-title", "case-plan-id", "case-run", "case-progress", "case-progress-bar",
     "case-reset", "case-add-input", "case-minimum-occupancy", "case-max-addresses", "compare-clear", "details-modal-close",
-    "resolution-panel", "question-selection", "question-input", "question-submit", "question-clear",
+    "resolution-panel", "question-selection", "question-input", "question-submit", "question-clear", "run-log-sheet", "run-log-close",
   ];
   for (const id of controls) {
     check(markup.includes(`id="${id}"`), `markup: missing intended control #${id}`);

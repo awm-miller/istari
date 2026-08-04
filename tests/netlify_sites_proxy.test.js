@@ -5,6 +5,7 @@ const { handler, _private } = require("../netlify/functions/istari-sites-proxy")
 test("proxy allows only Istari case and generated graph routes", () => {
   assert.equal(_private.ALLOWED_TARGET.test("/api/case-jobs/abc123/run"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/api/generated-graphs/32-store-street"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/https://example.com"), false);
   assert.equal(_private.ALLOWED_TARGET.test("/api/admin"), false);
 });

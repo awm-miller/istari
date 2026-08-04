@@ -49,9 +49,8 @@
   const caseDirectButton = document.getElementById("case-direct");
   const casePlanEl = document.getElementById("case-plan");
   const casePlanTitleEl = document.getElementById("case-plan-title");
+  const casePlanIdEl = document.getElementById("case-plan-id");
   const casePlanSubjectsEl = document.getElementById("case-plan-subjects");
-  const casePlanSegmentsEl = document.getElementById("case-plan-segments");
-  const caseAddSegmentButton = document.getElementById("case-add-segment");
   const casePlanInputsEl = document.getElementById("case-plan-inputs");
   const caseAddInputButton = document.getElementById("case-add-input");
   const caseRecipeInput = document.getElementById("case-recipe");
@@ -61,14 +60,20 @@
   const caseMaxAddressesInput = document.getElementById("case-max-addresses");
   const caseAreaControlEls = [...document.querySelectorAll(".case-area-control")];
   const caseAreaNoteEl = document.getElementById("case-area-note");
+  const caseRouteNoteEl = document.getElementById("case-route-note");
   const casePeopleInput = document.getElementById("case-people");
-  const caseSanctionsInput = document.getElementById("case-sanctions");
-  const caseDocumentsInput = document.getElementById("case-documents");
-  const caseNegativeNewsInput = document.getElementById("case-negative-news");
   const caseRunButton = document.getElementById("case-run");
   const caseResetButton = document.getElementById("case-reset");
   const caseOpenResultEl = document.getElementById("case-open-result");
   const builderStatusEl = document.getElementById("builder-status");
+  const caseProgressEl = document.getElementById("case-progress");
+  const caseProgressLabelEl = document.getElementById("case-progress-label");
+  const caseProgressPercentEl = document.getElementById("case-progress-percent");
+  const caseProgressBarEl = document.getElementById("case-progress-bar");
+  const caseProgressDetailEl = document.getElementById("case-progress-detail");
+  const runLogBackdropEl = document.getElementById("run-log-backdrop");
+  const runLogSheetEl = document.getElementById("run-log-sheet");
+  const runLogCloseButton = document.getElementById("run-log-close");
   const compareSummaryEl = document.getElementById("compare-summary");
   const compareSummaryLabelEl = document.getElementById("compare-summary-label");
   const compareClearButton = document.getElementById("compare-clear");
@@ -234,6 +239,46 @@
     builderStatusEl.textContent = lines.join("\n");
     builderStatusEl.classList.toggle("error", job.status === "failed");
     builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
+    renderBuilderProgress(job);
+  }
+
+  function renderBuilderProgress(job = {}) {
+    const visible = ["queued", "planning", "running", "completed", "failed"].includes(job.status)
+      && job.stage !== "planning_failed";
+    caseProgressEl?.classList.toggle("hidden", !visible);
+    if (!visible) return;
+    const progress = job.progress || {};
+    const percent = job.status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    caseProgressBarEl.value = percent;
+    caseProgressBarEl.textContent = `${percent}%`;
+    caseProgressPercentEl.textContent = `${percent}%`;
+    caseProgressLabelEl.textContent = job.status === "completed"
+      ? "Complete"
+      : job.status === "failed"
+        ? "Stopped"
+        : ["queued", "planning"].includes(job.status)
+          ? "Planning"
+          : "Discovery";
+    const details = [
+      `${Number(progress.processed) || 0} processed`,
+      `${Number(progress.queued) || 0} queued`,
+      `${Number(progress.nodes) || 0} nodes`,
+      `${Number(progress.edges) || 0} edges`,
+    ];
+    if (Number(progress.failed)) details.splice(2, 0, `${Number(progress.failed)} failed`);
+    caseProgressDetailEl.textContent = details.join(" | ");
+  }
+
+  function setRunLogOpen(open) {
+    const next = !!open;
+    runLogSheetEl?.classList.toggle("hidden", !next);
+    runLogBackdropEl?.classList.toggle("hidden", !next);
+    caseProgressEl?.setAttribute("aria-expanded", String(next));
+    document.body.classList.toggle("run-log-open", next);
+    if (next) {
+      builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
+      runLogCloseButton?.focus();
+    }
   }
 
   function setAppMode(mode) {
@@ -250,13 +295,10 @@
   function renderCasePlan(plan) {
     currentCasePlan = plan;
     casePlanTitleEl.value = plan.title || "Untitled case";
+    casePlanIdEl.value = plan.id || "";
     const subjects = Array.isArray(plan.subjects) ? plan.subjects : [];
-    const segments = Array.isArray(plan.segments) ? plan.segments : [];
     casePlanSubjectsEl.innerHTML = subjects.map(renderCaseSubject).join("");
     casePlanSubjectsEl.classList.toggle("hidden", !subjects.length);
-    casePlanSegmentsEl.innerHTML = segments.map(renderCaseSegment).join("");
-    casePlanSegmentsEl.classList.toggle("hidden", !segments.length);
-    caseAddSegmentButton.classList.remove("hidden");
     casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
     caseRecipeInput.value = plan.recipe || "registry-light";
     caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
@@ -265,25 +307,9 @@
     caseMaxAddressesInput.value = String(plan.policy?.max_addresses || 200);
     updateAreaControls();
     casePeopleInput.checked = (plan.policy?.leaf_kinds || ["person"]).includes("person");
-    caseSanctionsInput.checked = plan.enrichments?.sanctions !== false;
-    caseDocumentsInput.checked = !!plan.enrichments?.documents;
-    caseNegativeNewsInput.checked = !!plan.enrichments?.negative_news;
     casePlanEl.classList.remove("hidden");
     casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
-
-  const CASE_OPERATIONS = [
-    "resolve_subjects",
-    "discover_addresses",
-    "load_registry_records",
-    "expand_address_occupants",
-    "expand_organisations",
-    "include_people",
-    "area_clusters",
-    "sanctions",
-    "documents",
-    "negative_news",
-  ];
 
   function renderCaseSubject(subject = {}) {
     const entities = Array.isArray(subject.entities) ? subject.entities : [];
@@ -318,25 +344,6 @@
     }
   }
 
-  function renderCaseSegment(segment = {}) {
-    const operation = CASE_OPERATIONS.includes(segment.operation) ? segment.operation : "resolve_subjects";
-    const options = CASE_OPERATIONS.map((value) => (
-      `<option value="${value}"${value === operation ? " selected" : ""}>${caseOperationLabel(value)}</option>`
-    )).join("");
-    return `
-      <div class="case-segment">
-        <input class="case-segment-enabled" type="checkbox" aria-label="Enable operation"${segment.enabled !== false ? " checked" : ""} />
-        <select class="case-segment-operation" aria-label="Operation">${options}</select>
-        <input class="case-segment-limit" type="number" min="1" max="5000" aria-label="Result limit" value="${Number(segment.max_results) || 100}" />
-        <button class="case-segment-remove" type="button" aria-label="Remove operation">Remove</button>
-      </div>
-    `;
-  }
-
-  function caseOperationLabel(operation) {
-    return String(operation || "").replaceAll("_", " ");
-  }
-
   function renderCaseInput(input = {}) {
     const kind = String(input.kind || "person");
     const options = ["person", "company", "charity", "address", "area"].map((value) => (
@@ -357,21 +364,15 @@
     plan.enrichments = plan.enrichments || {};
     plan.title = String(casePlanTitleEl.value || "").trim();
     if (!plan.title) throw new Error("Add a case title.");
+    const requestedId = String(casePlanIdEl.value || "").trim();
+    if (requestedId) plan.id = requestedId;
+    else delete plan.id;
     plan.recipe = caseRecipeInput.value;
     plan.inputs = [...casePlanInputsEl.querySelectorAll(".case-input")].map((row) => ({
       kind: row.querySelector(".case-input-kind").value,
       value: row.querySelector(".case-input-value").value.trim(),
     })).filter((input) => input.value);
-    plan.segments = [...casePlanSegmentsEl.querySelectorAll(".case-segment")].map((row, index) => {
-      const operation = row.querySelector(".case-segment-operation").value;
-      return {
-        id: `${index + 1}-${operation}`,
-        operation,
-        label: caseOperationLabel(operation),
-        enabled: row.querySelector(".case-segment-enabled").checked,
-        max_results: Number(row.querySelector(".case-segment-limit").value || 100),
-      };
-    });
+    plan.segments = [];
     const hasResearchMaterial = (Array.isArray(plan.subjects) ? plan.subjects : []).some((subject) => (
       (Array.isArray(subject.entities) && subject.entities.length) || (Array.isArray(subject.addresses) && subject.addresses.length)
     ));
@@ -381,15 +382,14 @@
     plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
     plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
     plan.policy.leaf_kinds = casePeopleInput.checked ? ["person"] : [];
-    plan.enrichments.sanctions = !!caseSanctionsInput.checked;
-    plan.enrichments.documents = !!caseDocumentsInput.checked;
-    plan.enrichments.negative_news = !!caseNegativeNewsInput.checked;
+    plan.enrichments = { sanctions: false, documents: false, negative_news: false };
     return plan;
   }
 
   function startDirectContract() {
     currentCaseJobId = "";
     caseOpenResultEl.classList.add("hidden");
+    caseProgressEl?.classList.add("hidden");
     setBuilderStatus("$ new research contract");
     renderCasePlan({
       version: 1,
@@ -416,6 +416,12 @@
     const isArea = caseRecipeInput?.value === "area-clusters";
     caseAreaControlEls.forEach((element) => element.classList.toggle("hidden", !isArea));
     caseAreaNoteEl?.classList.toggle("hidden", !isArea);
+    const notes = {
+      "registry-light": "Load exact organisations and their registered addresses.",
+      "address-network": "Pivot between approved addresses and the organisations registered there.",
+      "area-clusters": "Scan a street or postcode, then keep shared-address clusters.",
+    };
+    if (caseRouteNoteEl) caseRouteNoteEl.textContent = notes[caseRecipeInput?.value] || "";
   }
 
   async function postBuilderJson(path, payload) {
@@ -442,6 +448,7 @@
     casePlanSubmitButton.disabled = true;
     caseOpenResultEl.classList.add("hidden");
     casePlanEl.classList.add("hidden");
+    caseProgressEl?.classList.add("hidden");
     setBuilderStatus(`$ plan ${query}`);
     const data = await postBuilderJson("/api/case-jobs", { query });
     const job = data.job || {};
@@ -516,8 +523,10 @@
     currentCasePlan = null;
     casePlanEl.classList.add("hidden");
     caseOpenResultEl.classList.add("hidden");
+    caseProgressEl?.classList.add("hidden");
     casePlanSubmitButton.disabled = false;
     caseRunButton.disabled = false;
+    setRunLogOpen(false);
     setBuilderStatus("");
     caseQueryInput?.focus();
   }
@@ -575,6 +584,7 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         setGraphSwitcherOpen(false);
+        setRunLogOpen(false);
       }
     });
   }
@@ -585,28 +595,56 @@
     if (!response.ok) return;
     const data = await response.json();
     const graphs = Array.isArray(data.graphs) ? data.graphs : [];
-    graphSwitcherMenuEl.querySelectorAll(".graph-switcher-option.generated").forEach((element) => element.remove());
+    graphSwitcherMenuEl.querySelectorAll(".graph-switcher-row.generated").forEach((element) => element.remove());
     graphs.forEach((graph) => {
       const path = String(graph.path || "");
-      const title = String(graph.title || graph.id || "").trim();
+      const graphTitle = String(graph.title || graph.id || "").trim();
       const graphId = String(graph.id || detectGeneratedGraphId(path)).trim();
-      if (!path || !title || !graphId) return;
+      if (!path || !graphTitle || !graphId) return;
       const button = document.createElement("button");
       button.className = "graph-switcher-option generated";
       button.type = "button";
       button.role = "menuitem";
       button.dataset.graphKey = graphId;
-      button.textContent = title;
+      button.textContent = graphTitle;
       const isActive = graphId.toLowerCase() === currentGeneratedGraphId.toLowerCase();
       button.classList.toggle("active", isActive);
       button.setAttribute("aria-current", isActive ? "page" : "false");
       button.addEventListener("click", () => {
-        setGraphSwitcherSelection(button, title);
+        setGraphSwitcherSelection(button, graphTitle);
         setGraphSwitcherOpen(false);
         window.location.assign(path);
       });
-      graphSwitcherMenuEl.appendChild(button);
-      if (isActive) setGraphSwitcherSelection(button, title);
+      const deleteButton = document.createElement("button");
+      deleteButton.className = "graph-delete-button";
+      deleteButton.type = "button";
+      deleteButton.setAttribute("aria-label", `Delete ${graphTitle}`);
+      deleteButton.title = `Delete ${graphTitle}`;
+      deleteButton.innerHTML = '<span aria-hidden="true"></span>';
+      deleteButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        const confirmed = window.confirm(`Delete "${graphTitle}" and all stored Juicer data? This cannot be undone.`);
+        if (!confirmed) return;
+        deleteButton.disabled = true;
+        try {
+          const response = await fetch(builderApiUrl(`/api/generated-graphs/${encodeURIComponent(graphId)}`), { method: "DELETE" });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || result.ok === false) throw new Error(result.error || `Delete failed with ${response.status}`);
+          if (isActive) {
+            window.location.assign("/mb/");
+            return;
+          }
+          row.remove();
+        } catch (error) {
+          deleteButton.disabled = false;
+          window.alert(error.message || "The graph could not be deleted.");
+        }
+      });
+      const row = document.createElement("div");
+      row.className = "graph-switcher-row generated";
+      row.append(button, deleteButton);
+      graphSwitcherMenuEl.appendChild(row);
+      if (isActive) setGraphSwitcherSelection(button, graphTitle);
     });
     return graphs;
   }
@@ -2242,11 +2280,11 @@
     const rawType = String(edge?.role_label || edge?.role_type || "").trim();
     const baseType = rawType.replace(/\s*\([^)]*\)\s*$/, "").toLowerCase();
     const titleMatch = rawType.match(/\(([^)]+)\)\s*$/);
-    const title = String(titleMatch?.[1] || "").trim();
+    const roleTitle = String(titleMatch?.[1] || "").trim();
     const representedOrganisations = Array.isArray(edge?.represented_organisation_labels) ? edge.represented_organisation_labels : [];
     const representedSigners = Array.isArray(edge?.represented_signer_labels) ? edge.represented_signer_labels : [];
-    const subject = title && !sourceLabel.toLowerCase().startsWith(`${title.toLowerCase()} `)
-      ? `${title} ${sourceLabel}`
+    const subject = roleTitle && !sourceLabel.toLowerCase().startsWith(`${roleTitle.toLowerCase()} `)
+      ? `${roleTitle} ${sourceLabel}`
       : sourceLabel;
     if (baseType.includes("signatory") && representedOrganisations.length) {
       return [`${escapeHtml(subject)} signed ${escapeHtml(targetLabel)} representing ${escapeHtml(summarizeLabelList(representedOrganisations))}.`];
@@ -4034,21 +4072,22 @@
     });
     caseResetButton?.addEventListener("click", resetCaseDesk);
     caseRecipeInput?.addEventListener("change", updateAreaControls);
+    caseProgressEl?.addEventListener("click", () => setRunLogOpen(true));
+    caseProgressEl?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setRunLogOpen(true);
+      }
+    });
+    runLogCloseButton?.addEventListener("click", () => setRunLogOpen(false));
+    runLogBackdropEl?.addEventListener("click", () => setRunLogOpen(false));
     caseAddInputButton?.addEventListener("click", () => {
       casePlanInputsEl.insertAdjacentHTML("beforeend", renderCaseInput());
       casePlanInputsEl.querySelector(".case-input:last-child .case-input-value")?.focus();
     });
-    caseAddSegmentButton?.addEventListener("click", () => {
-      casePlanSegmentsEl.classList.remove("hidden");
-      casePlanSegmentsEl.insertAdjacentHTML("beforeend", renderCaseSegment({ operation: "expand_address_occupants", enabled: false, max_results: 100 }));
-    });
     casePlanInputsEl?.addEventListener("click", (event) => {
       const removeButton = event.target.closest(".case-input-remove");
       if (removeButton) removeButton.closest(".case-input")?.remove();
-    });
-    casePlanSegmentsEl?.addEventListener("click", (event) => {
-      const removeButton = event.target.closest(".case-segment-remove");
-      if (removeButton) removeButton.closest(".case-segment")?.remove();
     });
     searchInput.addEventListener("input", () => {
       viewerState.searchQuery = searchInput.value.trim();

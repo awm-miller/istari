@@ -80,7 +80,8 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("function detectGeneratedGraphId(pathname)", html)
         self.assertIn("const currentGraphKey = currentGeneratedGraphId || detectGraphKey", html)
         self.assertIn("button.dataset.graphKey = graphId", html)
-        self.assertIn("if (isActive) setGraphSwitcherSelection(button, title)", html)
+        self.assertIn("if (isActive) setGraphSwitcherSelection(button, graphTitle)", html)
+        self.assertIn('deleteButton.setAttribute("aria-label", `Delete ${graphTitle}`)', html)
 
     def test_builder_renders_backend_stdout_instead_of_status_copy(self) -> None:
         html = render_html({"nodes": [], "edges": []})

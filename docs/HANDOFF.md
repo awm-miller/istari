@@ -71,12 +71,13 @@ deploy the saved version. Do not deploy an uncommitted archive.
 ## Acceptance checks
 
 1. Open `/mb/`, select Builder, and test both a natural-language brief and **Fill contract directly**.
-2. Confirm researched subjects, exact entities, addresses, evidence links, and editable operations appear before approval.
-3. Change an operation or limit, approve the plan, and confirm stdout advances without duplicate work.
-   Planning output should show model passes and public web or registry tool status, never hidden chain-of-thought.
-4. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
-5. Check repeated edge tooltips, graph selection, duplicate resolution, selected-subgraph questions, and immutable version URLs.
-6. Check Sites worker logs after the run and treat any 5xx response as a failed acceptance test.
+2. Confirm the graph name and optional URL key persist, and click the progress strip to inspect the run log.
+3. Confirm researched subjects, exact entities, addresses, evidence links, and route controls appear before approval.
+4. Change a route or limit, approve the plan, and confirm the run log advances without duplicate work.
+   Planning output should show public model and registry status, never hidden chain-of-thought.
+5. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
+6. Check repeated edge tooltips, graph selection, deletion confirmation, duplicate resolution, selected-subgraph questions, and immutable version URLs.
+7. Check Sites worker logs after the run and treat any 5xx response as a failed acceptance test.
 
 ## Recovery
 
