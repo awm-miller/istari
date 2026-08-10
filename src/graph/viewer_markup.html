@@ -134,9 +134,32 @@
           <label><span>Rounds</span><input id="case-rounds" type="number" min="0" max="5" /><small>How many times new organisations and addresses can expand. People never expand.</small></label>
           <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="5000" /><small>Hard stop for all graph nodes.</small></label>
           <label class="case-area-control hidden"><span>Minimum occupancy</span><input id="case-minimum-occupancy" type="number" min="2" max="100" /><small>Keep buildings with at least this many companies or charities.</small></label>
-          <label class="case-area-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /><small>Maximum qualifying buildings to plot.</small></label>
+          <label class="case-address-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /><small>Maximum registered addresses to plot.</small></label>
         </div>
         <p class="case-area-note hidden" id="case-area-note">Street names, postcode districts such as E1, and full postcodes are accepted as area inputs.</p>
+        <section class="case-nearby">
+          <label class="case-nearby-toggle">
+            <input id="case-nearby-enabled" type="checkbox" />
+            <span>Include nearby registered addresses</span>
+          </label>
+          <div class="case-nearby-config hidden" id="case-nearby-config">
+            <div class="case-nearby-fields">
+              <label>
+                <span>Search centre</span>
+                <input id="case-nearby-centre" type="text" placeholder="Full UK address or postcode" />
+                <small>The primary subject address. Edit it before approval if necessary.</small>
+              </label>
+              <label>
+                <span>Radius <output id="case-nearby-radius-value">250 m</output></span>
+                <input id="case-nearby-radius" type="range" min="50" max="2000" step="50" value="250" />
+                <small>Spatial proximity only. It does not prove an organisational relationship.</small>
+              </label>
+            </div>
+            <div class="case-nearby-summary" id="case-nearby-summary">Enter a centre to preview nearby addresses.</div>
+            <div id="case-nearby-map" aria-label="Nearby address radius preview"></div>
+            <p class="case-nearby-note">Count: unique Companies House registered addresses. Distances use UK postcode centroids.</p>
+          </div>
+        </section>
         <div class="case-toggles" aria-label="People">
           <label><input id="case-people" type="checkbox" /><span>Include officers and trustees as leaves. People do not expand.</span></label>
         </div>

@@ -19,6 +19,7 @@ NETLIFY_ROOT = PROJECT_ROOT / "netlify_graph_viewer"
 OUTPUT_ROOT = PROJECT_ROOT / "output"
 REDIRECTS_PATH = NETLIFY_ROOT / "_redirects"
 ROOT_INDEX_PATH = NETLIFY_ROOT / "index.html"
+GENERATED_TEMPLATE_PATH = NETLIFY_ROOT / "generated-viewer-template.html"
 
 SOURCE_TO_TARGET = {
     "latest_graph.html": "index.html",
@@ -144,6 +145,13 @@ def write_root_redirect_index() -> None:
 </body>
 </html>
 """,
+        encoding="utf-8",
+    )
+
+
+def write_generated_viewer_template() -> None:
+    GENERATED_TEMPLATE_PATH.write_text(
+        render_html({"nodes": [], "edges": []}, title_override="Istari Generated Graph"),
         encoding="utf-8",
     )
 
@@ -586,6 +594,7 @@ def main() -> None:
         refresh_bundle_viewer(bundle) if args.viewer_only else build_bundle(bundle)
     write_redirects_file()
     write_root_redirect_index()
+    write_generated_viewer_template()
     print("Finished building multi-graph Netlify site.", flush=True)
 
 

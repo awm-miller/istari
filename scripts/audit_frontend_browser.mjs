@@ -22,6 +22,7 @@ let directPlan = null;
 let approvedPlan = null;
 const pumpTargets = [];
 let generatedGraphDeleted = false;
+let deleteConfirmation = "";
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
@@ -74,6 +75,20 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/.netlify/functions/istari-job-pump-background" && request.method === "POST") {
     pumpTargets.push((await requestJson(request)).job_id);
     response.writeHead(202).end();
+    return;
+  }
+  if (url.pathname === "/api/nearby-addresses/preview" && request.method === "POST") {
+    const body = await requestJson(request);
+    sendJson(response, {
+      ok: true,
+      centre: { address: body.address, postcode: "N4 2QH", lat: 51.562927, lon: -0.105696 },
+      radius_metres: body.radius_metres,
+      company_count: 4,
+      addresses: [
+        { address: "7-11 St Thomas's Road, London, N4 2QH", lat: 51.562927, lon: -0.105696, distance_metres: 0, companies: [{}, {}] },
+        { address: "233 Seven Sisters Road, London, N4 2DA", lat: 51.563504, lon: -0.107475, distance_metres: 139, companies: [{}, {}] },
+      ],
+    });
     return;
   }
   if (url.pathname === "/api/generated-graphs") {
@@ -211,10 +226,15 @@ try {
   await page.locator("#graph-switcher-button").click();
   assert.equal(await page.locator('.graph-switcher-option[data-graph-key="94-park-ave"]').getAttribute("aria-current"), "page");
   assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 1);
-  page.once("dialog", (dialog) => dialog.accept());
+  assert.equal(await page.locator('.graph-delete-button[aria-label="Delete Generated check"] svg path').count(), 1);
+  page.once("dialog", (dialog) => {
+    deleteConfirmation = dialog.message();
+    dialog.accept();
+  });
   await page.locator('.graph-delete-button[aria-label="Delete Generated check"]').click();
   await page.waitForFunction(() => !document.querySelector('.graph-switcher-option.generated[data-graph-key="generated-check"]'));
   assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 0);
+  assert.match(deleteConfirmation, /all stored graph data/i);
 
   const initialStats = await page.locator("#stats").innerText();
   await page.locator("#search").fill("AL-UMRAN");
@@ -313,6 +333,12 @@ try {
   assert.ok(await page.locator("#case-minimum-occupancy").isVisible(), "Area occupancy control is hidden");
   assert.ok(await page.locator("#case-max-addresses").isVisible(), "Area address ceiling is hidden");
   await page.locator("#case-recipe").selectOption("registry-light");
+  await page.locator("#case-nearby-enabled").check();
+  await page.locator("#case-nearby-centre").fill("7-11 St Thomas's Road, London, N4 2QH");
+  await page.locator("#case-nearby-radius").fill("250");
+  await page.waitForFunction(() => document.querySelector("#case-nearby-summary")?.textContent.includes("2 registered addresses"));
+  assert.ok(await page.locator("#case-nearby-map.leaflet-container").isVisible(), "Nearby radius map is hidden");
+  assert.match(await page.locator("#case-nearby-summary").innerText(), /4 companies within 250 m/);
   await page.locator("#case-add-input").click();
   assert.equal(await page.locator(".case-input").count(), 2);
   assert.equal(await page.locator(".case-input-kind").last().locator('option[value="area"]').count(), 1);
@@ -320,6 +346,8 @@ try {
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["company", "charity"]);
+  assert.equal(approvedPlan?.policy?.nearby_centre, "7-11 St Thomas's Road, London, N4 2QH");
+  assert.equal(approvedPlan?.policy?.nearby_radius_metres, 250);
   assert.ok(transientPollObserved, "Builder audit did not exercise transient status recovery");
   assert.ok(pumpTargets.length >= 2 && pumpTargets.every((jobId) => jobId === "abc123"), "Builder did not target its exact job pumps");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);

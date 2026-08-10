@@ -59,8 +59,15 @@
   const caseMinimumOccupancyInput = document.getElementById("case-minimum-occupancy");
   const caseMaxAddressesInput = document.getElementById("case-max-addresses");
   const caseAreaControlEls = [...document.querySelectorAll(".case-area-control")];
+  const caseAddressControlEls = [...document.querySelectorAll(".case-address-control")];
   const caseAreaNoteEl = document.getElementById("case-area-note");
   const caseRouteNoteEl = document.getElementById("case-route-note");
+  const caseNearbyEnabledInput = document.getElementById("case-nearby-enabled");
+  const caseNearbyConfigEl = document.getElementById("case-nearby-config");
+  const caseNearbyCentreInput = document.getElementById("case-nearby-centre");
+  const caseNearbyRadiusInput = document.getElementById("case-nearby-radius");
+  const caseNearbyRadiusValueEl = document.getElementById("case-nearby-radius-value");
+  const caseNearbySummaryEl = document.getElementById("case-nearby-summary");
   const casePeopleInput = document.getElementById("case-people");
   const caseRunButton = document.getElementById("case-run");
   const caseResetButton = document.getElementById("case-reset");
@@ -159,6 +166,11 @@
   let canvasSearchAnchor = { x: 0, y: 0 };
   let currentCaseJobId = "";
   let currentCasePlan = null;
+  let caseNearbyMap = null;
+  let caseNearbyLayer = null;
+  let caseNearbyCircle = null;
+  let caseNearbyPreviewTimer = null;
+  let caseNearbyPreviewRequest = 0;
 
   const viewerState = {
     searchQuery: "",
@@ -305,7 +317,11 @@
     caseEntitiesInput.value = String(plan.policy?.max_entities || 500);
     caseMinimumOccupancyInput.value = String(plan.policy?.minimum_occupancy || 3);
     caseMaxAddressesInput.value = String(plan.policy?.max_addresses || 200);
-    updateAreaControls();
+    const nearbyRadius = Number(plan.policy?.nearby_radius_metres) || 0;
+    caseNearbyEnabledInput.checked = nearbyRadius > 0;
+    caseNearbyCentreInput.value = nearbyCentreFromPlan(plan);
+    caseNearbyRadiusInput.value = String(nearbyRadius || 250);
+    updateNearbyControls({ preview: nearbyRadius > 0 });
     casePeopleInput.checked = (plan.policy?.leaf_kinds || ["person"]).includes("person");
     casePlanEl.classList.remove("hidden");
     casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -381,6 +397,15 @@
     plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
     plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
     plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
+    plan.policy.nearby_centre = caseNearbyEnabledInput.checked
+      ? String(caseNearbyCentreInput.value || "").trim()
+      : "";
+    plan.policy.nearby_radius_metres = caseNearbyEnabledInput.checked
+      ? Number(caseNearbyRadiusInput.value || 250)
+      : 0;
+    if (caseNearbyEnabledInput.checked && !plan.policy.nearby_centre) {
+      throw new Error("Add a centre for the nearby address search.");
+    }
     plan.policy.pivot_kinds = plan.recipe === "address-network"
       ? ["address", "company", "charity"]
       : ["company", "charity"];
@@ -408,6 +433,8 @@
         max_entities: 500,
         minimum_occupancy: 3,
         max_addresses: 50,
+        nearby_centre: "",
+        nearby_radius_metres: 0,
       },
       enrichments: { sanctions: true, documents: false, negative_news: false },
     });
@@ -418,6 +445,7 @@
   function updateAreaControls() {
     const isArea = caseRecipeInput?.value === "area-clusters";
     caseAreaControlEls.forEach((element) => element.classList.toggle("hidden", !isArea));
+    caseAddressControlEls.forEach((element) => element.classList.toggle("hidden", !isArea && !caseNearbyEnabledInput?.checked));
     caseAreaNoteEl?.classList.toggle("hidden", !isArea);
     const notes = {
       "registry-light": "Load exact organisations and their registered addresses.",
@@ -425,6 +453,133 @@
       "area-clusters": "Scan a street or postcode, then keep shared-address clusters.",
     };
     if (caseRouteNoteEl) caseRouteNoteEl.textContent = notes[caseRecipeInput?.value] || "";
+  }
+
+  function nearbyCentreFromPlan(plan = {}) {
+    const configured = String(plan.policy?.nearby_centre || "").trim();
+    if (configured) return configured;
+    for (const subject of Array.isArray(plan.subjects) ? plan.subjects : []) {
+      const address = (Array.isArray(subject.addresses) ? subject.addresses : [])
+        .map((item) => String(item?.value || "").trim())
+        .find(Boolean);
+      if (address) return address;
+    }
+    return (Array.isArray(plan.inputs) ? plan.inputs : [])
+      .filter((input) => input?.kind === "address")
+      .map((input) => String(input.value || "").trim())
+      .find(Boolean) || "";
+  }
+
+  function nearbyRadius() {
+    return Math.max(50, Math.min(2000, Number(caseNearbyRadiusInput?.value) || 250));
+  }
+
+  function updateNearbyRadiusLabel() {
+    if (caseNearbyRadiusValueEl) caseNearbyRadiusValueEl.textContent = `${nearbyRadius().toLocaleString()} m`;
+    if (caseNearbyCircle) caseNearbyCircle.setRadius(nearbyRadius());
+  }
+
+  function updateNearbyControls(options = {}) {
+    const enabled = !!caseNearbyEnabledInput?.checked;
+    caseNearbyConfigEl?.classList.toggle("hidden", !enabled);
+    updateNearbyRadiusLabel();
+    updateAreaControls();
+    if (!enabled) {
+      caseNearbyPreviewRequest += 1;
+      if (caseNearbyPreviewTimer) window.clearTimeout(caseNearbyPreviewTimer);
+      caseNearbyLayer?.clearLayers();
+      caseNearbyCircle = null;
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      ensureCaseNearbyMap().catch((error) => {
+        if (caseNearbySummaryEl) caseNearbySummaryEl.textContent = error.message || "Map unavailable.";
+      });
+    });
+    if (options.preview !== false) scheduleNearbyPreview(0);
+  }
+
+  function scheduleNearbyPreview(delay = 450) {
+    if (caseNearbyPreviewTimer) window.clearTimeout(caseNearbyPreviewTimer);
+    caseNearbyPreviewTimer = window.setTimeout(() => {
+      previewNearbyAddresses().catch((error) => {
+        if (caseNearbySummaryEl) caseNearbySummaryEl.textContent = error.message || "Address preview failed.";
+      });
+    }, delay);
+  }
+
+  async function ensureCaseNearbyMap() {
+    if (caseNearbyMap) {
+      caseNearbyMap.invalidateSize();
+      return;
+    }
+    await ensureLeafletLoaded();
+    caseNearbyMap = L.map("case-nearby-map", { zoomControl: true }).setView([51.505, -0.09], 13);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(caseNearbyMap);
+    caseNearbyLayer = L.layerGroup().addTo(caseNearbyMap);
+  }
+
+  async function previewNearbyAddresses() {
+    if (!caseNearbyEnabledInput?.checked) return;
+    const address = String(caseNearbyCentreInput?.value || "").trim();
+    if (!address) {
+      caseNearbySummaryEl.textContent = "Enter a centre to preview nearby addresses.";
+      caseNearbyLayer?.clearLayers();
+      return;
+    }
+    const requestId = ++caseNearbyPreviewRequest;
+    caseNearbySummaryEl.textContent = "Counting registered addresses...";
+    const preview = await postBuilderJson("/api/nearby-addresses/preview", {
+      address,
+      radius_metres: nearbyRadius(),
+      max_addresses: Number(caseMaxAddressesInput?.value) || 200,
+    });
+    if (requestId !== caseNearbyPreviewRequest) return;
+    const addresses = Array.isArray(preview.addresses) ? preview.addresses : [];
+    const addressCount = addresses.length;
+    const companyCount = Number(preview.company_count) || 0;
+    caseNearbySummaryEl.textContent = `${addressCount.toLocaleString()} registered ${addressCount === 1 ? "address" : "addresses"} and ${companyCount.toLocaleString()} ${companyCount === 1 ? "company" : "companies"} within ${nearbyRadius().toLocaleString()} m.`;
+    await renderNearbyPreview(preview);
+  }
+
+  async function renderNearbyPreview(preview) {
+    await ensureCaseNearbyMap();
+    const lat = Number(preview.centre?.lat);
+    const lon = Number(preview.centre?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    caseNearbyLayer.clearLayers();
+    caseNearbyCircle = L.circle([lat, lon], {
+      radius: Number(preview.radius_metres) || nearbyRadius(),
+      color: "#6e95b9",
+      weight: 1.5,
+      fillColor: "#6e95b9",
+      fillOpacity: 0.08,
+    }).addTo(caseNearbyLayer);
+    L.circleMarker([lat, lon], {
+      radius: 5,
+      color: "#d8dee9",
+      weight: 2,
+      fillColor: "#0d1117",
+      fillOpacity: 1,
+    }).bindPopup(`<strong>${escapeHtml(preview.centre?.address || "Search centre")}</strong>`).addTo(caseNearbyLayer);
+    (Array.isArray(preview.addresses) ? preview.addresses : []).forEach((item) => {
+      const itemLat = Number(item.lat);
+      const itemLon = Number(item.lon);
+      if (!Number.isFinite(itemLat) || !Number.isFinite(itemLon)) return;
+      const companies = Array.isArray(item.companies) ? item.companies.length : 0;
+      L.circleMarker([itemLat, itemLon], {
+        radius: 4,
+        color: "#6e95b9",
+        weight: 1.5,
+        fillColor: "#6e95b9",
+        fillOpacity: 0.75,
+      }).bindPopup(`<strong>${escapeHtml(item.address || "Registered address")}</strong><br>${Number(item.distance_metres) || 0} m | ${companies} ${companies === 1 ? "company" : "companies"}`).addTo(caseNearbyLayer);
+    });
+    caseNearbyMap.invalidateSize();
+    caseNearbyMap.fitBounds(caseNearbyCircle.getBounds().pad(0.12), { maxZoom: 17 });
   }
 
   async function postBuilderJson(path, payload) {
@@ -642,10 +797,10 @@
       deleteButton.type = "button";
       deleteButton.setAttribute("aria-label", `Delete ${graphTitle}`);
       deleteButton.title = `Delete ${graphTitle}`;
-      deleteButton.innerHTML = '<span aria-hidden="true"></span>';
+      deleteButton.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg>';
       deleteButton.addEventListener("click", async (event) => {
         event.stopPropagation();
-        const confirmed = window.confirm(`Delete "${graphTitle}" and all stored Juicer data? This cannot be undone.`);
+        const confirmed = window.confirm(`Delete "${graphTitle}" and all stored graph data? This cannot be undone.`);
         if (!confirmed) return;
         deleteButton.disabled = true;
         try {
@@ -4094,6 +4249,13 @@
     });
     caseResetButton?.addEventListener("click", resetCaseDesk);
     caseRecipeInput?.addEventListener("change", updateAreaControls);
+    caseNearbyEnabledInput?.addEventListener("change", () => updateNearbyControls());
+    caseNearbyCentreInput?.addEventListener("input", () => scheduleNearbyPreview());
+    caseNearbyRadiusInput?.addEventListener("input", updateNearbyRadiusLabel);
+    caseNearbyRadiusInput?.addEventListener("change", () => scheduleNearbyPreview(0));
+    caseMaxAddressesInput?.addEventListener("change", () => {
+      if (caseNearbyEnabledInput?.checked) scheduleNearbyPreview(0);
+    });
     caseProgressEl?.addEventListener("click", () => setRunLogOpen(true));
     caseProgressEl?.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {

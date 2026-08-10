@@ -6,6 +6,7 @@
 - Discovery backend: `https://github.com/awm-miller/istari-juicer-sites`, branch `main`.
 - Production frontend: `https://projectistari.netlify.app`.
 - Production backend: `https://istari-juicer.alexmiller3146.chatgpt.site`.
+- Generated graph pages use `netlify_graph_viewer/generated-viewer-template.html`; copy that built template to the backend repository's `public/generated-viewer-template.html` before backend deployment.
 - Sites project ID: `appgprj_6a634f96ceec8191b73dc194d003265c`.
 
 The Netlify site is the only public application surface. The Sites root returns

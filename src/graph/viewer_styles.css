@@ -143,27 +143,13 @@ body {{
   outline: none;
 }}
 .graph-delete-button:disabled {{ opacity: 0.4; cursor: wait; }}
-.graph-delete-button span,
-.graph-delete-button span::before {{
-  position: absolute;
-  left: 50%;
-  display: block;
-  content: "";
-  border: 1.5px solid currentColor;
-  transform: translateX(-50%);
-}}
-.graph-delete-button span {{
-  top: 11px;
-  width: 9px;
-  height: 10px;
-  border-top: 0;
-  border-radius: 0 0 2px 2px;
-}}
-.graph-delete-button span::before {{
-  top: -4px;
-  width: 12px;
-  height: 1px;
-  border-width: 1.5px 0 0;
+.graph-delete-button svg {{
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }}
 .search-box {{
   display: flex;
@@ -589,6 +575,75 @@ body.builder-mode #compact-legend {{
   font-size: 11px;
   line-height: 1.55;
 }}
+.case-nearby {{
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #252b34;
+}}
+.case-nearby-toggle {{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #aeb6c1;
+  font-size: 11px;
+  cursor: pointer;
+}}
+.case-nearby-toggle input {{ accent-color: #6e95b9; }}
+.case-nearby-config {{ margin-top: 15px; }}
+.case-nearby-config.hidden {{ display: none; }}
+.case-nearby-fields {{
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.8fr);
+  gap: 22px;
+}}
+.case-nearby-fields label {{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}}
+.case-nearby-fields label > span {{
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}}
+.case-nearby-fields input[type="text"] {{
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #2a303b;
+  border-radius: 0;
+  padding: 10px 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}}
+.case-nearby-fields input[type="range"] {{
+  width: 100%;
+  accent-color: #79a8d2;
+}}
+.case-nearby-fields small,
+.case-nearby-note {{
+  color: #596271;
+  font-size: 10px;
+  line-height: 1.45;
+}}
+.case-nearby-summary {{
+  min-height: 18px;
+  margin: 14px 0 8px;
+  color: #c4cbd4;
+  font-size: 11px;
+}}
+#case-nearby-map {{
+  height: 300px;
+  overflow: hidden;
+  border: 1px solid #252b34;
+  border-radius: 6px;
+  background: #0f1218;
+}}
+.case-nearby-note {{ margin: 8px 0 0; }}
 .builder-actions {{
   display: flex;
   align-items: center;
@@ -1586,6 +1641,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
     gap: 14px;
   }}
   .case-name-controls {{ grid-template-columns: 1fr; }}
+  .case-nearby-fields {{ grid-template-columns: 1fr; }}
   .compare-summary {{
     order: 4;
     width: 100%;
