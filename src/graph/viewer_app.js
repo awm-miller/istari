@@ -539,9 +539,12 @@
     });
     if (requestId !== caseNearbyPreviewRequest) return;
     const addresses = Array.isArray(preview.addresses) ? preview.addresses : [];
-    const addressCount = addresses.length;
+    const shownCount = addresses.length;
+    const addressCount = Number(preview.address_count) || shownCount;
     const companyCount = Number(preview.company_count) || 0;
-    caseNearbySummaryEl.textContent = `${addressCount.toLocaleString()} registered ${addressCount === 1 ? "address" : "addresses"} and ${companyCount.toLocaleString()} ${companyCount === 1 ? "company" : "companies"} within ${nearbyRadius().toLocaleString()} m.`;
+    caseNearbySummaryEl.textContent = addressCount > shownCount
+      ? `${addressCount.toLocaleString()} registered addresses and ${companyCount.toLocaleString()} companies within ${nearbyRadius().toLocaleString()} m. The nearest ${shownCount.toLocaleString()} will be plotted.`
+      : `${addressCount.toLocaleString()} registered ${addressCount === 1 ? "address" : "addresses"} and ${companyCount.toLocaleString()} ${companyCount === 1 ? "company" : "companies"} within ${nearbyRadius().toLocaleString()} m.`;
     await renderNearbyPreview(preview);
   }
 

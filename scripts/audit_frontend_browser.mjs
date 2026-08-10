@@ -83,6 +83,7 @@ const server = createServer(async (request, response) => {
       ok: true,
       centre: { address: body.address, postcode: "N4 2QH", lat: 51.562927, lon: -0.105696 },
       radius_metres: body.radius_metres,
+      address_count: 2,
       company_count: 4,
       addresses: [
         { address: "7-11 St Thomas's Road, London, N4 2QH", lat: 51.562927, lon: -0.105696, distance_metres: 0, companies: [{}, {}] },
