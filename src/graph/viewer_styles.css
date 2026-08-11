@@ -541,6 +541,19 @@ body.builder-mode #compact-legend {{
   outline: none;
   transition: border-color 160ms ease, color 160ms ease;
 }}
+.case-controls select,
+.case-input select {{
+  color-scheme: dark;
+}}
+.case-controls select option,
+.case-input select option {{
+  background: #0f1218;
+  color: #e1e5eb;
+}}
+.case-controls select option:disabled,
+.case-input select option:disabled {{
+  color: #737c89;
+}}
 .builder-form input:focus,
 .builder-form textarea:focus,
 .case-controls input:focus,

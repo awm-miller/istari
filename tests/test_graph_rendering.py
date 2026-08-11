@@ -95,6 +95,12 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("Array.isArray(job.stdout)", html)
         self.assertNotIn('class="builder-status"', html)
 
+    def test_builder_select_options_use_the_dark_colour_scheme(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn("color-scheme: dark", html)
+        self.assertIn(".case-controls select option:disabled", html)
+
 
 if __name__ == "__main__":
     unittest.main()
