@@ -71,7 +71,7 @@ deploy the saved version. Do not deploy an uncommitted archive.
 
 ## Acceptance checks
 
-1. Open `/mb/`, select Builder, and test both a natural-language brief and **Fill contract directly**.
+1. Open `/mb/`, select Builder, and test both a natural-language brief and **Manual search**.
 2. Confirm the graph name and optional URL key persist, and click the progress strip to inspect the run log.
 3. Confirm researched subjects, exact entities, addresses, evidence links, and route controls appear before approval.
 4. Change a route or limit, approve the plan, and confirm the run log advances without duplicate work.
