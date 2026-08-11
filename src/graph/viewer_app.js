@@ -314,7 +314,7 @@
     casePlanInputsEl.innerHTML = (Array.isArray(plan.inputs) ? plan.inputs : []).map(renderCaseInput).join("");
     caseRecipeInput.value = plan.recipe || "registry-light";
     caseRoundsInput.value = String(plan.policy?.max_rounds ?? 2);
-    caseEntitiesInput.value = String(plan.policy?.max_entities || 500);
+    caseEntitiesInput.value = String(plan.policy?.max_entities || 5000);
     caseMinimumOccupancyInput.value = String(plan.policy?.minimum_occupancy || 3);
     caseMaxAddressesInput.value = String(plan.policy?.max_addresses || 200);
     const nearbyRadius = Number(plan.policy?.nearby_radius_metres) || 0;
@@ -394,7 +394,7 @@
     ));
     if (!plan.inputs.length && !hasResearchMaterial) throw new Error("Add an input or retain a resolved subject.");
     plan.policy.max_rounds = Number(caseRoundsInput.value || 2);
-    plan.policy.max_entities = Number(caseEntitiesInput.value || 500);
+    plan.policy.max_entities = Number(caseEntitiesInput.value || 5000);
     plan.policy.minimum_occupancy = Number(caseMinimumOccupancyInput.value || 3);
     plan.policy.max_addresses = Number(caseMaxAddressesInput.value || 200);
     plan.policy.nearby_centre = caseNearbyEnabledInput.checked
@@ -430,7 +430,7 @@
         pivot_kinds: ["address", "company", "charity"],
         leaf_kinds: ["person"],
         max_rounds: 2,
-        max_entities: 500,
+        max_entities: 5000,
         minimum_occupancy: 3,
         max_addresses: 50,
         nearby_centre: "",
