@@ -744,15 +744,6 @@
       event.stopPropagation();
       setGraphSwitcherOpen(graphSwitcherMenuEl.classList.contains("hidden"));
     });
-    graphSwitcherOptionEls.forEach((optionEl) => {
-      optionEl.addEventListener("click", () => {
-        const selected = GRAPH_OPTIONS.find((option) => option.key === optionEl.dataset.graphKey);
-        if (!selected) return;
-        setGraphSwitcherSelection(optionEl, selected.label);
-        setGraphSwitcherOpen(false);
-        window.location.assign(selected.path);
-      });
-    });
     loadGeneratedGraphOptions().catch((error) => {
       console.warn("Generated graph list failed to load", error);
     });
@@ -777,24 +768,19 @@
     const graphs = Array.isArray(data.graphs) ? data.graphs : [];
     graphSwitcherMenuEl.querySelectorAll(".graph-switcher-row.generated").forEach((element) => element.remove());
     graphs.forEach((graph) => {
-      const path = String(graph.path || "");
       const graphTitle = String(graph.title || graph.id || "").trim();
-      const graphId = String(graph.id || detectGeneratedGraphId(path)).trim();
-      if (!path || !graphTitle || !graphId) return;
-      const button = document.createElement("button");
+      const graphId = String(graph.id || detectGeneratedGraphId(graph.path)).trim().toLowerCase();
+      const path = canonicalGeneratedGraphPath(graphId);
+      if (!path || !graphTitle) return;
+      const button = document.createElement("a");
       button.className = "graph-switcher-option generated";
-      button.type = "button";
       button.role = "menuitem";
+      button.href = path;
       button.dataset.graphKey = graphId;
       button.textContent = graphTitle;
       const isActive = graphId.toLowerCase() === currentGeneratedGraphId.toLowerCase();
       button.classList.toggle("active", isActive);
       button.setAttribute("aria-current", isActive ? "page" : "false");
-      button.addEventListener("click", () => {
-        setGraphSwitcherSelection(button, graphTitle);
-        setGraphSwitcherOpen(false);
-        window.location.assign(path);
-      });
       const deleteButton = document.createElement("button");
       deleteButton.className = "graph-delete-button";
       deleteButton.type = "button";
@@ -827,6 +813,11 @@
       if (isActive) setGraphSwitcherSelection(button, graphTitle);
     });
     return graphs;
+  }
+
+  function canonicalGeneratedGraphPath(graphId) {
+    const cleanId = String(graphId || "").trim().toLowerCase();
+    return /^[a-z0-9-]+$/.test(cleanId) ? `/generated-graphs/${cleanId}/` : "";
   }
 
   function escapeHtml(value) {

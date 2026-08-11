@@ -225,8 +225,13 @@ try {
   await page.locator("#details-modal-close").click();
 
   await page.locator("#graph-switcher-button").click();
+  assert.equal(await page.locator('.graph-switcher-option[data-graph-key="94-park-ave"]').getAttribute("href"), "/94-park-ave/");
   assert.equal(await page.locator('.graph-switcher-option[data-graph-key="94-park-ave"]').getAttribute("aria-current"), "page");
   assert.equal(await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').count(), 1);
+  assert.equal(
+    await page.locator('.graph-switcher-option.generated[data-graph-key="generated-check"]').getAttribute("href"),
+    "/generated-graphs/generated-check/",
+  );
   assert.equal(await page.locator('.graph-delete-button[aria-label="Delete Generated check"] svg path').count(), 1);
   page.once("dialog", (dialog) => {
     deleteConfirmation = dialog.message();

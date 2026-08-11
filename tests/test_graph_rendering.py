@@ -71,6 +71,7 @@ class GraphRenderingTests(unittest.TestCase):
 
         for graph_key in ("mb", "94-park-ave", "iums", "iran", "sevenspikes", "expanded-mb-names"):
             self.assertIn(f'data-graph-key="{graph_key}"', html)
+            self.assertIn(f'href="/{graph_key}/"', html)
             self.assertIn(f'path: "/{graph_key}/"', html)
         self.assertIn("GRAPH_OPTIONS.find(({ path: optionPath })", html)
 
@@ -79,6 +80,8 @@ class GraphRenderingTests(unittest.TestCase):
 
         self.assertIn("function detectGeneratedGraphId(pathname)", html)
         self.assertIn("const currentGraphKey = currentGeneratedGraphId || detectGraphKey", html)
+        self.assertIn('const path = canonicalGeneratedGraphPath(graphId)', html)
+        self.assertIn('button.href = path', html)
         self.assertIn("button.dataset.graphKey = graphId", html)
         self.assertIn("if (isActive) setGraphSwitcherSelection(button, graphTitle)", html)
         self.assertIn('deleteButton.setAttribute("aria-label", `Delete ${graphTitle}`)', html)
