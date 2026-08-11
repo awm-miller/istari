@@ -104,8 +104,9 @@ class GraphRenderingTests(unittest.TestCase):
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 
-        self.assertIn("Beautiful UI primitives, scoped to the header and Builder only", html)
-        self.assertIn('.topbar,\n.builder-panel,\n.run-log-sheet {', html)
+        self.assertIn("Beautiful UI primitives, scoped to the header, Builder, and Tools", html)
+        self.assertIn('.topbar,\n.builder-panel,\n.run-log-sheet,\n.viewer-sidebar,\n.sidebar-handle {', html)
+        self.assertIn('.viewer-sidebar :is(.legend-toggle, .sidebar-meta-toggle input[type="checkbox"]):checked', html)
         self.assertIn('url("/assets/inter-latin.woff2")', html)
         self.assertIn('url("/assets/jetbrains-mono-latin.woff2")', html)
         self.assertNotIn("beautiful-ui-five.vercel.app/_next/static/media", html)

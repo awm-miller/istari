@@ -1679,10 +1679,12 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   }}
 }}
 
-/* Beautiful UI primitives, scoped to the header and Builder only. */
+/* Beautiful UI primitives, scoped to the header, Builder, and Tools. */
 .topbar,
 .builder-panel,
-.run-log-sheet {{
+.run-log-sheet,
+.viewer-sidebar,
+.sidebar-handle {{
   --page: #17181a;
   --canvas: #1c1d1f;
   --surface: #232427;
@@ -2078,6 +2080,266 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .run-log-header button:hover {{ background: var(--hover); color: var(--ink); }}
 .run-log-sheet .builder-stdout {{ background: var(--inset); border-radius: var(--radius-control); }}
 .case-open-result {{ color: var(--accent-ink); font-size: 12px; font-weight: 500; }}
+.viewer-sidebar {{
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: none;
+  font-family: "Beautiful Inter", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}}
+.viewer-sidebar.open {{ box-shadow: var(--shadow-overlay); }}
+.sidebar-handle {{
+  width: 36px;
+  height: 52px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-btn);
+  backdrop-filter: none;
+  transition: right 280ms var(--ease-out-strong), color 100ms ease, background-color 100ms ease, transform 150ms ease;
+}}
+.sidebar-handle:hover {{
+  background: var(--hover);
+  color: var(--ink);
+  transform: translateY(-50%);
+}}
+.sidebar-handle svg {{ width: 16px; height: 16px; }}
+.sidebar-header {{
+  min-height: 48px;
+  padding: 12px;
+  border-color: var(--line);
+}}
+.sidebar-header h2 {{
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}}
+.sidebar-tabs {{
+  gap: 0;
+  margin: 0 8px 8px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--field);
+}}
+.sidebar-tab {{
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}}
+.sidebar-tab:hover {{
+  border-color: transparent;
+  color: var(--ink-2);
+}}
+.sidebar-tab.active {{
+  border-color: transparent;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-btn);
+}}
+.sidebar-tab:focus-visible,
+.viewer-sidebar :is(button, input, textarea, [tabindex]):focus-visible {{
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}}
+.viewer-sidebar button:not(:disabled):active {{ transform: scale(0.96); }}
+.sidebar-body {{
+  gap: 12px;
+  padding: 8px;
+  scrollbar-color: var(--hover-2) transparent;
+  scrollbar-width: thin;
+}}
+.sidebar-section {{ gap: 2px; }}
+.viewer-sidebar .legend .row,
+.sidebar-meta-toggle {{
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--ink-2);
+  font-size: 13px;
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.viewer-sidebar .legend .row:hover,
+.sidebar-meta-toggle:hover {{
+  background: var(--hover);
+  color: var(--ink);
+}}
+.viewer-sidebar .legend .legend-key {{
+  color: inherit;
+  font-size: inherit;
+  font-weight: 400;
+}}
+.viewer-sidebar :is(.legend-toggle, .sidebar-meta-toggle input[type="checkbox"]) {{
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 1px solid #4f565f;
+  border-radius: 6px;
+  background-color: #343a41;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: #e0e4e8;
+  cursor: pointer;
+  transition: border-color 140ms ease-out, background-color 140ms ease-out, transform 140ms var(--ease-out-strong);
+}}
+.viewer-sidebar :is(.legend-toggle, .sidebar-meta-toggle input[type="checkbox"]):hover {{
+  border-color: #626a74;
+  background-color: #3f464e;
+}}
+.viewer-sidebar :is(.legend-toggle, .sidebar-meta-toggle input[type="checkbox"]):active {{ transform: scale(0.96); }}
+.viewer-sidebar :is(.legend-toggle, .sidebar-meta-toggle input[type="checkbox"]):checked {{
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='m4 9 3 3 7-7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}}
+.sidebar-meta-toggle:has(input:disabled) {{ color: var(--ink-3); }}
+.viewer-sidebar input:disabled {{ cursor: default; opacity: 0.72; }}
+.score-panel {{ padding: 4px; }}
+.score-panel h2 {{
+  margin: 10px 4px 6px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}}
+.score-type-tabs {{
+  gap: 0;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--field);
+}}
+.score-type-tab {{
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 500;
+}}
+.score-type-tab:hover {{ background: transparent; color: var(--ink-2); }}
+.score-type-tab.active {{
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-btn);
+}}
+.score-list {{ gap: 1px; }}
+.score-item {{
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  transition: background-color 100ms ease;
+}}
+.score-item:hover {{ background: var(--hover); }}
+.score-item-title strong {{ color: var(--ink); font-size: 12.5px; font-weight: 500; }}
+.score-item-title span {{ color: var(--ink-3); font: 11px "Beautiful Mono", ui-monospace, monospace; }}
+.score-item-meta,
+.score-empty {{ color: var(--ink-3); font-size: 11.5px; }}
+.resolution-panel,
+.question-panel {{ gap: 10px; padding: 4px; }}
+.resolution-heading {{
+  padding: 5px 4px 2px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}}
+.resolution-heading span {{
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-hairline);
+  text-align: center;
+  font-size: 10.5px;
+}}
+.resolution-card,
+.resolution-decision,
+.question-selection,
+.question-citation {{
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--inset);
+  box-shadow: var(--shadow-hairline);
+}}
+.resolution-card,
+.resolution-decision {{ padding: 10px; }}
+.resolution-pair {{ color: var(--ink); font-size: 12.5px; font-weight: 500; }}
+.resolution-reason,
+.resolution-audit {{ color: var(--ink-3); font-size: 11px; }}
+.resolution-actions button,
+.question-actions button {{
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-btn);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.resolution-actions button:hover,
+.question-actions button:hover {{ background: var(--hover); color: var(--ink); }}
+.resolution-actions button[data-resolution-action="reject"] {{
+  border-color: transparent;
+  background: var(--surface);
+}}
+#question-submit {{
+  background: var(--accent);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 0 0 1px rgba(16,24,40,0.12), 0 1px 2px rgba(16,24,40,0.1);
+}}
+#question-submit:hover {{ background: #238cf6; color: #fff; }}
+.question-selection {{ padding: 10px; color: var(--ink-2); font-size: 12px; }}
+#question-input {{
+  min-height: 96px;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  box-shadow: var(--shadow-inset-field), var(--shadow-hairline);
+  font: 13px/1.4 "Beautiful Inter", Inter, ui-sans-serif, system-ui, sans-serif;
+}}
+#question-input::placeholder {{ color: var(--ink-3); }}
+#question-input:focus {{ box-shadow: var(--shadow-inset-field), 0 0 0 1px var(--line-strong); }}
+.question-citation {{
+  padding: 8px 10px;
+  color: var(--ink-3);
+  font-size: 11px;
+}}
+#address-map {{
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}}
+.sidebar-body::-webkit-scrollbar,
+.analysis-body::-webkit-scrollbar {{ width: 8px; }}
+.sidebar-body::-webkit-scrollbar-track,
+.analysis-body::-webkit-scrollbar-track {{ background: transparent; }}
+.sidebar-body::-webkit-scrollbar-thumb,
+.analysis-body::-webkit-scrollbar-thumb {{
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--hover-2);
+}}
 @keyframes beautiful-fade-up {{
   from {{ opacity: 0; transform: translateY(8px); }}
   to {{ opacity: 1; transform: translateY(0); }}
