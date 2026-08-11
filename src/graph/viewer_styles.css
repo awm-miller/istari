@@ -1,3 +1,17 @@
+@font-face {{
+  font-family: "Beautiful Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/inter-latin.woff2") format("woff2");
+}}
+@font-face {{
+  font-family: "Beautiful Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/assets/jetbrains-mono-latin.woff2") format("woff2");
+}}
 :root {{
   --bg: #0c0e14;
   --surface: #141820;
@@ -1663,4 +1677,419 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   .compare-summary-label {{
     max-width: none;
   }}
+}}
+
+/* Beautiful UI primitives, scoped to the header and Builder only. */
+.topbar,
+.builder-panel,
+.run-log-sheet {{
+  --page: #17181a;
+  --canvas: #1c1d1f;
+  --surface: #232427;
+  --inset: #1f2022;
+  --hover: #2a2b2e;
+  --hover-2: #313236;
+  --ink: #f2f3f4;
+  --ink-2: #a5a8ad;
+  --ink-3: #6c6f75;
+  --line: #2e3033;
+  --line-strong: #3a3c40;
+  --field: #2b2c2f;
+  --accent: #3d9aff;
+  --accent-ink: #7ec0ff;
+  --accent-tint: #3d9aff29;
+  --green: #3dbb72;
+  --green-tint: #3dbb7224;
+  --orange: #f68f3c;
+  --orange-tint: #f68f3c24;
+  --red: #ee5c61;
+  --red-tint: #ee5c6124;
+  --shadow-hairline: 0 0 0 1px var(--line);
+  --shadow-btn: 0 0 0 1px var(--line-strong), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgba(0,0,0,0.2), 0 2px 6px rgba(0,0,0,0.2);
+  --shadow-raised: 0 0 0 1px var(--line), 0 2px 10px rgba(0,0,0,0.22);
+  --shadow-overlay: 0 0 0 1px var(--line-strong), 0 8px 28px rgba(0,0,0,0.34);
+  --shadow-inset-field: inset 0 1px 2px rgba(0,0,0,0.4);
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-window: 14px;
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --bg: var(--page);
+  --border: var(--line);
+  --text: var(--ink-2);
+  --text-dim: var(--ink-3);
+  --text-bright: var(--ink);
+  --blue: var(--accent);
+  font-family: "Beautiful Inter", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}}
+.topbar button,
+.topbar input,
+.builder-panel button,
+.builder-panel input,
+.builder-panel select,
+.builder-panel textarea,
+.run-log-sheet button {{
+  font: inherit;
+  letter-spacing: inherit;
+}}
+.topbar :is(button, input):focus-visible,
+.builder-panel :is(button, input, select, textarea, [role="button"]):focus-visible,
+.run-log-sheet button:focus-visible {{
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}}
+.topbar button:not(:disabled):active,
+.builder-panel button:not(:disabled):active,
+.run-log-sheet button:not(:disabled):active {{
+  transform: scale(0.96);
+}}
+.topbar {{
+  min-height: 58px;
+  gap: 12px;
+  padding: 10px 14px;
+  border-color: var(--line);
+  background: var(--surface);
+}}
+.topbar .stats {{
+  color: var(--ink-3);
+  font-family: "Beautiful Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}}
+.graph-switcher-button {{
+  min-height: 32px;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}}
+.graph-switcher-button:hover,
+.graph-switcher-button:focus {{
+  background: var(--hover);
+  color: var(--ink);
+}}
+.graph-switcher-caret {{
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath fill='%236c6f75' d='M1.2.6 5 4.2 8.8.6 10 1.8 5 6 0 1.8z'/%3E%3C/svg%3E");
+}}
+.graph-switcher-menu {{
+  top: calc(100% + 6px);
+  min-width: 248px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  backdrop-filter: none;
+}}
+.graph-switcher-option {{
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 13px;
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.graph-switcher-option:hover,
+.graph-switcher-option:focus,
+.graph-switcher-option.active {{
+  background: var(--hover);
+  color: var(--ink);
+}}
+.graph-delete-button {{
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  color: var(--ink-3);
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.graph-delete-button:hover,
+.graph-delete-button:focus {{
+  background: var(--red-tint);
+  color: var(--red);
+}}
+.search-box input {{
+  width: 240px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--inset);
+  color: var(--ink);
+  box-shadow: var(--shadow-hairline);
+  font-size: 12.5px;
+  transition: box-shadow 150ms ease, background-color 150ms ease;
+}}
+.search-box input::placeholder {{ color: var(--ink-3); }}
+.search-box input:hover {{ background: var(--hover); }}
+.search-box input:focus {{
+  border-color: transparent;
+  box-shadow: 0 0 0 1px var(--line-strong), 0 1px 2px rgba(0,0,0,0.2);
+}}
+.mode-switch {{
+  gap: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--field);
+}}
+.mode-switch-button {{
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}}
+.mode-switch-button:hover {{ color: var(--ink-2); }}
+.mode-switch-button.active {{
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-btn);
+}}
+.compare-summary {{
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-tint);
+}}
+.compare-summary-label {{ color: var(--accent-ink); font-size: 12px; }}
+.compare-summary-clear {{
+  padding: 3px 8px;
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-btn);
+  font-size: 11px;
+}}
+.builder-panel {{
+  background: var(--page);
+  color: var(--ink-2);
+}}
+.case-brief {{ padding: 48px 24px 80px; }}
+.case-brief > h1 {{
+  color: var(--ink);
+  font-size: 21px;
+  line-height: 1.375;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}}
+.case-form {{ margin-top: 22px; }}
+.builder-form #case-query {{
+  min-height: 144px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--field);
+  color: var(--ink);
+  box-shadow: var(--shadow-inset-field), var(--shadow-hairline);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: box-shadow 150ms ease, background-color 150ms ease;
+}}
+.builder-form #case-query::placeholder {{ color: var(--ink-3); }}
+.builder-form #case-query:hover {{ background: var(--hover); }}
+.builder-form #case-query:focus {{
+  border-color: transparent;
+  box-shadow: var(--shadow-inset-field), 0 0 0 1px var(--line-strong);
+}}
+.builder-actions {{ gap: 10px; padding-top: 2px; }}
+.builder-submit {{
+  min-height: 28px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 0 0 1px rgba(16,24,40,0.12), 0 1px 2px rgba(16,24,40,0.1);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background-color 150ms ease, transform 150ms ease;
+}}
+.builder-submit:hover {{
+  border-color: transparent;
+  background: #238cf6;
+}}
+.case-reset,
+.case-input-remove,
+.case-add-input {{
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: var(--radius-control);
+  color: var(--ink-2);
+  font-size: 12px;
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.case-reset:hover,
+.case-input-remove:hover,
+.case-add-input:hover {{
+  background: var(--hover);
+  color: var(--ink);
+}}
+.case-add-input {{ margin: -8px 0 18px; }}
+.case-plan {{
+  margin-top: 28px;
+  padding: 18px;
+  border-top: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  animation: beautiful-fade-up 350ms var(--ease-out-strong) both;
+}}
+.builder-form label span,
+.case-controls label span,
+.case-title-field span,
+.case-nearby-fields label > span {{
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 500;
+}}
+.case-controls label > small,
+.case-title-field > small,
+.case-nearby-fields small,
+.case-nearby-note,
+.case-area-note {{
+  color: var(--ink-3);
+  font-size: 10.5px;
+  line-height: 1.45;
+}}
+.builder-form input,
+.case-controls input,
+.case-controls select,
+.case-title-field input,
+.case-nearby-fields input[type="text"],
+.case-input select,
+.case-input input {{
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--field);
+  color: var(--ink);
+  box-shadow: var(--shadow-inset-field), var(--shadow-hairline);
+  font-size: 12.5px;
+  font-weight: 400;
+  transition: background-color 100ms ease, box-shadow 150ms ease;
+}}
+.case-title-field input {{ font-size: 13px; font-weight: 500; }}
+.builder-form input:hover,
+.case-controls input:hover,
+.case-controls select:hover,
+.case-title-field input:hover,
+.case-nearby-fields input[type="text"]:hover,
+.case-input select:hover,
+.case-input input:hover {{ background: var(--hover); }}
+.builder-form input:focus,
+.case-controls input:focus,
+.case-controls select:focus,
+.case-title-field input:focus,
+.case-nearby-fields input[type="text"]:focus,
+.case-input select:focus,
+.case-input input:focus {{
+  border-color: transparent;
+  box-shadow: var(--shadow-inset-field), 0 0 0 1px var(--line-strong);
+}}
+.case-controls select,
+.case-input select {{ color-scheme: dark; }}
+.case-controls select option,
+.case-input select option {{ background: var(--surface); color: var(--ink); }}
+.case-controls select option:disabled,
+.case-input select option:disabled {{ color: var(--ink-3); }}
+.case-subject {{
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--inset);
+  box-shadow: var(--shadow-hairline);
+}}
+.case-subject h3 {{ color: var(--ink); font-size: 13px; font-weight: 500; }}
+.case-subject-fact {{ color: var(--ink-2); font-size: 12px; }}
+.case-source-links a {{ color: var(--accent-ink); }}
+.case-nearby {{ border-color: var(--line); }}
+.case-nearby-toggle,
+.case-toggles label {{ color: var(--ink-2); font-size: 12px; }}
+.case-nearby-toggle input,
+.case-toggles input,
+.case-nearby-fields input[type="range"] {{ accent-color: var(--accent); }}
+.case-nearby-summary {{ color: var(--ink-2); font-size: 12px; }}
+#case-nearby-map {{
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--canvas);
+  box-shadow: var(--shadow-card);
+}}
+.builder-stdout {{
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--inset);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-hairline);
+  font: 11.5px/1.6 "Beautiful Mono", ui-monospace, monospace;
+}}
+.case-progress {{
+  margin-top: 22px;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: background-color 100ms ease, box-shadow 150ms ease, transform 150ms ease;
+}}
+.case-progress:hover,
+.case-progress:focus {{
+  border-color: transparent;
+  background: var(--hover);
+  box-shadow: var(--shadow-raised);
+}}
+.case-progress-summary {{ color: var(--ink-2); font-size: 12px; }}
+.case-progress progress {{ height: 4px; border-radius: 999px; background: var(--line-strong); color: var(--accent); }}
+.case-progress progress::-webkit-progress-bar {{ background: var(--line-strong); }}
+.case-progress progress::-webkit-progress-value {{ border-radius: 999px; background: var(--accent); }}
+.case-progress progress::-moz-progress-bar {{ border-radius: 999px; background: var(--accent); }}
+.case-progress-detail {{ color: var(--ink-3); font: 11px/1.5 "Beautiful Mono", ui-monospace, monospace; }}
+.run-log-backdrop {{ background: rgba(17,18,20,0.76); backdrop-filter: blur(4px); }}
+.run-log-sheet {{
+  padding-top: 14px;
+  border: 0;
+  border-radius: var(--radius-window) var(--radius-window) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+  animation: run-log-enter 220ms var(--ease-out-strong);
+}}
+.run-log-header h2 {{ color: var(--ink); font-size: 13px; font-weight: 600; }}
+.run-log-header button {{
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-btn);
+  font-size: 12px;
+  transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
+}}
+.run-log-header button:hover {{ background: var(--hover); color: var(--ink); }}
+.run-log-sheet .builder-stdout {{ background: var(--inset); border-radius: var(--radius-control); }}
+.case-open-result {{ color: var(--accent-ink); font-size: 12px; font-weight: 500; }}
+@keyframes beautiful-fade-up {{
+  from {{ opacity: 0; transform: translateY(8px); }}
+  to {{ opacity: 1; transform: translateY(0); }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+  .case-plan {{ animation: none; }}
+}}
+@media (max-width: 900px) {{
+  .topbar {{ padding: 9px 10px; }}
+  .graph-switcher-button {{ max-width: min(250px, calc(100vw - 160px)); }}
+  .search-box {{ order: 4; width: 100%; }}
+  .search-box input {{ width: 100%; }}
+  .case-brief {{ padding: 32px 16px 56px; }}
+  .case-plan {{ padding: 14px; }}
 }}

@@ -20,6 +20,8 @@ OUTPUT_ROOT = PROJECT_ROOT / "output"
 REDIRECTS_PATH = NETLIFY_ROOT / "_redirects"
 ROOT_INDEX_PATH = NETLIFY_ROOT / "index.html"
 GENERATED_TEMPLATE_PATH = NETLIFY_ROOT / "generated-viewer-template.html"
+STATIC_ASSET_SOURCE_DIR = PROJECT_ROOT / "src" / "graph" / "static"
+STATIC_ASSET_TARGET_DIR = NETLIFY_ROOT / "assets"
 
 SOURCE_TO_TARGET = {
     "latest_graph.html": "index.html",
@@ -154,6 +156,12 @@ def write_generated_viewer_template() -> None:
         render_html({"nodes": [], "edges": []}, title_override="Istari Generated Graph"),
         encoding="utf-8",
     )
+
+
+def copy_static_assets() -> None:
+    if STATIC_ASSET_TARGET_DIR.exists():
+        shutil.rmtree(STATIC_ASSET_TARGET_DIR)
+    shutil.copytree(STATIC_ASSET_SOURCE_DIR, STATIC_ASSET_TARGET_DIR)
 
 
 def normalize_person_name(value: str) -> str:
@@ -595,6 +603,7 @@ def main() -> None:
     write_redirects_file()
     write_root_redirect_index()
     write_generated_viewer_template()
+    copy_static_assets()
     print("Finished building multi-graph Netlify site.", flush=True)
 
 

@@ -101,6 +101,15 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("color-scheme: dark", html)
         self.assertIn(".case-controls select option:disabled", html)
 
+    def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn("Beautiful UI primitives, scoped to the header and Builder only", html)
+        self.assertIn('.topbar,\n.builder-panel,\n.run-log-sheet {', html)
+        self.assertIn('url("/assets/inter-latin.woff2")', html)
+        self.assertIn('url("/assets/jetbrains-mono-latin.woff2")', html)
+        self.assertNotIn("beautiful-ui-five.vercel.app/_next/static/media", html)
+
 
 if __name__ == "__main__":
     unittest.main()
