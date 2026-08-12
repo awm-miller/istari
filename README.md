@@ -66,6 +66,8 @@ Planning disables model reasoning so the output budget is reserved for the
 research contract. Explicit locations and registry identifiers are interpreted
 by the model but are not sent to web search. Pasted Companies House officer
 appointment links use their exact officer ID and bypass fuzzy person matching.
+After interpretation, direct address inputs without a nearby radius are
+normalized to the address-network route and its three-round default.
 
 Some legacy enrichment commands still use Gemini when their specific feature
 is enabled. They are not part of the production Builder path.

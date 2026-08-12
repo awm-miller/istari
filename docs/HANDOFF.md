@@ -24,6 +24,9 @@ Planning uses OpenRouter strict JSON-schema output with reasoning disabled and
 requires a provider that supports the requested parameters. Explicit locations
 remain model-interpreted but do not trigger web research. Exact Companies House
 officer appointment links are authoritative inputs and bypass fuzzy name search.
+The backend normalizes model-returned direct address inputs without a nearby
+radius to address-network with three rounds; it does not parse the address from
+the original sentence.
 
 The Netlify proxy must preserve the requested path and add
 `X-Istari-Proxy-Token`. The same token must be stored as
