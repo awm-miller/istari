@@ -160,7 +160,7 @@
   let addressCoordinatesLoaded = false;
   let addressCoordinatesLoadingPromise = null;
   let leafletLoadingPromise = null;
-  let mergeOverrides = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: [] };
+  let mergeOverrides = { address: [], name: [], organisation: [], seed: [], hidden: [], rejected: [], audit: [] };
   let mergeOverridesLoadingPromise = null;
   let resolutionCandidatesCache = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
@@ -2761,6 +2761,7 @@
       address: normalizeMergeOverrideRows(overrides.address),
       name: normalizeMergeOverrideRows(overrides.name),
       organisation: normalizeMergeOverrideRows(overrides.organisation),
+      seed: normalizeHiddenOverrideRows(overrides.seed),
       hidden: normalizeHiddenOverrideRows(overrides.hidden),
       rejected: normalizeRejectedRows(overrides.rejected),
       audit: normalizeAuditRows(overrides.audit),
@@ -3098,9 +3099,25 @@
     };
   }
 
+  function applySeedPromotions(nodes, overrides) {
+    const promotedKeys = new Set(normalizeHiddenOverrideRows(overrides?.seed).map((row) => row.nodeId));
+    if (!promotedKeys.size) return nodes.slice();
+    return nodes.map((node) => {
+      if (node.kind === "seed" || !nodeMergeStableKeys(node).some((key) => promotedKeys.has(key))) return node;
+      const promoted = cloneNodeForMerge(node);
+      promoted.kind = "seed_alias";
+      promoted.lane = 1;
+      promoted.promoted_to_seed = true;
+      promoted.seed_names = uniqueValues([...(promoted.seed_names || []), promoted.label]);
+      promoted.tooltip_lines = uniqueValues([...(promoted.tooltip_lines || []), `Seed: ${promoted.label}`]);
+      return promoted;
+    });
+  }
+
   function rebuildBaseGraph() {
     const merged = applyMergeOverrides(rawMainNodes, rawMainEdges, mergeOverrides);
-    const filtered = applyHiddenOverrides(merged.nodes, merged.edges, mergeOverrides);
+    const promotedNodes = applySeedPromotions(merged.nodes, mergeOverrides);
+    const filtered = applyHiddenOverrides(promotedNodes, merged.edges, mergeOverrides);
     baseNodes = filtered.nodes.slice();
     baseEdges = filtered.edges.slice();
     baseNodeById = new Map(baseNodes.map((node) => [node.id, node]));
@@ -3360,6 +3377,26 @@
     await applyViewerState();
   }
 
+  async function persistSeedOverride(action) {
+    const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        graph: currentGraphKey,
+        operation: String(action.operation || "add"),
+        kind: "seed",
+        nodeId: action.nodeKey,
+        label: action.nodeLabel,
+      }),
+    });
+    if (!response.ok) throw new Error(`Seed promotion persistence failed (${response.status})`);
+    const payload = await response.json();
+    mergeOverrides = readMergeOverrides(payload?.overrides || {});
+    resolutionCandidatesCache = null;
+    rebuildBaseGraph();
+    await applyViewerState();
+  }
+
   async function persistResolutionDecision(action) {
     const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
@@ -3593,6 +3630,8 @@
     const mergeKind = mergeKindForNode(node);
     const mergePrimaryKey = nodeMergePrimaryKey(node);
     const hidePrimaryKey = nodeHidePrimaryKey(node);
+    const promotedSeedKeys = new Set(normalizeHiddenOverrideRows(mergeOverrides.seed).map((row) => row.nodeId));
+    const isPromotedSeed = nodeMergeStableKeys(node).some((key) => promotedSeedKeys.has(key));
     const pendingMergeNode = nodeById.get(viewerState.pendingMergeNodeId) || null;
     const compatiblePendingMergeNode = pendingMergeNode
       && pendingMergeNode.id !== node.id
@@ -3645,6 +3684,14 @@
           }
         : null,
       registryActionForNode(node),
+      mergeKind === "name" && mergePrimaryKey
+        ? {
+            label: isPromotedSeed ? "Restore as person" : "Promote to seed",
+            type: isPromotedSeed ? "seed_remove" : "seed_add",
+            nodeKey: mergePrimaryKey,
+            nodeLabel: String(node.label || node.id || "node"),
+          }
+        : null,
       hidePrimaryKey
         ? {
             label: "Hide",
@@ -4432,6 +4479,16 @@
         } catch (error) {
           console.error(error);
           window.alert("Undo merge failed.");
+        }
+      } else if (action.type === "seed_add" || action.type === "seed_remove") {
+        const promoting = action.type === "seed_add";
+        const confirmed = window.confirm(`${promoting ? "Promote" : "Restore"} "${action.nodeLabel}" ${promoting ? "to a seed" : "as a person"}?`);
+        if (!confirmed) return;
+        try {
+          await persistSeedOverride({ ...action, operation: promoting ? "add" : "remove" });
+        } catch (error) {
+          console.error(error);
+          window.alert("Seed status could not be saved.");
         }
       } else if (action.type === "hide_add") {
         const confirmed = window.confirm(`Hide "${action.nodeLabel}" across graph rebuilds?`);

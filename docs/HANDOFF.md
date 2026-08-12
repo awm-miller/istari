@@ -86,7 +86,8 @@ deploy the saved version. Do not deploy an uncommitted archive.
    Planning output should show public model and registry status, never hidden chain-of-thought.
 5. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
 6. Check repeated edge tooltips, graph selection, deletion confirmation, duplicate resolution, selected-subgraph questions, and immutable version URLs.
-7. Check Sites worker logs after the run and treat any 5xx response as a failed acceptance test.
+7. Check that a promoted person renders as a seed identity and can be restored without losing merged edges.
+8. Check Sites worker logs after the run and treat any 5xx response as a failed acceptance test.
 
 ## Recovery
 

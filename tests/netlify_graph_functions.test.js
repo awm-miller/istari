@@ -49,10 +49,12 @@ test("selected subgraphs retain only edges with valid node referents", () => {
 test("resolution decisions preserve metadata and bounded audit history", () => {
   const normalized = merges.normalizeOverrides({
     organisation: [{ sourceId: "org:a", targetId: "org:b", leaderId: "org:b", sourceLabel: "A", targetLabel: "B", reason: "Same registry identifier" }],
+    seed: [{ nodeId: "node-id:person:a", label: "A Person", decidedAt: "2026-01-01T00:00:00Z" }],
     rejected: [{ sourceId: "person:a", targetId: "person:b", kind: "name", sourceLabel: "A Person", targetLabel: "Another Person" }],
     audit: Array.from({ length: 205 }, (_, index) => ({ action: "merge", at: `2026-01-01T00:00:${String(index).padStart(2, "0")}Z` })),
   });
   assert.equal(normalized.organisation[0].reason, "Same registry identifier");
+  assert.deepEqual(normalized.seed[0], { nodeId: "node-id:person:a", label: "A Person", decidedAt: "2026-01-01T00:00:00Z" });
   assert.equal(normalized.rejected[0].kind, "name");
   assert.equal(normalized.audit.length, 200);
 });

@@ -44,6 +44,12 @@ function normalizeHiddenRow(nodeId, label = "") {
   return text ? { nodeId: node, label: text } : { nodeId: node };
 }
 
+function normalizeSeedRow(nodeId, label = "", decidedAt = "") {
+  const row = normalizeHiddenRow(nodeId, label);
+  if (!row) return null;
+  return decidedAt ? { ...row, decidedAt: optionalText(decidedAt) } : row;
+}
+
 function upsertUnique(rows, sourceId, targetId, leaderId = "", metadata = {}) {
   const row = normalizeRow(sourceId, targetId, leaderId, metadata);
   if (!row) return;
@@ -63,6 +69,17 @@ function removeRow(rows, sourceId, targetId) {
 
 function upsertHiddenUnique(rows, nodeId, label = "") {
   const row = normalizeHiddenRow(nodeId, label);
+  if (!row) return;
+  const existingIndex = rows.findIndex((entry) => entry.nodeId === row.nodeId);
+  if (existingIndex >= 0) {
+    rows[existingIndex] = row;
+    return;
+  }
+  rows.push(row);
+}
+
+function upsertSeedUnique(rows, nodeId, label = "", decidedAt = "") {
+  const row = normalizeSeedRow(nodeId, label, decidedAt);
   if (!row) return;
   const existingIndex = rows.findIndex((entry) => entry.nodeId === row.nodeId);
   if (existingIndex >= 0) {
@@ -105,7 +122,7 @@ function appendAudit(current, entry) {
 }
 
 function normalizeOverrides(overrides) {
-  const normalized = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: [] };
+  const normalized = { address: [], name: [], organisation: [], seed: [], hidden: [], rejected: [], audit: [] };
   if (!overrides || typeof overrides !== "object") {
     return normalized;
   }
@@ -126,6 +143,9 @@ function normalizeOverrides(overrides) {
 
   for (const row of Array.isArray(overrides.hidden) ? overrides.hidden : []) {
     upsertHiddenUnique(normalized.hidden, row?.nodeId, row?.label);
+  }
+  for (const row of Array.isArray(overrides.seed) ? overrides.seed : []) {
+    upsertSeedUnique(normalized.seed, row?.nodeId, row?.label, row?.decidedAt);
   }
   for (const row of Array.isArray(overrides.rejected) ? overrides.rejected : []) {
     const normalizedRow = normalizeRejectedRow(row);
@@ -220,7 +240,7 @@ exports.handler = async function handler(event) {
     reason: payload.reason,
     decidedAt,
   };
-  if (!["address", "name", "organisation", "hidden", "rejected"].includes(kind)) {
+  if (!["address", "name", "organisation", "seed", "hidden", "rejected"].includes(kind)) {
     return json(400, { error: "Unsupported override kind." });
   }
   if (!["add", "remove"].includes(operation)) {
@@ -235,6 +255,26 @@ exports.handler = async function handler(event) {
     } else {
       upsertHiddenUnique(current.hidden, nodeId, label);
     }
+    await store.setJSON(storeKey, current);
+    return json(200, { graph: graphKey, overrides: current });
+  }
+  if (kind === "seed") {
+    if (!nodeId) {
+      return json(400, { error: "Invalid seed node key." });
+    }
+    if (operation === "remove") {
+      current.seed = removeHiddenRow(current.seed, nodeId);
+    } else {
+      upsertSeedUnique(current.seed, nodeId, label, decidedAt);
+    }
+    appendAudit(current, {
+      id: `${Date.now()}:${operation}:seed`,
+      action: operation === "add" ? "promote_seed" : "undo_promote_seed",
+      at: decidedAt,
+      kind,
+      sourceId: nodeId,
+      sourceLabel: label,
+    });
     await store.setJSON(storeKey, current);
     return json(200, { graph: graphKey, overrides: current });
   }
