@@ -100,6 +100,13 @@ function normalizeRejectedRow(row) {
   return { ...normalized, kind: optionalText(row?.kind) || "name" };
 }
 
+function normalizeMergeRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice(0, 100)
+    .map((row) => normalizeRow(row?.sourceId, row?.targetId, row?.leaderId, row))
+    .filter(Boolean);
+}
+
 function normalizeAuditRow(row) {
   const action = optionalText(row?.action);
   const at = optionalText(row?.at);
@@ -243,8 +250,29 @@ exports.handler = async function handler(event) {
   if (!["address", "name", "organisation", "seed", "hidden", "rejected"].includes(kind)) {
     return json(400, { error: "Unsupported override kind." });
   }
-  if (!["add", "remove"].includes(operation)) {
+  if (!["add", "remove", "add_many"].includes(operation)) {
     return json(400, { error: "Unsupported override operation." });
+  }
+  if (operation === "add_many") {
+    if (!["address", "name", "organisation"].includes(kind)) {
+      return json(400, { error: "Batch writes require a merge kind." });
+    }
+    const rows = normalizeMergeRows(payload.rows);
+    if (!rows.length) {
+      return json(400, { error: "Batch write contains no valid merge pairs." });
+    }
+    rows.forEach((row, index) => {
+      upsertUnique(current[kind], row.sourceId, row.targetId, row.leaderId, row);
+      appendAudit(current, {
+        id: `${Date.now()}:${index}:add:${kind}`,
+        action: "merge",
+        at: decidedAt,
+        kind,
+        ...row,
+      });
+    });
+    await store.setJSON(storeKey, current);
+    return json(200, { graph: graphKey, overrides: current });
   }
   if (kind === "hidden") {
     if (!nodeId) {
@@ -324,4 +352,4 @@ exports.handler = async function handler(event) {
   return json(200, { graph: graphKey, overrides: current });
 };
 
-exports._private = { normalizeGraphKey, storeKeyForGraph, normalizeOverrides };
+exports._private = { normalizeGraphKey, storeKeyForGraph, normalizeOverrides, normalizeMergeRows };

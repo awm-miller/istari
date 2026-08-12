@@ -59,6 +59,21 @@ test("resolution decisions preserve metadata and bounded audit history", () => {
   assert.equal(normalized.audit.length, 200);
 });
 
+test("batch merge rows are bounded and reject invalid pairs", () => {
+  const rows = merges.normalizeMergeRows([
+    { sourceId: "person:a", targetId: "person:b", leaderId: "person:b", sourceLabel: "A", targetLabel: "B" },
+    { sourceId: "person:a", targetId: "person:a" },
+    { sourceId: "", targetId: "person:b" },
+  ]);
+  assert.deepEqual(rows, [{
+    sourceId: "person:a",
+    targetId: "person:b",
+    leaderId: "person:b",
+    sourceLabel: "A",
+    targetLabel: "B",
+  }]);
+});
+
 test("graph analysis uses the configured OpenRouter chat-completions model", async () => {
   const previous = {
     key: process.env.OPENROUTER_API_KEY,
