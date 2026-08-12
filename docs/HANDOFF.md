@@ -20,6 +20,11 @@ Netlify owns the viewer, Builder, graph-specific functions, password gate, and
 adapters, the durable work queue, graph checkpoints, immutable graph versions,
 and generated graph responses.
 
+Planning uses OpenRouter strict JSON-schema output with reasoning disabled and
+requires a provider that supports the requested parameters. Explicit locations
+remain model-interpreted but do not trigger web research. Exact Companies House
+officer appointment links are authoritative inputs and bypass fuzzy name search.
+
 The Netlify proxy must preserve the requested path and add
 `X-Istari-Proxy-Token`. The same token must be stored as
 `ISTARI_SITES_PROXY_TOKEN` on Netlify and `ISTARI_PROXY_TOKEN` on Sites.
@@ -71,7 +76,7 @@ deploy the saved version. Do not deploy an uncommitted archive.
 
 ## Acceptance checks
 
-1. Open `/mb/`, select Builder, and test both a natural-language brief and **Manual search**.
+1. Open `/mb/`, select Builder, and test both a natural-language brief and **Manual search**. Use multiple paraphrases of the same explicit-address request and one pasted Companies House officer appointment link.
 2. Confirm the graph name and optional URL key persist, and click the progress strip to inspect the run log.
 3. Confirm researched subjects, exact entities, addresses, evidence links, and route controls appear before approval.
 4. Change a route or limit, approve the plan, and confirm the run log advances without duplicate work.

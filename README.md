@@ -11,7 +11,7 @@ separate Istari graph service on ChatGPT Sites.
 ## Production flow
 
 1. The Builder sends either a natural-language brief or a directly completed research contract to the Sites backend.
-2. Briefs use OpenRouter planning; direct contracts skip the model and open at approval.
+2. Briefs use strict-schema OpenRouter planning; direct contracts skip the model and open at approval.
 3. The user reviews and changes the plan before approving it.
 4. The backend runs a resumable Companies House and Charity Commission work queue.
 5. Completed graph versions appear at `/generated-graphs/<case-id>/`.
@@ -61,6 +61,11 @@ completions. The default is `~deepseek/deepseek-v4-flash-latest`. Requests set
 `provider.data_collection=deny` and `provider.zdr=true`, so OpenRouter must
 select a zero-data-retention route or fail. Registry records remain the source
 of truth; model memory is not accepted as relationship evidence.
+
+Planning disables model reasoning so the output budget is reserved for the
+research contract. Explicit locations and registry identifiers are interpreted
+by the model but are not sent to web search. Pasted Companies House officer
+appointment links use their exact officer ID and bypass fuzzy person matching.
 
 Some legacy enrichment commands still use Gemini when their specific feature
 is enabled. They are not part of the production Builder path.
