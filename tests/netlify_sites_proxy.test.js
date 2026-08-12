@@ -20,6 +20,12 @@ test("proxy recovers the original path when Netlify drops the rewrite query", ()
   }), "/api/generated-graphs");
 });
 
+test("proxy forwards only bounded job-list query parameters", () => {
+  const event = { queryStringParameters: { target: "/api/case-jobs", status: "running,failed", limit: "25", ignored: "secret" } };
+  assert.equal(_private.upstreamTarget(event, "/api/case-jobs"), "/api/case-jobs?status=running%2Cfailed&limit=25");
+  assert.equal(_private.upstreamTarget(event, "/api/generated-graphs"), "/api/generated-graphs");
+});
+
 test("proxy strips only the injected Cloudflare challenge from generated HTML", () => {
   const html = '<main>graph</main><script>(function(){function c(){var a="/cdn-cgi/challenge-platform/scripts/jsd/main.js";}})();</script></body>';
   assert.equal(_private.sanitizeUpstreamBody(html, "text/html; charset=utf-8"), "<main>graph</main></body>");
@@ -47,6 +53,32 @@ test("proxy adds the server-side token without exposing it in the response", asy
     });
     assert.equal(result.statusCode, 200);
     assert.equal(result.body.includes("proxy-secret"), false);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousOrigin == null) delete process.env.ISTARI_SITES_ORIGIN;
+    else process.env.ISTARI_SITES_ORIGIN = previousOrigin;
+    if (previousToken == null) delete process.env.ISTARI_SITES_PROXY_TOKEN;
+    else process.env.ISTARI_SITES_PROXY_TOKEN = previousToken;
+  }
+});
+
+test("proxy preserves job-list filters upstream", async () => {
+  const previousOrigin = process.env.ISTARI_SITES_ORIGIN;
+  const previousToken = process.env.ISTARI_SITES_PROXY_TOKEN;
+  const previousFetch = global.fetch;
+  process.env.ISTARI_SITES_ORIGIN = "https://graph.example";
+  process.env.ISTARI_SITES_PROXY_TOKEN = "proxy-secret";
+  global.fetch = async (url) => {
+    assert.equal(url, "https://graph.example/api/case-jobs?status=running&limit=5");
+    return new Response(JSON.stringify({ ok: true, jobs: [] }), { headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await handler({
+      httpMethod: "GET",
+      headers: {},
+      queryStringParameters: { target: "/api/case-jobs", status: "running", limit: "5" },
+    });
+    assert.equal(result.statusCode, 200);
   } finally {
     global.fetch = previousFetch;
     if (previousOrigin == null) delete process.env.ISTARI_SITES_ORIGIN;

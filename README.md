@@ -97,6 +97,8 @@ The local Python discovery pipeline remains available for direct and offline
 work. The production Builder uses the durable Sites worker and D1 store in the
 separate private `istari-juicer-sites` repository. Netlify contains no registry
 credentials and adds the shared proxy token server-side.
+Job-list `status` and `limit` filters are allowlisted through this proxy; other
+query parameters are not forwarded to the backend.
 
 See [docs/HANDOFF.md](docs/HANDOFF.md) for deployment, environment, recovery,
 and source-of-truth details.

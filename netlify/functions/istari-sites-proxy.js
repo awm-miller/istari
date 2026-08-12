@@ -21,6 +21,17 @@ function targetPath(event) {
   return target.startsWith("/") ? target : `/${target}`;
 }
 
+function upstreamTarget(event, target) {
+  const allowed = target === "/api/case-jobs" ? new Set(["status", "limit"]) : new Set();
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(event.queryStringParameters || {})) {
+    if (key === "target" || !allowed.has(key) || value == null) continue;
+    query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return suffix ? `${target}?${suffix}` : target;
+}
+
 function sanitizeUpstreamBody(body, contentType) {
   if (!String(contentType).toLowerCase().includes("text/html")) return body;
   return body.replace(
@@ -52,7 +63,7 @@ exports.handler = async function handler(event) {
     : undefined;
 
   try {
-    const upstream = await fetch(`${origin}${target}`, {
+    const upstream = await fetch(`${origin}${upstreamTarget(event, target)}`, {
       method: event.httpMethod || "GET",
       headers,
       body: ["GET", "HEAD"].includes(event.httpMethod) ? undefined : body,
@@ -69,4 +80,4 @@ exports.handler = async function handler(event) {
   }
 };
 
-exports._private = { targetPath, sanitizeUpstreamBody, ALLOWED_TARGET };
+exports._private = { targetPath, upstreamTarget, sanitizeUpstreamBody, ALLOWED_TARGET };
