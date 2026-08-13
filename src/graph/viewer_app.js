@@ -362,7 +362,7 @@
     if (status === "failed") return friendlyTaskError(error);
     const feedback = [];
     if (retrying) feedback.push(`${retrying} registry request${retrying === 1 ? " is" : "s are"} waiting to retry.`);
-    if (skipped) feedback.push(`${skipped} unavailable registry record${skipped === 1 ? " was" : "s were"} skipped; remaining evidence was preserved.`);
+    if (skipped) feedback.push(`${skipped} registry search match${skipped === 1 ? " could" : "es could"} not be verified and ${skipped === 1 ? "was" : "were"} excluded. The graph contains the verified records; open the run log for details.`);
     return feedback.join(" ");
   }
 

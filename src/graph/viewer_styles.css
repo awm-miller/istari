@@ -939,14 +939,6 @@ body.builder-mode #compact-legend {{
   to {{ transform: translateY(0); opacity: 1; }}
 }}
 .builder-stdout.error {{ color: #e68a93; }}
-.case-open-result {{
-  display: inline-block;
-  margin-top: 10px;
-  color: #9fc4e2;
-  font-size: 11px;
-  font-weight: 700;
-  text-decoration: none;
-}}
 .case-open-result.hidden {{ display: none; }}
 .graph-stage,
 .graph-label-layer {{
@@ -2145,9 +2137,12 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .case-progress-actions:empty {{ display: none; }}
 .case-open-result,
 .case-cancel {{
-  min-height: 28px;
+  display: inline-flex;
+  height: 32px;
   margin: 0;
-  padding: 5px 9px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: var(--radius-control);
   background: var(--surface);
@@ -2159,6 +2154,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   text-decoration: none;
   cursor: pointer;
 }}
+.case-open-result {{ color: var(--accent-ink); }}
 .case-open-result:hover {{ background: var(--hover); color: var(--ink); }}
 .case-cancel {{ color: var(--red); }}
 .case-cancel:hover {{ background: var(--red-tint); }}
@@ -2241,7 +2237,6 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 }}
 .run-log-header button:hover {{ background: var(--hover); color: var(--ink); }}
 .run-log-sheet .builder-stdout {{ background: var(--inset); border-radius: var(--radius-control); }}
-.case-open-result {{ color: var(--accent-ink); font-size: 12px; font-weight: 500; }}
 .viewer-sidebar {{
   border: 0;
   border-radius: var(--radius-card);

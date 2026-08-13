@@ -382,6 +382,15 @@ try {
   await page.locator(".case-input-value").last().fill("Alice Example");
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
+  const openGraphControl = await page.locator("#case-open-result").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      paddingLeft: style.paddingLeft,
+      paddingRight: style.paddingRight,
+    };
+  });
+  assert.deepEqual(openGraphControl, { height: 32, paddingLeft: "12px", paddingRight: "12px" });
   assert.deepEqual(approvedPlan?.seeds, [
     { kind: "address", value: "32 Store Street, London" },
     { kind: "person", value: "Alice Example" },
