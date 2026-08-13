@@ -2607,6 +2607,12 @@
         ? new Map(laneNodes.map((node) => [node.id, lowConfidenceLaneAnchorX(node, edgeAdjacency, nodeLookup)]))
         : new Map();
       laneNodes.sort((left, right) => {
+        if (lane === 1) {
+          const rootDifference = Number(rootIds.has(right.id)) - Number(rootIds.has(left.id));
+          if (rootDifference !== 0) return rootDifference;
+          const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);
+          if (promotedDifference !== 0) return promotedDifference;
+        }
         if (lane === 2) {
           const leftAnchor = lowConfidenceAnchorByNodeId.get(left.id);
           const rightAnchor = lowConfidenceAnchorByNodeId.get(right.id);
@@ -3784,6 +3790,7 @@
   }
 
   async function persistSeedOverride(action) {
+    const affectedNodeId = baseNodes.find((node) => nodeMergeStableKeys(node).includes(action.nodeKey))?.id || "";
     const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3800,6 +3807,16 @@
     mergeOverrides = readMergeOverrides(payload?.overrides || {});
     resolutionCandidatesCache = null;
     rebuildBaseGraph();
+    const promotedNode = baseNodes.find((node) => (
+      node.promoted_to_seed && nodeMergeStableKeys(node).includes(action.nodeKey)
+    ));
+    if (action.operation === "add" && promotedNode) {
+      searchInput.value = "";
+      viewerState.searchQuery = "";
+      setSingleFocus(promotedNode.id);
+    } else if (action.operation === "remove" && viewerState.focusedNodeIds.has(affectedNodeId)) {
+      viewerState.focusedNodeIds.clear();
+    }
     await applyViewerState();
   }
 

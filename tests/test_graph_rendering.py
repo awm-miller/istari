@@ -128,6 +128,13 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn('const isFormer = edge.relationship_status === "former";', html)
         self.assertIn("if (group.dashed) drawDashedLine", html)
 
+    def test_promoted_people_become_the_active_top_level_root(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn("const rootDifference = Number(rootIds.has(right.id)) - Number(rootIds.has(left.id));", html)
+        self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
+        self.assertIn("setSingleFocus(promotedNode.id);", html)
+
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 
