@@ -2033,6 +2033,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }}
+.focal-distance-filter.hidden {{ display: none; }}
 .focal-distance-filter label {{ display: flex; justify-content: space-between; gap: 10px; color: var(--ink-2); font-size: 11.5px; }}
 .focal-distance-filter output {{ color: var(--accent-ink); font: 10.5px/1.5 "Beautiful Mono", ui-monospace, monospace; white-space: nowrap; }}
 .focal-distance-filter input {{ width: 100%; margin: 9px 0 5px; accent-color: var(--accent); }}

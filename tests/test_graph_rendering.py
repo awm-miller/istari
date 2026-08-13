@@ -114,11 +114,19 @@ class GraphRenderingTests(unittest.TestCase):
         })
 
         self.assertIn('id="focal-distance-filter"', html)
+        self.assertIn(".focal-distance-filter.hidden { display: none; }", html)
         self.assertIn('"focus_radius_metres":250', html)
         self.assertIn('"focal_distance_metres": 120', html)
         self.assertIn("function applyFocalDistanceFilter(projection)", html)
         self.assertIn("Minimum distance of the nearby registered address", html)
         self.assertIn(".case-controls select option:disabled", html)
+
+    def test_former_relationships_are_purple_and_dashed(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('if (edge.relationship_status === "former") return COLORS.purple;', html)
+        self.assertIn('const isFormer = edge.relationship_status === "former";', html)
+        self.assertIn("if (group.dashed) drawDashedLine", html)
 
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})

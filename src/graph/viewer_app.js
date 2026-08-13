@@ -337,6 +337,8 @@
       address_charities: "Finding charities at addresses",
       address_charity_details: "Checking charity addresses",
       nearby_addresses: "Finding nearby registered addresses",
+      person_cleanup_scan: "Finding duplicate people",
+      person_cleanup_group: "Resolving duplicate people",
     };
     return labels[String(kind)] || "Checking registry records";
   }
@@ -1366,7 +1368,7 @@
     }
     if (edge.kind === "hidden_connection") return 0x94a3b8;
     if (edge.kind === "alias") return COLORS.amber;
-    if (edge.relationship_status === "former") return COLORS.slate;
+    if (edge.relationship_status === "former") return COLORS.purple;
     const roleType = String(edge.role_type || "").toLowerCase();
     if (roleType.includes("trustee")) return COLORS.blue;
     if (roleType.includes("director")) return COLORS.purple;
