@@ -37,16 +37,21 @@
   status = 301
 
 [[redirects]]
+  from = "/api/investigations/:job/events"
+  to = "/.netlify/functions/istari-events-proxy?job=:job"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/istari-sites-proxy?target=/api/:splat"
+  to = "/.netlify/functions/istari-backend-proxy?target=/api/:splat"
   status = 200
 
 [[redirects]]
   from = "/health"
-  to = "/.netlify/functions/istari-sites-proxy?target=/health"
+  to = "/.netlify/functions/istari-backend-proxy?target=/health"
   status = 200
 
 [[redirects]]
   from = "/generated-graphs/*"
-  to = "/.netlify/functions/istari-sites-proxy?target=/generated-graphs/:splat"
+  to = "/.netlify/functions/istari-backend-proxy?target=/generated-graphs/:splat"
   status = 200

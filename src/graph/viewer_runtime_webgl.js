@@ -387,8 +387,9 @@
         const endpoints = edgeEndpoints(edge);
         if (!endpoints) return;
         const width = edge.kind === "hidden_connection" ? 1.8 : edge.kind === "alias" ? 2.5 : 1.4 + ((edge.weight || 0) * 1.5);
-        const alpha = edge.is_low_confidence ? 0.72 : edge.kind === "address_link" ? 0.75 : 0.45;
-        const dashed = edge.kind === "hidden_connection" || edge.is_low_confidence;
+        const isFormer = edge.relationship_status === "former";
+        const alpha = isFormer ? 0.56 : edge.is_low_confidence ? 0.72 : edge.kind === "address_link" ? 0.75 : 0.45;
+        const dashed = isFormer || edge.kind === "hidden_connection" || edge.is_low_confidence;
         const key = `${edge._colorValue}:${width}:${alpha}:${dashed ? 1 : 0}`;
         if (!edgeGroups.has(key)) {
           edgeGroups.set(key, { color: edge._colorValue, width, alpha, dashed, lines: [] });

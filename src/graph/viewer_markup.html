@@ -95,7 +95,7 @@
     <section class="case-brief">
       <h1>New investigation</h1>
       <form id="builder-form" class="builder-form case-form">
-        <textarea id="case-query" rows="6" aria-label="Investigation brief" placeholder="Describe a person, organisation, address, area, or paste a Companies House link."></textarea>
+        <textarea id="case-query" rows="6" aria-label="Investigation brief" placeholder="Describe the addresses, people, companies, or charities to start from."></textarea>
         <div class="builder-actions">
           <button class="builder-submit" id="case-plan-submit" type="submit">
             Review scope
@@ -118,25 +118,24 @@
             <small>Stable lowercase URL. Leave blank to generate it.</small>
           </label>
         </div>
-        <div class="case-subjects hidden" id="case-plan-subjects"></div>
         <div class="case-inputs" id="case-plan-inputs"></div>
-        <button class="case-add-input" id="case-add-input" type="button">Add input</button>
+        <button class="case-add-input" id="case-add-input" type="button">Add seed</button>
         <div class="case-controls">
           <label>
-            <span>Route</span>
-            <select id="case-recipe">
-              <option value="registry-light">Registry</option>
-              <option value="address-network">Address network</option>
-              <option value="area-clusters">Area clusters</option>
+            <span>Expansion</span>
+            <select id="case-expansion">
+              <option value="0">Direct relationships</option>
+              <option value="1">1 complete cycle</option>
+              <option value="2">2 complete cycles</option>
+              <option value="3">3 complete cycles</option>
+              <option value="4">4 complete cycles</option>
+              <option value="5">5 complete cycles</option>
             </select>
-            <small id="case-route-note"></small>
+            <small>Each cycle follows addresses, organisations, and people back to organisation addresses.</small>
           </label>
-          <label><span>Rounds</span><input id="case-rounds" type="number" min="0" max="5" /><small>How many times new organisations and addresses can expand. People never expand.</small></label>
           <label><span>Entity ceiling</span><input id="case-entities" type="number" min="1" max="5000" /><small>Hard stop for all graph nodes.</small></label>
-          <label class="case-area-control hidden"><span>Minimum occupancy</span><input id="case-minimum-occupancy" type="number" min="2" max="100" /><small>Keep buildings with at least this many companies or charities.</small></label>
-          <label class="case-address-control hidden"><span>Address ceiling</span><input id="case-max-addresses" type="number" min="1" max="500" /><small>Maximum registered addresses to plot.</small></label>
+          <label><span>Nearby address ceiling</span><input id="case-max-addresses" type="number" min="1" max="200" value="200" /><small>Maximum nearby registered addresses to add when proximity is enabled.</small></label>
         </div>
-        <p class="case-area-note hidden" id="case-area-note">Street names, postcode districts such as E1, and full postcodes are accepted as area inputs.</p>
         <section class="case-nearby">
           <label class="case-nearby-toggle">
             <input id="case-nearby-enabled" type="checkbox" />
@@ -146,7 +145,7 @@
             <div class="case-nearby-fields">
               <label>
                 <span>Search centre</span>
-                <input id="case-nearby-centre" type="text" placeholder="Full UK address or postcode" />
+                <input id="case-nearby-centre" type="text" placeholder="Resolved from the selected seeds" readonly />
                 <small>The primary subject address. Edit it before approval if necessary.</small>
               </label>
               <label>
@@ -157,11 +156,11 @@
             </div>
             <div class="case-nearby-summary" id="case-nearby-summary">Enter a centre to preview nearby addresses.</div>
             <div id="case-nearby-map" aria-label="Nearby address radius preview"></div>
-            <p class="case-nearby-note">Count: unique Companies House registered addresses. Distances use UK postcode centroids.</p>
+            <p class="case-nearby-note">The preview uses the first address seed. Other seed types resolve their centre during discovery. Distances use UK postcode centroids.</p>
           </div>
         </section>
-        <div class="case-toggles" aria-label="People">
-          <label><input id="case-people" type="checkbox" /><span>Include officers and trustees as leaves. People do not expand.</span></label>
+        <div class="case-toggles" aria-label="Relationship history">
+          <label><input id="case-include-former" type="checkbox" checked /><span>Include former appointments and trusteeships.</span></label>
         </div>
         <div class="builder-actions">
           <button class="builder-submit case-run" id="case-run" type="button">Run approved scope</button>

@@ -122,9 +122,10 @@ def write_redirects_file() -> None:
         "/iums /iums/ 301\n"
         "/sevenspikes /sevenspikes/ 301\n"
         "/expanded-mb-names /expanded-mb-names/ 301\n"
-        "/api/* /.netlify/functions/istari-sites-proxy?target=/api/:splat 200\n"
-        "/health /.netlify/functions/istari-sites-proxy?target=/health 200\n"
-        "/generated-graphs/* /.netlify/functions/istari-sites-proxy?target=/generated-graphs/:splat 200\n",
+        "/api/investigations/:job/events /.netlify/functions/istari-events-proxy?job=:job 200\n"
+        "/api/* /.netlify/functions/istari-backend-proxy?target=/api/:splat 200\n"
+        "/health /.netlify/functions/istari-backend-proxy?target=/health 200\n"
+        "/generated-graphs/* /.netlify/functions/istari-backend-proxy?target=/generated-graphs/:splat 200\n",
         encoding="utf-8",
     )
 

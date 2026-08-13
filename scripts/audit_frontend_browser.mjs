@@ -20,7 +20,7 @@ let casePollFailures = 0;
 let transientPollObserved = false;
 let directPlan = null;
 let approvedPlan = null;
-const pumpTargets = [];
+let createdGraphId = "";
 let generatedGraphDeleted = false;
 let deleteConfirmation = "";
 let mergeOverrides = {
@@ -72,11 +72,6 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
-  if (url.pathname === "/.netlify/functions/istari-job-pump-background" && request.method === "POST") {
-    pumpTargets.push((await requestJson(request)).job_id);
-    response.writeHead(202).end();
-    return;
-  }
   if (url.pathname === "/api/nearby-addresses/preview" && request.method === "POST") {
     const body = await requestJson(request);
     sendJson(response, {
@@ -101,34 +96,42 @@ const server = createServer(async (request, response) => {
     sendJson(response, { ok: true, deleted: "generated-check" });
     return;
   }
-  if (url.pathname === "/api/case-jobs" && request.method === "POST") {
-    const body = await requestJson(request);
-    if (body.plan) {
-      directPlan = body.plan;
-      caseStatus = "planned";
-      sendJson(response, {
-        ok: true,
-        job: {
-          id: "abc123",
-          status: "planned",
-          plan: body.plan,
-          stdout: [{ message: "contract: ready for approval", created_at: new Date().toISOString() }],
-        },
-      }, 202);
-      return;
-    }
-    caseStatus = "queued";
-    casePollFailures = 1;
-    sendJson(response, { ok: true, job: { id: "abc123", status: "queued", stdout: [{ message: "planner: queued", created_at: new Date().toISOString() }] } }, 202);
+  if (url.pathname === "/api/investigations/draft" && request.method === "POST") {
+    await requestJson(request);
+    sendJson(response, {
+      ok: true,
+      draft: {
+        title: "Audit case",
+        seeds: [{ kind: "address", value: "32 Store Street, London" }],
+        expansionCycles: 1,
+        entityCeiling: 5000,
+        includeFormer: true,
+        nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
+      },
+    });
     return;
   }
-  if (url.pathname === "/api/case-jobs/abc123/run" && request.method === "POST") {
-    approvedPlan = (await requestJson(request)).plan;
+  if (url.pathname === "/api/investigations" && request.method === "POST") {
+    const body = await requestJson(request);
+    directPlan = body.draft;
+    createdGraphId = body.graphId;
+    caseStatus = "planned";
+    casePollFailures = 1;
+    sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan: body.draft, stdout: [{ message: "contract: ready for approval", created_at: new Date().toISOString() }] } }, 201);
+    return;
+  }
+  if (url.pathname === "/api/investigations/abc123/start" && request.method === "POST") {
+    approvedPlan = (await requestJson(request)).draft;
     caseStatus = "completed";
     sendJson(response, { ok: true, job: { id: "abc123", status: "running", stdout: [{ message: "discovery: approved", created_at: new Date().toISOString() }] } }, 202);
     return;
   }
-  if (url.pathname === "/api/case-jobs/abc123" && request.method === "GET") {
+  if (url.pathname === "/api/investigations/abc123/events" && request.method === "GET") {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    response.end(": reconnect with polling\n\n");
+    return;
+  }
+  if (url.pathname === "/api/investigations/abc123" && request.method === "GET") {
     if (casePollFailures > 0) {
       casePollFailures -= 1;
       transientPollObserved = true;
@@ -136,12 +139,12 @@ const server = createServer(async (request, response) => {
       return;
     }
     const plan = {
-      id: "audit-case",
       title: "Audit case",
-      recipe: "registry-light",
-      inputs: [{ kind: "company", value: "00000006" }],
-      policy: { max_rounds: 2, max_entities: 500, pivot_kinds: ["address", "company", "charity"], leaf_kinds: ["person"] },
-      enrichments: { sanctions: true, documents: false, negative_news: false },
+      seeds: [{ kind: "address", value: "32 Store Street, London" }],
+      expansionCycles: 1,
+      entityCeiling: 5000,
+      includeFormer: true,
+      nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
     };
     if (caseStatus === "completed") {
       sendJson(response, { ok: true, job: { id: "abc123", status: "completed", stage: "completed", plan, progress: { processed: 4, queued: 0, failed: 0, total: 4, nodes: 4, edges: 3, percent: 100 }, result: { artifact: { path: "/generated-graphs/audit-case/" } }, stdout: [{ message: "complete: 4 nodes, 3 edges", created_at: new Date().toISOString() }] } });
@@ -327,35 +330,38 @@ try {
 
   await page.locator("#mode-builder").click();
   assert.ok(await page.locator("#builder-panel").isVisible(), "Builder did not open");
-  await page.locator("#case-query").fill("Investigate company 00000006");
+  await page.locator("#case-query").fill("Everything connected to 32 Store Street, including former appointments");
   await page.locator("#case-plan-submit").click();
   await page.waitForSelector("#case-plan:not(.hidden)").catch(async (error) => {
     const status = await page.locator("#builder-status").innerText().catch(() => "");
     throw new Error(`${error.message}\nBuilder output: ${status}\nBrowser errors: ${runtimeErrors.join(" | ")}`);
   });
-  assert.equal(await page.locator("#case-rounds").getAttribute("max"), "5");
+  assert.deepEqual(await page.locator("#case-expansion option").evaluateAll((options) => options.map((option) => option.value)), ["0", "1", "2", "3", "4", "5"]);
   assert.equal(await page.locator("#case-entities").getAttribute("max"), "5000");
-  await page.locator("#case-recipe").selectOption("area-clusters");
-  assert.ok(await page.locator("#case-minimum-occupancy").isVisible(), "Area occupancy control is hidden");
-  assert.ok(await page.locator("#case-max-addresses").isVisible(), "Area address ceiling is hidden");
-  await page.locator("#case-recipe").selectOption("registry-light");
+  assert.equal(await page.locator("#case-recipe").count(), 0, "obsolete recipe control remains");
   await page.locator("#case-nearby-enabled").check();
-  await page.locator("#case-nearby-centre").fill("7-11 St Thomas's Road, London, N4 2QH");
+  assert.equal(await page.locator("#case-nearby-centre").inputValue(), "32 Store Street, London");
+  assert.ok(await page.locator("#case-nearby-centre").getAttribute("readonly") !== null);
   await page.locator("#case-nearby-radius").fill("250");
   await page.waitForFunction(() => document.querySelector("#case-nearby-summary")?.textContent.includes("2 registered addresses"));
   assert.ok(await page.locator("#case-nearby-map.leaflet-container").isVisible(), "Nearby radius map is hidden");
   assert.match(await page.locator("#case-nearby-summary").innerText(), /4 companies within 250 m/);
   await page.locator("#case-add-input").click();
   assert.equal(await page.locator(".case-input").count(), 2);
-  assert.equal(await page.locator(".case-input-kind").last().locator('option[value="area"]').count(), 1);
-  await page.locator(".case-input-remove").last().click();
+  assert.equal(await page.locator(".case-input-kind").last().locator('option[value="area"]').count(), 0);
+  await page.locator(".case-input-kind").last().selectOption("person");
+  await page.locator(".case-input-value").last().fill("Alice Example");
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
-  assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["company", "charity"]);
-  assert.equal(approvedPlan?.policy?.nearby_centre, "7-11 St Thomas's Road, London, N4 2QH");
-  assert.equal(approvedPlan?.policy?.nearby_radius_metres, 250);
+  assert.deepEqual(approvedPlan?.seeds, [
+    { kind: "address", value: "32 Store Street, London" },
+    { kind: "person", value: "Alice Example" },
+  ]);
+  assert.equal(approvedPlan?.expansionCycles, 1);
+  assert.equal(approvedPlan?.entityCeiling, 5000);
+  assert.equal(approvedPlan?.includeFormer, true);
+  assert.deepEqual(approvedPlan?.nearby, { enabled: true, radiusMetres: 250, maxAddresses: 200 });
   assert.ok(transientPollObserved, "Builder audit did not exercise transient status recovery");
-  assert.ok(pumpTargets.length >= 2 && pumpTargets.every((jobId) => jobId === "abc123"), "Builder did not target its exact job pumps");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
   assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");
@@ -371,14 +377,14 @@ try {
   await page.locator("#case-plan-id").fill("direct-contract-audit");
   await page.locator(".case-input-kind").first().selectOption("address");
   await page.locator(".case-input-value").first().fill("32 Store Street, London");
-  await page.locator("#case-recipe").selectOption("address-network");
+  await page.locator("#case-expansion").selectOption("0");
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   assert.equal(directPlan?.title, "Direct contract audit");
-  assert.equal(directPlan?.id, "direct-contract-audit");
-  assert.deepEqual(directPlan?.inputs, [{ kind: "address", value: "32 Store Street, London" }]);
-  assert.equal(directPlan?.recipe, "address-network");
-  assert.deepEqual(approvedPlan?.policy?.pivot_kinds, ["address", "company", "charity"]);
+  assert.equal(createdGraphId, "direct-contract-audit");
+  assert.deepEqual(directPlan?.seeds, [{ kind: "address", value: "32 Store Street, London" }]);
+  assert.equal(directPlan?.expansionCycles, 0);
+  assert.equal("recipe" in directPlan, false);
   await page.locator("#mode-viewer").click();
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 
