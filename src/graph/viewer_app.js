@@ -105,6 +105,21 @@
   const questionSubmitEl = document.getElementById("question-submit");
   const questionClearEl = document.getElementById("question-clear");
   const questionResultEl = document.getElementById("question-result");
+  const enrichmentPanelEl = document.getElementById("enrichment-panel");
+  const enrichmentUnavailableEl = document.getElementById("enrichment-unavailable");
+  const enrichmentControlsEl = document.getElementById("enrichment-controls");
+  const enrichmentCentreCountEl = document.getElementById("enrichment-centre-count");
+  const enrichmentCentresEl = document.getElementById("enrichment-centres");
+  const enrichmentVisibleScopeInput = document.getElementById("enrichment-visible-scope");
+  const enrichmentScopeEl = document.getElementById("enrichment-scope");
+  const enrichmentExpandInput = document.getElementById("enrichment-expand");
+  const enrichmentCyclesInput = document.getElementById("enrichment-cycles");
+  const enrichmentPeopleInput = document.getElementById("enrichment-people");
+  const enrichmentDocumentsInput = document.getElementById("enrichment-documents");
+  const enrichmentCeilingInput = document.getElementById("enrichment-ceiling");
+  const enrichmentRunButton = document.getElementById("enrichment-run");
+  const enrichmentStatusEl = document.getElementById("enrichment-status");
+  const enrichmentOpenEl = document.getElementById("enrichment-open");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
@@ -118,6 +133,7 @@
   const detailsModalCloseEl = document.getElementById("details-modal-close");
   const ADDRESS_COORDINATES_URL = "address-coordinates.json";
   const currentGeneratedGraphId = detectGeneratedGraphId(window.location.pathname);
+  const currentGeneratedGraphVersion = detectGeneratedGraphVersion(window.location.pathname);
   const currentGraphKey = currentGeneratedGraphId || detectGraphKey(window.location.pathname);
   const BUILDER_API_BASE = String(window.ISTARI_API_BASE || "").replace(/\/$/, "");
 
@@ -180,6 +196,9 @@
   let caseNearbyPreviewTimer = null;
   let caseNearbyPreviewRequest = 0;
   let casePlannerRequest = 0;
+  let currentEnrichmentJobId = "";
+  let currentEnrichmentStatus = "";
+  const rawMainNodeIds = new Set(rawMainNodes.map((node) => node.id));
 
   const viewerState = {
     searchQuery: "",
@@ -195,6 +214,7 @@
     maxFocalDistanceMetres: null,
     analysisNodeIds: [],
     questionNodeIds: [],
+    enrichmentNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
@@ -220,6 +240,11 @@
     } catch (_error) {
       return match[1];
     }
+  }
+
+  function detectGeneratedGraphVersion(pathname) {
+    const match = String(pathname || "").match(/\/generated-graphs\/[^/]+\/versions\/v(\d+)(?:\/|$)/i);
+    return match ? Number(match[1]) : null;
   }
 
   function graphFunctionUrl(baseUrl) {
@@ -274,6 +299,7 @@
     builderStatusEl.classList.toggle("error", job.status === "failed");
     builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
     renderBuilderProgress(job);
+    if (job.id === currentEnrichmentJobId) renderEnrichmentTask(job);
     upsertRecentTask(job);
   }
 
@@ -377,6 +403,100 @@
     if (/timeout|timed out|abort/i.test(message)) return "A registry request timed out repeatedly. Retry the task; completed work is retained until the retry starts.";
     if (/HTTP 404/i.test(message)) return "A registry record is no longer available. Check the starting seed, then retry; new runs skip missing related records.";
     return message ? `Discovery stopped: ${message}` : "Discovery stopped before completion. Open the log for details, then retry.";
+  }
+
+  function renderEnrichmentTask(job = {}) {
+    if (!enrichmentStatusEl) return;
+    const status = String(job.status || "");
+    currentEnrichmentStatus = status;
+    const progress = job.progress || {};
+    const percent = status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    enrichmentStatusEl.dataset.state = status === "failed" ? "error" : status === "completed" ? "success" : "working";
+    enrichmentStatusEl.textContent = status === "failed"
+      ? friendlyTaskError(job.error)
+      : status === "completed"
+        ? `Version ready: ${Number(progress.nodes) || 0} nodes and ${Number(progress.edges) || 0} relationships.`
+        : `${taskStatusLabel(status)}: ${percent}% / ${Number(progress.processed) || 0} checks complete.`;
+    enrichmentRunButton.disabled = ["planned", "queued", "running"].includes(status);
+    const path = String(job.result?.artifact?.path || "");
+    if (status === "completed" && path) {
+      enrichmentOpenEl.href = path;
+      enrichmentOpenEl.classList.remove("hidden");
+    }
+  }
+
+  function enrichmentNodeEligible(node) {
+    if (!currentGeneratedGraphId || !node || !rawMainNodeIds.has(node.id)) return false;
+    if (["address", "person", "seed", "seed_alias"].includes(node.kind)) return true;
+    const registryType = String(node.registry_type || "").toLowerCase();
+    return node.kind === "organisation" && ["company", "charity"].includes(registryType);
+  }
+
+  function renderEnrichmentPanel() {
+    if (!enrichmentPanelEl) return;
+    const available = Boolean(currentGeneratedGraphId);
+    enrichmentUnavailableEl.classList.toggle("hidden", available);
+    enrichmentControlsEl.classList.toggle("hidden", !available);
+    if (!available) return;
+    viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id, index, ids) => (
+      ids.indexOf(id) === index && enrichmentNodeEligible(nodeById.get(id))
+    ));
+    const selected = viewerState.enrichmentNodeIds.map((id) => nodeById.get(id)).filter(Boolean);
+    enrichmentCentreCountEl.textContent = `${selected.length} selected`;
+    enrichmentCentresEl.innerHTML = selected.length
+      ? selected.map((node) => `
+          <div class="enrichment-centre">
+            <span title="${escapeHtml(node.label || node.id)}">${escapeHtml(node.label || node.id)}</span>
+            <button type="button" data-enrichment-remove="${escapeHtml(node.id)}" aria-label="Remove ${escapeHtml(node.label || node.id)}">&times;</button>
+          </div>
+        `).join("")
+      : "Select nodes from their context menus.";
+    const scopedIds = visibleSourceNodeIds();
+    enrichmentScopeEl.textContent = enrichmentVisibleScopeInput.checked
+      ? `${scopedIds.length.toLocaleString()} currently visible nodes will define the PDF scope.`
+      : `${rawMainNodeIds.size.toLocaleString()} source nodes are in the whole graph.`;
+    const expand = enrichmentExpandInput.checked;
+    enrichmentCyclesInput.disabled = !expand;
+    enrichmentPeopleInput.disabled = !expand;
+    const actionable = (expand && selected.length > 0) || enrichmentDocumentsInput.checked;
+    if (!["planned", "queued", "running"].includes(currentEnrichmentStatus)) enrichmentRunButton.disabled = !actionable;
+  }
+
+  function visibleSourceNodeIds() {
+    return [...new Set(visibleNodes.map((node) => node.id).filter((id) => rawMainNodeIds.has(id)))];
+  }
+
+  async function runGraphEnrichment() {
+    if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be enriched.");
+    const expandRelationships = enrichmentExpandInput.checked;
+    const centralNodeIds = viewerState.enrichmentNodeIds.filter((id) => rawMainNodeIds.has(id));
+    if (expandRelationships && !centralNodeIds.length) throw new Error("Select at least one central node from its context menu.");
+    if (!expandRelationships && !enrichmentDocumentsInput.checked) throw new Error("Select relationship expansion or PDF enrichment.");
+    enrichmentRunButton.disabled = true;
+    enrichmentOpenEl.classList.add("hidden");
+    enrichmentStatusEl.dataset.state = "working";
+    enrichmentStatusEl.textContent = "Creating enrichment task.";
+    const created = await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(currentGeneratedGraphId)}/enrich`, {
+      sourceVersion: currentGeneratedGraphVersion || undefined,
+      centralNodeIds,
+      scopeNodeIds: enrichmentVisibleScopeInput.checked ? visibleSourceNodeIds() : [],
+      expandRelationships,
+      expansionCycles: Number(enrichmentCyclesInput.value || 0),
+      expandPeople: enrichmentPeopleInput.checked,
+      enrichMissingDocuments: enrichmentDocumentsInput.checked,
+      entityCeiling: Number(enrichmentCeilingInput.value || 5000),
+      includeFormer: true,
+    });
+    const job = created.job || {};
+    currentEnrichmentJobId = String(job.id || "");
+    currentEnrichmentStatus = String(job.status || "planned");
+    currentCaseJobId = currentEnrichmentJobId;
+    currentCaseJobStatus = String(job.status || "planned");
+    if (!currentEnrichmentJobId) throw new Error("The backend did not create an enrichment task.");
+    renderBuilderStdout(job);
+    const started = await postBuilderJson(`/api/investigations/${encodeURIComponent(currentEnrichmentJobId)}/start`, {});
+    renderBuilderStdout(started.job || {});
+    await watchBuilderJob(currentEnrichmentJobId);
   }
 
   function upsertRecentTask(job) {
@@ -3937,8 +4057,16 @@
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const analysisSelected = viewerState.analysisNodeIds.includes(node.id);
     const questionSelected = viewerState.questionNodeIds.includes(node.id);
+    const enrichmentSelected = viewerState.enrichmentNodeIds.includes(node.id);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      enrichmentNodeEligible(node)
+        ? {
+            label: enrichmentSelected ? "Remove as enrichment centre" : "Set as enrichment centre",
+            type: enrichmentSelected ? "enrichment_remove" : "enrichment_add",
+            nodeId: node.id,
+          }
+        : null,
       questionSelected
         ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
         : viewerState.questionNodeIds.length < 8
@@ -4548,6 +4676,7 @@
     renderScorePanel();
     if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
     renderQuestionSelection();
+    renderEnrichmentPanel();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
       openMapView().catch(() => {});
@@ -4719,11 +4848,29 @@
       questionResultEl.innerHTML = "";
       renderQuestionSelection();
     });
+    enrichmentPanelEl?.addEventListener("click", (event) => {
+      const removeButton = event.target.closest("[data-enrichment-remove]");
+      if (!removeButton) return;
+      viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id) => id !== removeButton.dataset.enrichmentRemove);
+      renderEnrichmentPanel();
+    });
+    [enrichmentVisibleScopeInput, enrichmentExpandInput, enrichmentDocumentsInput].forEach((input) => {
+      input?.addEventListener("change", renderEnrichmentPanel);
+    });
+    enrichmentRunButton?.addEventListener("click", () => {
+      runGraphEnrichment().catch((error) => {
+        currentEnrichmentStatus = "failed";
+        enrichmentRunButton.disabled = false;
+        enrichmentStatusEl.dataset.state = "error";
+        enrichmentStatusEl.textContent = error.message || "Enrichment could not start.";
+      });
+    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
         setSidebarTab(tabName);
         if (tabName === "resolve") renderResolutionPanel();
+        if (tabName === "enrich") renderEnrichmentPanel();
         if (tabName === "map") {
           openMapView().catch(() => {});
         }
@@ -4757,6 +4904,14 @@
         setSidebarTab("ask");
         toggleSidebar(true);
         questionInputEl.focus();
+      } else if (action.type === "enrichment_add") {
+        viewerState.enrichmentNodeIds = [...viewerState.enrichmentNodeIds, action.nodeId];
+        setSidebarTab("enrich");
+        toggleSidebar(true);
+        renderEnrichmentPanel();
+      } else if (action.type === "enrichment_remove") {
+        viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id) => id !== action.nodeId);
+        renderEnrichmentPanel();
       } else if (action.type === "low_confidence_expand" || action.type === "low_confidence_collapse") {
         viewerState.searchQuery = "";
         searchInput.value = "";

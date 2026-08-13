@@ -84,7 +84,8 @@ script installs production dependencies and restarts `istari-api.service` and
 5. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
 6. Check repeated edge tooltips, graph selection, deletion confirmation, duplicate resolution, selected-subgraph questions, and immutable version URLs.
 7. Check that a promoted person renders as a seed identity and can be restored without losing merged edges.
-8. Check both systemd service logs after the run and treat any 5xx response as a failed acceptance test.
+8. On a generated graph, set a node as an enrichment centre, apply a viewer filter, and confirm **Enrich** creates the next immutable version without changing the prior version. Repeat with relationship expansion off to test missing-PDF-only backfill.
+9. Check both systemd service logs after the run and treat any 5xx response as a failed acceptance test.
 
 ## Recovery
 

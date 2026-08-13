@@ -1374,12 +1374,104 @@ body.builder-mode #compact-legend {{
   min-width: 150px;
 }}
 .resolution-panel,
-.question-panel {{
+.question-panel,
+.enrichment-panel {{
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding: 14px;
 }}
+.enrichment-heading,
+.enrichment-toggle {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}}
+.enrichment-heading strong,
+.enrichment-field > span {{
+  color: var(--text-bright);
+  font-size: 12px;
+  font-weight: 700;
+}}
+.enrichment-heading span,
+.enrichment-scope,
+.enrichment-status,
+.enrichment-unavailable {{
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.45;
+}}
+.enrichment-centres {{
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}}
+.enrichment-centre {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 3px 3px 3px 9px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255,255,255,0.025);
+}}
+.enrichment-centre span {{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.enrichment-centre button {{
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}}
+.enrichment-centre button:hover {{ background: rgba(255,255,255,0.06); color: var(--text-bright); }}
+.enrichment-toggle {{ color: var(--text); font-size: 11px; }}
+.enrichment-toggle input {{ accent-color: var(--blue); }}
+.enrichment-field {{ display: flex; flex-direction: column; gap: 6px; }}
+.enrichment-field select,
+.enrichment-field input {{
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text-bright);
+  font-size: 11px;
+}}
+.enrichment-run,
+.enrichment-open {{
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid rgba(88,166,255,0.45);
+  border-radius: 7px;
+  background: rgba(88,166,255,0.12);
+  color: var(--text-bright);
+  font-size: 11px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}}
+.enrichment-run:hover,
+.enrichment-open:hover {{ background: rgba(88,166,255,0.18); }}
+.enrichment-run:disabled {{ opacity: 0.45; cursor: not-allowed; }}
+.enrichment-status[data-state="error"] {{ color: #e68a93; }}
+.enrichment-status[data-state="success"] {{ color: #6ed69a; }}
+.enrichment-open.hidden,
+.enrichment-unavailable.hidden,
+#enrichment-controls.hidden {{ display: none; }}
 .resolution-heading {{
   display: flex;
   justify-content: space-between;

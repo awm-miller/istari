@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createReadStream } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,7 @@ let approvedPlan = null;
 let createdGraphId = "";
 let generatedGraphDeleted = false;
 let deleteConfirmation = "";
+let enrichmentRequest = null;
 let mergeOverrides = {
   address: [], name: [], organisation: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
@@ -96,6 +97,26 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/generated-graphs/generated-check" && request.method === "DELETE") {
     generatedGraphDeleted = true;
     sendJson(response, { ok: true, deleted: "generated-check" });
+    return;
+  }
+  if (url.pathname === "/api/generated-graphs/generated-check/enrich" && request.method === "POST") {
+    enrichmentRequest = await requestJson(request);
+    sendJson(response, { ok: true, job: { id: "enrich123", status: "planned", progress: {}, stdout: [] } }, 201);
+    return;
+  }
+  if (url.pathname === "/api/investigations/enrich123/start" && request.method === "POST") {
+    await requestJson(request);
+    sendJson(response, { ok: true, job: { id: "enrich123", status: "running", progress: { processed: 0, total: 1, percent: 0 }, stdout: [] } }, 202);
+    return;
+  }
+  if (url.pathname === "/api/investigations/enrich123/events" && request.method === "GET") {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    response.end(`event: update\ndata: ${JSON.stringify({ ok: true, job: {
+      id: "enrich123", status: "completed", stage: "completed",
+      progress: { processed: 1, active: 0, queued: 0, failed: 0, total: 1, nodes: 14, edges: 14, percent: 100 },
+      activity: { current: [], retrying: 0, skipped: 0 },
+      result: { artifact: { path: "/generated-graphs/generated-check/" } }, stdout: [],
+    } })}\n\n`);
     return;
   }
   if (url.pathname === "/api/investigations/draft" && request.method === "POST") {
@@ -182,6 +203,19 @@ const server = createServer(async (request, response) => {
       caseStatus = "planned";
       sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan, stdout: [{ message: "planner: scope ready", created_at: new Date().toISOString() }] } });
     }
+    return;
+  }
+  if (url.pathname === "/generated-graphs/generated-check/") {
+    const [template, graphJson] = await Promise.all([
+      readFile(path.join(root, "generated-viewer-template.html"), "utf8"),
+      readFile(path.join(root, "94-park-ave", "graph-data.json"), "utf8"),
+    ]);
+    const html = template.replace(
+      /(<script id="graph-data" type="application\/json">)[\s\S]*?(<\/script>)/,
+      `$1${graphJson.replaceAll("<", "\\u003c")}$2`,
+    );
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(html);
     return;
   }
   const relative = decodeURIComponent(url.pathname).replace(/^\/+/, "");
@@ -443,8 +477,21 @@ try {
   await page.locator("#mode-viewer").click();
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 
+  await page.goto(`http://127.0.0.1:${port}/generated-graphs/generated-check/`, { waitUntil: "networkidle" });
+  await page.waitForSelector(".graph-node-label");
+  const enrichmentTarget = page.locator('.graph-node-label[data-node-id^="org:"]').first();
+  await chooseNodeAction(enrichmentTarget, "Set as enrichment centre");
+  assert.equal(await page.locator("#enrichment-centre-count").innerText(), "1 selected");
+  assert.match(await page.locator("#enrichment-scope").innerText(), /currently visible nodes/);
+  await page.locator("#enrichment-run").click();
+  await page.waitForSelector("#enrichment-open:not(.hidden)");
+  assert.equal(enrichmentRequest?.centralNodeIds.length, 1);
+  assert.ok(enrichmentRequest?.scopeNodeIds.length > 0);
+  assert.equal(enrichmentRequest?.enrichMissingDocuments, true);
+  assert.match(await page.locator("#enrichment-status").innerText(), /Version ready/);
+
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, evidence, resolution, questions, Builder paths, task feedback, task history, and run logs.");
+  console.log("Browser audit passed: rendering, evidence, resolution, enrichment, questions, Builder paths, task feedback, task history, and run logs.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

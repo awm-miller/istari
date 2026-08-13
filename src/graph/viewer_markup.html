@@ -46,6 +46,7 @@
     <button class="sidebar-tab" data-tab="map" type="button">Map</button>
     <button class="sidebar-tab" data-tab="ranked" type="button">Ranked</button>
     <button class="sidebar-tab" data-tab="resolve" type="button">Resolve</button>
+    <button class="sidebar-tab" data-tab="enrich" type="button">Enrich</button>
     <button class="sidebar-tab" data-tab="ask" type="button">Ask</button>
   </div>
   <div class="sidebar-body">
@@ -84,6 +85,51 @@
     </div>
     <div class="sidebar-pane" data-pane="resolve">
       <div class="resolution-panel" id="resolution-panel"></div>
+    </div>
+    <div class="sidebar-pane" data-pane="enrich">
+      <div class="enrichment-panel" id="enrichment-panel">
+        <div class="enrichment-unavailable hidden" id="enrichment-unavailable">Only generated graphs can be enriched.</div>
+        <div id="enrichment-controls">
+          <div class="enrichment-heading">
+            <strong>Central nodes</strong>
+            <span id="enrichment-centre-count">0 selected</span>
+          </div>
+          <div class="enrichment-centres" id="enrichment-centres">Select nodes from their context menus.</div>
+          <label class="enrichment-toggle">
+            <span>Use visible graph as scope</span>
+            <input id="enrichment-visible-scope" type="checkbox" checked />
+          </label>
+          <small class="enrichment-scope" id="enrichment-scope">The current filter defines which organisations are checked for PDFs.</small>
+          <label class="enrichment-toggle">
+            <span>Expand relationships</span>
+            <input id="enrichment-expand" type="checkbox" checked />
+          </label>
+          <label class="enrichment-field">
+            <span>Expansion</span>
+            <select id="enrichment-cycles">
+              <option value="0">Direct relationships</option>
+              <option value="1">1 complete cycle</option>
+              <option value="2">2 complete cycles</option>
+              <option value="3">3 complete cycles</option>
+            </select>
+          </label>
+          <label class="enrichment-toggle enrichment-dependent">
+            <span>Follow people to other organisations</span>
+            <input id="enrichment-people" type="checkbox" checked />
+          </label>
+          <label class="enrichment-toggle">
+            <span>Enrich organisations missing PDFs</span>
+            <input id="enrichment-documents" type="checkbox" checked />
+          </label>
+          <label class="enrichment-field">
+            <span>Entity ceiling</span>
+            <input id="enrichment-ceiling" type="number" min="1" max="5000" value="5000" />
+          </label>
+          <button class="enrichment-run" id="enrichment-run" type="button">Create enriched version</button>
+          <div class="enrichment-status" id="enrichment-status" role="status" aria-live="polite"></div>
+          <a class="enrichment-open hidden" id="enrichment-open" href="#">Open latest version</a>
+        </div>
+      </div>
     </div>
     <div class="sidebar-pane" data-pane="ask">
       <div class="question-panel" id="question-panel">
