@@ -6,23 +6,24 @@ evidence-first relationship graph.
 
 The production application is [projectistari.netlify.app](https://projectistari.netlify.app).
 Netlify serves the graph viewer and proxies protected discovery requests to the
-separate Istari graph service on ChatGPT Sites.
+separate Istari API and worker on DigitalOcean.
 
 ## Production flow
 
-1. The Builder sends either a natural-language brief or a directly completed research contract to the Sites backend.
+1. The Builder sends either a natural-language brief or a directly completed research contract to the backend.
 2. Briefs use strict-schema OpenRouter planning; direct contracts skip the model and open at approval.
 3. The user reviews and changes the plan before approving it.
 4. The backend runs a resumable Companies House and Charity Commission work queue.
 5. Completed graph versions appear at `/generated-graphs/<case-id>/`.
 
 The review form has one control per executable policy: graph name and optional
-URL key, route, rounds, entity ceiling, area thresholds, a mapped nearby-address
-radius, and optional people leaves. The progress strip opens the live run log. Generated graphs can be
+URL key, typed seeds, complete expansion cycles, entity ceiling, people expansion,
+default-on document enrichment, former roles, and a mapped nearby-address radius.
+The progress strip opens the live run log. Generated graphs can be
 deleted from the graph menu after confirmation; deletion also removes their
 stored graph job state.
 
-Discovery pivots through organisations and addresses. People are graph leaves.
+Discovery pivots through organisations, addresses, and optionally people.
 Every researched relationship keeps its source URL and exact node referents.
 
 ## Quick start
@@ -74,8 +75,9 @@ closely spaced decisions cannot replace one another.
 After interpretation, direct address inputs without a nearby radius are
 normalized to the address-network route and its three-round default.
 
-Some legacy enrichment commands still use Gemini when their specific feature
-is enabled. They are not part of the production Builder path.
+Production document enrichment uses OpenRouter only. It checks recent Companies
+House filings and Charity Commission accounts for explicit named relationships;
+these appear as source-backed document evidence rather than registry facts.
 
 ## Validation
 
@@ -94,7 +96,7 @@ Refresh viewer shells after frontend changes:
 ## Architecture
 
 The local Python discovery pipeline remains available for direct and offline
-work. The production Builder uses the durable Sites worker and D1 store in the
+work. The production Builder uses the durable Node worker and SQLite store in the
 separate private `istari-juicer-sites` repository. Netlify contains no registry
 credentials and adds the shared proxy token server-side.
 Job-list `status` and `limit` filters are allowlisted through this proxy; other

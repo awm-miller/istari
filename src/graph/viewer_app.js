@@ -63,6 +63,7 @@
   const caseNearbyRadiusValueEl = document.getElementById("case-nearby-radius-value");
   const caseNearbySummaryEl = document.getElementById("case-nearby-summary");
   const caseExpandPeopleInput = document.getElementById("case-expand-people");
+  const caseEnrichDocumentsInput = document.getElementById("case-enrich-documents");
   const caseIncludeFormerInput = document.getElementById("case-include-former");
   const caseRunButton = document.getElementById("case-run");
   const caseResetButton = document.getElementById("case-reset");
@@ -178,6 +179,7 @@
   let caseNearbyCircle = null;
   let caseNearbyPreviewTimer = null;
   let caseNearbyPreviewRequest = 0;
+  let casePlannerRequest = 0;
 
   const viewerState = {
     searchQuery: "",
@@ -338,6 +340,8 @@
       address_charities: "Finding charities at addresses",
       address_charity_details: "Checking charity addresses",
       nearby_addresses: "Finding nearby registered addresses",
+      organisation_documents: "Finding recent filings and accounts",
+      document_extract: "Reading document relationships",
       person_cleanup_scan: "Finding duplicate people",
       person_cleanup_group: "Resolving duplicate people",
     };
@@ -543,6 +547,7 @@
     caseNearbyRadiusInput.value = String(nearbyRadius);
     updateNearbyControls({ preview: !!plan.nearby?.enabled });
     caseExpandPeopleInput.checked = plan.expandPeople !== false;
+    caseEnrichDocumentsInput.checked = plan.enrichDocuments !== false;
     caseIncludeFormerInput.checked = plan.includeFormer !== false;
     casePlanEl.classList.remove("hidden");
     casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -584,6 +589,7 @@
       seeds,
       expansionCycles: Number(caseExpansionInput.value || 1),
       expandPeople: caseExpandPeopleInput.checked,
+      enrichDocuments: caseEnrichDocumentsInput.checked,
       entityCeiling: Number(caseEntitiesInput.value || 5000),
       includeFormer: caseIncludeFormerInput.checked,
       nearby: {
@@ -595,6 +601,7 @@
   }
 
   function startDirectContract() {
+    casePlannerRequest += 1;
     currentCaseJobId = "";
     currentCaseJobStatus = "";
     caseOpenResultEl.classList.add("hidden");
@@ -607,6 +614,7 @@
       seeds: [{ kind: "address", value: "" }],
       expansionCycles: 1,
       expandPeople: true,
+      enrichDocuments: true,
       entityCeiling: 5000,
       includeFormer: true,
       nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
@@ -759,21 +767,26 @@
   async function submitBuilderJob() {
     const query = String(caseQueryInput?.value || "").trim();
     if (!query) throw new Error("Write a short investigation brief first.");
-    casePlanSubmitButton.disabled = true;
+    const request = ++casePlannerRequest;
     caseOpenResultEl.classList.add("hidden");
     casePlanEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
     setBuilderFeedback("Interpreting the investigation brief...", "working");
     setBuilderStatus(`$ plan ${query}`);
-    const data = await postBuilderJson("/api/investigations/draft", { query });
-    if (!data.draft) throw new Error("The planner did not return an investigation form.");
-    currentCaseJobId = "";
-    currentCaseJobStatus = "";
-    caseRunButton.textContent = "Run approved scope";
-    renderCasePlan(data.draft);
-    setBuilderFeedback("Scope ready. Check the seeds and expansion before you run it.", "success");
-    setBuilderStatus("contract: ready for review");
-    casePlanSubmitButton.disabled = false;
+    try {
+      const data = await postBuilderJson("/api/investigations/draft", { query });
+      if (request !== casePlannerRequest) return;
+      if (!data.draft) throw new Error("The planner did not return an investigation form.");
+      currentCaseJobId = "";
+      currentCaseJobStatus = "";
+      caseRunButton.textContent = "Run approved scope";
+      renderCasePlan(data.draft);
+      setBuilderFeedback("Scope ready. Check the seeds and expansion before you run it.", "success");
+      setBuilderStatus("contract: ready for review");
+    } catch (error) {
+      if (request !== casePlannerRequest) return;
+      throw error;
+    }
   }
 
   async function pollBuilderJob(jobId) {
@@ -813,7 +826,6 @@
       }
       if (["failed", "cancelled"].includes(job.status)) {
         if (selected) {
-          casePlanSubmitButton.disabled = false;
           caseRunButton.disabled = false;
         }
         await loadRecentTasks();
@@ -821,7 +833,6 @@
       }
     }
     if (currentCaseJobId === jobId) {
-      casePlanSubmitButton.disabled = false;
       caseRunButton.disabled = false;
       setBuilderStatus("poll timeout; the backend job may still be running", true);
     }
@@ -905,13 +916,13 @@
   }
 
   function resetCaseDesk() {
+    casePlannerRequest += 1;
     currentCaseJobId = "";
     currentCaseJobStatus = "";
     currentCasePlan = null;
     casePlanEl.classList.add("hidden");
     caseOpenResultEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
-    casePlanSubmitButton.disabled = false;
     caseRunButton.disabled = false;
     caseRunButton.textContent = "Run approved scope";
     setBuilderFeedback();
@@ -1410,7 +1421,7 @@
       ["show-companies", "Company", true],
       ["show-addresses", "Address", true],
       ["show-people", "Person", true],
-      ["show-low-confidence", "Open letters", false],
+      ["show-low-confidence", "Documents", false],
       ["show-low-confidence-nodes", "Low confidence nodes", false],
     ];
     legendEl.innerHTML = items.map(([id, label, checked]) => `
@@ -2849,6 +2860,7 @@
   }
 
   async function ensureLowConfidenceLoaded() {
+    if (baseNodes.some(isLowConfidenceDocumentNode)) return true;
     if (lowConfidenceLoaded) return true;
     if (lowConfidenceLoadingPromise) return lowConfidenceLoadingPromise;
     lowConfidenceLoadingPromise = fetch(LOW_CONFIDENCE_DATA_URL)
@@ -4552,7 +4564,6 @@
     builderFormEl?.addEventListener("submit", (event) => {
       event.preventDefault();
       submitBuilderJob().catch((error) => {
-        casePlanSubmitButton.disabled = false;
         setBuilderFeedback(error.message || "The investigation brief could not be interpreted.", "error");
         setBuilderStatus(error.message || "Case planning failed to start.", true);
       });
