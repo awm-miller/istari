@@ -17,6 +17,7 @@ const contentTypes = new Map([
 ]);
 let caseStatus = "queued";
 let caseCreated = false;
+let caseCleared = false;
 let casePollFailures = 0;
 let transientPollObserved = false;
 let directPlan = null;
@@ -113,7 +114,7 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/investigations" && request.method === "GET") {
-    const jobs = caseCreated ? [{
+    const jobs = caseCreated && !caseCleared ? [{
       id: "abc123",
       status: caseStatus,
       draft: approvedPlan || directPlan || { title: "Audit case", seeds: [{ kind: "address", value: "32 Store Street, London" }] },
@@ -132,6 +133,7 @@ const server = createServer(async (request, response) => {
     directPlan = body.draft;
     createdGraphId = body.graphId;
     caseCreated = true;
+    caseCleared = false;
     caseStatus = "planned";
     casePollFailures = 1;
     sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan: body.draft, stdout: [{ message: "contract: ready for approval", created_at: new Date().toISOString() }] } }, 201);
@@ -141,6 +143,15 @@ const server = createServer(async (request, response) => {
     approvedPlan = (await requestJson(request)).draft;
     caseStatus = "completed";
     sendJson(response, { ok: true, job: { id: "abc123", status: "running", stdout: [{ message: "discovery: approved", created_at: new Date().toISOString() }] } }, 202);
+    return;
+  }
+  if (url.pathname === "/api/investigations/abc123/clear" && request.method === "DELETE") {
+    if (["queued", "running"].includes(caseStatus)) {
+      sendJson(response, { ok: false, error: "Cancel the active investigation before clearing it." }, 409);
+      return;
+    }
+    caseCleared = true;
+    sendJson(response, { ok: true, cleared: "abc123" });
     return;
   }
   if (url.pathname === "/api/investigations/abc123/events" && request.method === "GET") {
@@ -391,6 +402,15 @@ try {
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   await page.locator("#run-log-close").click();
   assert.ok(await page.locator("#run-log-sheet").isHidden(), "Run log sheet did not close");
+  let taskClearConfirmation = "";
+  page.once("dialog", async (dialog) => {
+    taskClearConfirmation = dialog.message();
+    await dialog.accept();
+  });
+  await page.locator('.case-task-clear[aria-label="Clear task Audit case"]').click();
+  await page.waitForSelector("#case-task-list .case-task-empty");
+  assert.match(taskClearConfirmation, /generated graph will not be deleted/i);
+  assert.equal(await page.locator("#case-task-list .case-task-row").count(), 0);
   await page.locator("#case-reset").click();
   await page.locator("#case-direct").click();
   await page.locator("#case-plan-title").fill("Direct contract audit");

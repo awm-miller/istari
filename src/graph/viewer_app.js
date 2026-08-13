@@ -396,6 +396,7 @@
       const progress = job.progress || {};
       const seedCount = Array.isArray(draft.seeds) ? draft.seeds.length : 0;
       const resultPath = String(job.result?.artifact?.path || "");
+      const clearable = ["planned", "completed", "failed", "cancelled"].includes(status);
       const selected = job.id === currentCaseJobId;
       const detail = status === "completed"
         ? `${Number(progress.nodes) || 0} nodes / ${Number(progress.edges) || 0} relationships`
@@ -410,7 +411,10 @@
             </span>
             <span class="case-task-status">${escapeHtml(taskStatusLabel(status))}</span>
           </button>
-          ${resultPath ? `<a class="case-task-open" href="${escapeHtml(resultPath)}">Open</a>` : ""}
+          ${(resultPath || clearable) ? `<span class="case-task-actions">
+            ${resultPath ? `<a class="case-task-open" href="${escapeHtml(resultPath)}">Open</a>` : ""}
+            ${clearable ? `<button class="case-task-clear" type="button" data-task-id="${escapeHtml(job.id)}" data-task-title="${escapeHtml(title)}" aria-label="Clear task ${escapeHtml(title)}" title="Clear task"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" /></svg></button>` : ""}
+          </span>` : ""}
         </article>
       `;
     }).join("");
@@ -481,6 +485,23 @@
     if (!response.ok || data.ok === false) throw new Error(data.error || `Cancellation failed with ${response.status}`);
     await showRecentTask(currentCaseJobId);
     await loadRecentTasks();
+  }
+
+  async function clearRecentTask(jobId, title) {
+    if (!jobId || !window.confirm(`Clear the task "${title || "Untitled investigation"}"? Its generated graph will not be deleted.`)) return;
+    const response = await fetch(builderApiUrl(`/api/investigations/${encodeURIComponent(jobId)}/clear`), { method: "DELETE" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || `Task clearing failed with ${response.status}`);
+    recentCaseJobs = recentCaseJobs.filter((job) => job.id !== jobId);
+    if (currentCaseJobId === jobId) {
+      currentCaseJobId = "";
+      currentCaseJobStatus = "";
+      caseProgressEl?.classList.add("hidden");
+      caseOpenResultEl.classList.add("hidden");
+      setRunLogOpen(false);
+      setBuilderStatus("");
+    }
+    renderRecentTasks();
   }
 
   function setRunLogOpen(open) {
@@ -4553,6 +4574,12 @@
       cancelCurrentTask().catch((error) => setBuilderStatus(error.message || "The task could not be cancelled.", true));
     });
     caseTaskListEl?.addEventListener("click", (event) => {
+      const clearButton = event.target.closest(".case-task-clear");
+      if (clearButton) {
+        clearRecentTask(clearButton.dataset.taskId, clearButton.dataset.taskTitle)
+          .catch((error) => setBuilderStatus(error.message || "The task could not be cleared.", true));
+        return;
+      }
       const taskButton = event.target.closest(".case-task-select");
       if (!taskButton) return;
       showRecentTask(taskButton.dataset.taskId).catch((error) => setBuilderStatus(error.message || "The task could not be opened.", true));

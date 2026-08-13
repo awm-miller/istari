@@ -2193,9 +2193,8 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .case-task-row[data-status="running"] .case-task-status {{ color: var(--orange); }}
 .case-task-row[data-status="completed"] .case-task-status {{ color: var(--green); }}
 .case-task-row[data-status="failed"] .case-task-status {{ color: var(--red); }}
+.case-task-actions {{ display: flex; align-items: center; gap: 2px; padding-right: 8px; }}
 .case-task-open {{
-  align-self: center;
-  margin-right: 10px;
   padding: 5px 8px;
   border-radius: var(--radius-control);
   color: var(--accent-ink);
@@ -2203,6 +2202,20 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   text-decoration: none;
 }}
 .case-task-open:hover {{ background: var(--hover); color: var(--ink); }}
+.case-task-clear {{
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}}
+.case-task-clear:hover,
+.case-task-clear:focus-visible {{ background: var(--red-tint); color: var(--red); outline: none; }}
+.case-task-clear svg {{ width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }}
 .case-task-empty {{ padding: 16px 12px; color: var(--ink-3); font-size: 11px; }}
 .case-task-empty.error {{ color: var(--red); }}
 @keyframes case-task-spin {{ to {{ transform: rotate(360deg); }} }}
