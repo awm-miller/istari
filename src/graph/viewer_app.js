@@ -106,6 +106,9 @@
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
+  const focalDistanceFilterEl = document.getElementById("focal-distance-filter");
+  const focalDistanceRangeEl = document.getElementById("focal-distance-range");
+  const focalDistanceValueEl = document.getElementById("focal-distance-value");
   const detailsModalEl = document.getElementById("details-modal");
   const detailsModalTitleEl = document.getElementById("details-modal-title");
   const detailsModalStatusEl = document.getElementById("details-modal-status");
@@ -186,6 +189,7 @@
     showIndirectOnly: false,
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
+    maxFocalDistanceMetres: null,
     analysisNodeIds: [],
     questionNodeIds: [],
     pendingMergeNodeId: "",
@@ -1399,6 +1403,57 @@
     showLowConfidenceNodesInput = document.getElementById("show-low-confidence-nodes");
   }
 
+  function focalDistance(node) {
+    const value = Number(node?.focal_distance_metres);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
+  function configureFocalDistanceFilter() {
+    const distances = allNodes.map(focalDistance).filter((value) => value !== null);
+    const configuredRadius = Number(graphData.focus_radius_metres);
+    if (!distances.length) {
+      focalDistanceFilterEl?.classList.add("hidden");
+      viewerState.maxFocalDistanceMetres = null;
+      return;
+    }
+    const maximum = Math.max(
+      Number.isFinite(configuredRadius) ? configuredRadius : 0,
+      ...distances,
+    );
+    const roundedMaximum = Math.max(25, Math.ceil(maximum / 25) * 25);
+    focalDistanceRangeEl.max = String(roundedMaximum);
+    focalDistanceRangeEl.value = String(roundedMaximum);
+    focalDistanceFilterEl.dataset.maximum = String(roundedMaximum);
+    focalDistanceFilterEl.classList.remove("hidden");
+    viewerState.maxFocalDistanceMetres = null;
+    renderFocalDistanceValue();
+  }
+
+  function renderFocalDistanceValue() {
+    if (!focalDistanceValueEl || !focalDistanceRangeEl) return;
+    const selected = Number(focalDistanceRangeEl.value);
+    const maximum = Number(focalDistanceFilterEl?.dataset.maximum);
+    focalDistanceValueEl.textContent = selected >= maximum ? `All within ${maximum} m` : `Up to ${selected} m`;
+  }
+
+  function applyFocalDistanceFilter(projection) {
+    const maximum = viewerState.maxFocalDistanceMetres;
+    if (maximum === null) return projection;
+    const visibleIds = new Set(
+      [...projection.visibleIds].filter((nodeId) => {
+        const node = nodeById.get(nodeId);
+        if (node?.kind === "seed") return true;
+        const distance = focalDistance(node);
+        return distance !== null && distance <= maximum;
+      }),
+    );
+    return {
+      ...projection,
+      visibleIds,
+      edgeIds: projection.edgeIds.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)),
+    };
+  }
+
   function rebuildIndexes() {
     nodeById = new Map(allNodes.map((node) => [node.id, node]));
     edgesByNodeId = new Map();
@@ -2295,7 +2350,7 @@
     if (matchedIds.size) projection = buildSearchProjection(matchedIds);
     else if (viewerState.showIndirectOnly) projection = buildIndirectOrgProjection();
     else projection = buildFocusedProjection(rootIds);
-    return applyHighlightOnlyFilters(projection);
+    return applyFocalDistanceFilter(applyHighlightOnlyFilters(projection));
   }
 
   function textWidth(text, bold = false) {
@@ -2574,6 +2629,11 @@
       : "";
     if (!node?.is_low_confidence) {
       const lines = Array.isArray(node?.tooltip_lines) ? node.tooltip_lines.slice() : [node?.label || "Node"];
+      const distance = focalDistance(node);
+      if (distance !== null) {
+        const anchor = String(node.focal_address || "").trim();
+        lines.push(`${node.kind === "address" && node.focal_distance_basis === "postcode_centroid" ? "Focal distance" : "Focal association"}: ${distance.toLocaleString()} m${anchor && anchor !== node.label ? ` via ${escapeHtml(anchor)}` : ""}`);
+      }
       if (egyptJudgmentSummary) lines.push(egyptJudgmentSummary);
       return lines;
     }
@@ -3115,6 +3175,14 @@
     target.org_count = Math.max(Number(target.org_count || 0), Number(source.org_count || 0));
     target.role_count = Math.max(Number(target.role_count || 0), Number(source.role_count || 0));
     target.score = Math.max(Number(target.score || 0), Number(source.score || 0));
+    const targetDistance = focalDistance(target);
+    const sourceDistance = focalDistance(source);
+    if (sourceDistance !== null && (targetDistance === null || sourceDistance < targetDistance)) {
+      target.focal_distance_metres = sourceDistance;
+      target.focal_address = source.focal_address;
+      target.focal_origin = source.focal_origin;
+      target.focal_distance_basis = source.focal_distance_basis;
+    }
     target.shared = !!target.shared || !!source.shared;
     if (row?.sourceId && row?.targetId) {
       const entry = {
@@ -4447,7 +4515,8 @@
     }
 
     const extraSuffix = viewerState.extraRootIds.length ? ` + ${viewerState.extraRootIds.length} added tree${viewerState.extraRootIds.length === 1 ? "" : "s"}` : "";
-    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges${extraSuffix}`;
+    const distanceSuffix = viewerState.maxFocalDistanceMetres === null ? "" : ` / up to ${viewerState.maxFocalDistanceMetres} m`;
+    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges${extraSuffix}${distanceSuffix}`;
   }
 
   function bindUiEvents() {
@@ -4536,6 +4605,14 @@
     });
     [showIdentitiesInput, showCompaniesInput, showCharitiesInput, showPeopleInput, showAddressesInput, indirectOnlyInput, sanctionedOnlyInput, negativeNewsOnlyInput]
       .forEach((input) => input.addEventListener("change", applyViewerState));
+    focalDistanceRangeEl?.addEventListener("input", renderFocalDistanceValue);
+    focalDistanceRangeEl?.addEventListener("change", () => {
+      const selected = Number(focalDistanceRangeEl.value);
+      const maximum = Number(focalDistanceFilterEl?.dataset.maximum);
+      viewerState.maxFocalDistanceMetres = selected >= maximum ? null : selected;
+      renderFocalDistanceValue();
+      applyViewerState();
+    });
     showLowConfidenceInput.addEventListener("change", async () => {
       if (showLowConfidenceInput.checked) {
         const ok = await ensureLowConfidenceLoaded();
@@ -4769,6 +4846,7 @@
 
   async function boot() {
     renderLegend();
+    configureFocalDistanceFilter();
     initGraphSwitcher();
     await ensureMergeOverridesLoaded();
     renderer = window.IstariWebGLRenderer.createGraphRenderer(container, {

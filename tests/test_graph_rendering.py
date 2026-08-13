@@ -98,6 +98,26 @@ class GraphRenderingTests(unittest.TestCase):
         html = render_html({"nodes": [], "edges": []})
 
         self.assertIn("color-scheme: dark", html)
+
+    def test_nearby_graphs_expose_the_focal_distance_filter(self) -> None:
+        html = render_html({
+            "focus_radius_metres": 250,
+            "nodes": [{
+                "id": "address:nearby",
+                "label": "Nearby address",
+                "kind": "address",
+                "lane": 1,
+                "focal_distance_metres": 120,
+                "focal_distance_basis": "postcode_centroid",
+            }],
+            "edges": [],
+        })
+
+        self.assertIn('id="focal-distance-filter"', html)
+        self.assertIn('"focus_radius_metres":250', html)
+        self.assertIn('"focal_distance_metres": 120', html)
+        self.assertIn("function applyFocalDistanceFilter(projection)", html)
+        self.assertIn("Minimum distance of the nearby registered address", html)
         self.assertIn(".case-controls select option:disabled", html)
 
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:

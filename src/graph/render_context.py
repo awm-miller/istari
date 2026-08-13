@@ -38,4 +38,5 @@ def build_render_context(data: dict, *, title_override: str | None = None) -> di
         "edge_count": str(len(edges)),
         "nodes_json": json.dumps(nodes, ensure_ascii=False).replace("</", "<\\/"),
         "edges_json": json.dumps(edges, ensure_ascii=False).replace("</", "<\\/"),
+        "focus_radius_json": json.dumps(data.get("focus_radius_metres")),
     }

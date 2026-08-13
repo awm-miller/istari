@@ -52,6 +52,14 @@
     <div class="sidebar-pane active" data-pane="legend">
       <div class="sidebar-section">
         <div class="legend" id="legend"></div>
+        <div class="focal-distance-filter hidden" id="focal-distance-filter">
+          <label for="focal-distance-range">
+            <span>Focal association distance</span>
+            <output id="focal-distance-value">All</output>
+          </label>
+          <input id="focal-distance-range" type="range" min="0" max="250" step="25" value="250" />
+          <small>Minimum distance of the nearby registered address through which each node was discovered.</small>
+        </div>
         <label class="sidebar-meta-toggle" title="Show only indirect paths">
           <span>Indirect only</span>
           <input id="indirect-only" type="checkbox" />
