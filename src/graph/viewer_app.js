@@ -62,6 +62,7 @@
   const caseNearbyRadiusInput = document.getElementById("case-nearby-radius");
   const caseNearbyRadiusValueEl = document.getElementById("case-nearby-radius-value");
   const caseNearbySummaryEl = document.getElementById("case-nearby-summary");
+  const caseExpandPeopleInput = document.getElementById("case-expand-people");
   const caseIncludeFormerInput = document.getElementById("case-include-former");
   const caseRunButton = document.getElementById("case-run");
   const caseResetButton = document.getElementById("case-reset");
@@ -541,6 +542,7 @@
     caseNearbyCentreInput.value = nearbyCentreFromPlan(plan);
     caseNearbyRadiusInput.value = String(nearbyRadius);
     updateNearbyControls({ preview: !!plan.nearby?.enabled });
+    caseExpandPeopleInput.checked = plan.expandPeople !== false;
     caseIncludeFormerInput.checked = plan.includeFormer !== false;
     casePlanEl.classList.remove("hidden");
     casePlanEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -581,6 +583,7 @@
       title,
       seeds,
       expansionCycles: Number(caseExpansionInput.value || 1),
+      expandPeople: caseExpandPeopleInput.checked,
       entityCeiling: Number(caseEntitiesInput.value || 5000),
       includeFormer: caseIncludeFormerInput.checked,
       nearby: {
@@ -603,6 +606,7 @@
       title: "New investigation",
       seeds: [{ kind: "address", value: "" }],
       expansionCycles: 1,
+      expandPeople: true,
       entityCeiling: 5000,
       includeFormer: true,
       nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },

@@ -106,6 +106,7 @@ const server = createServer(async (request, response) => {
         title: "Audit case",
         seeds: [{ kind: "address", value: "32 Store Street, London" }],
         expansionCycles: 1,
+        expandPeople: true,
         entityCeiling: 5000,
         includeFormer: true,
         nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
@@ -170,6 +171,7 @@ const server = createServer(async (request, response) => {
       title: "Audit case",
       seeds: [{ kind: "address", value: "32 Store Street, London" }],
       expansionCycles: 1,
+      expandPeople: true,
       entityCeiling: 5000,
       includeFormer: true,
       nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
@@ -380,6 +382,8 @@ try {
   assert.equal(await page.locator(".case-input-kind").last().locator('option[value="area"]').count(), 0);
   await page.locator(".case-input-kind").last().selectOption("person");
   await page.locator(".case-input-value").last().fill("Alice Example");
+  assert.equal(await page.locator("#case-expand-people").isChecked(), true);
+  await page.locator("#case-expand-people").uncheck();
   await page.locator("#case-run").click();
   await page.waitForSelector("#case-open-result:not(.hidden)");
   const openGraphControl = await page.locator("#case-open-result").evaluate((element) => {
@@ -396,6 +400,7 @@ try {
     { kind: "person", value: "Alice Example" },
   ]);
   assert.equal(approvedPlan?.expansionCycles, 1);
+  assert.equal(approvedPlan?.expandPeople, false);
   assert.equal(approvedPlan?.entityCeiling, 5000);
   assert.equal(approvedPlan?.includeFormer, true);
   assert.deepEqual(approvedPlan?.nearby, { enabled: true, radiusMetres: 250, maxAddresses: 200 });
@@ -422,6 +427,7 @@ try {
   assert.equal(await page.locator("#case-task-list .case-task-row").count(), 0);
   await page.locator("#case-reset").click();
   await page.locator("#case-direct").click();
+  assert.equal(await page.locator("#case-expand-people").isChecked(), true);
   await page.locator("#case-plan-title").fill("Direct contract audit");
   await page.locator("#case-plan-id").fill("direct-contract-audit");
   await page.locator(".case-input-kind").first().selectOption("address");
