@@ -5,6 +5,7 @@ const { handler, _private } = require("../netlify/functions/istari-backend-proxy
 test("proxy allows only Istari investigation and generated graph routes", () => {
   assert.equal(_private.ALLOWED_TARGET.test("/api/investigations/draft"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/investigations/abc123/start"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/api/investigations/abc123/clear"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/generated-graphs/32-store-street"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/admin"), false);
