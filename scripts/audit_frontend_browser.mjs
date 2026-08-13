@@ -16,6 +16,7 @@ const contentTypes = new Map([
   [".css", "text/css"], [".html", "text/html"], [".js", "text/javascript"], [".json", "application/json"],
 ]);
 let caseStatus = "queued";
+let caseCreated = false;
 let casePollFailures = 0;
 let transientPollObserved = false;
 let directPlan = null;
@@ -111,10 +112,26 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  if (url.pathname === "/api/investigations" && request.method === "GET") {
+    const jobs = caseCreated ? [{
+      id: "abc123",
+      status: caseStatus,
+      draft: approvedPlan || directPlan || { title: "Audit case", seeds: [{ kind: "address", value: "32 Store Street, London" }] },
+      progress: caseStatus === "completed"
+        ? { processed: 4, active: 0, queued: 0, failed: 0, total: 4, nodes: 4, edges: 3, percent: 100 }
+        : { processed: 0, active: 0, queued: 1, failed: 0, total: 1, nodes: 1, edges: 0, percent: 0 },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      result: caseStatus === "completed" ? { artifact: { path: "/generated-graphs/audit-case/" } } : null,
+    }] : [];
+    sendJson(response, { ok: true, jobs });
+    return;
+  }
   if (url.pathname === "/api/investigations" && request.method === "POST") {
     const body = await requestJson(request);
     directPlan = body.draft;
     createdGraphId = body.graphId;
+    caseCreated = true;
     caseStatus = "planned";
     casePollFailures = 1;
     sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan: body.draft, stdout: [{ message: "contract: ready for approval", created_at: new Date().toISOString() }] } }, 201);
@@ -147,7 +164,7 @@ const server = createServer(async (request, response) => {
       nearby: { enabled: false, radiusMetres: 250, maxAddresses: 200 },
     };
     if (caseStatus === "completed") {
-      sendJson(response, { ok: true, job: { id: "abc123", status: "completed", stage: "completed", plan, progress: { processed: 4, queued: 0, failed: 0, total: 4, nodes: 4, edges: 3, percent: 100 }, result: { artifact: { path: "/generated-graphs/audit-case/" } }, stdout: [{ message: "complete: 4 nodes, 3 edges", created_at: new Date().toISOString() }] } });
+      sendJson(response, { ok: true, job: { id: "abc123", status: "completed", stage: "completed", plan, progress: { processed: 4, active: 0, queued: 0, failed: 0, total: 4, nodes: 4, edges: 3, percent: 100 }, activity: { current: [], retrying: 0, skipped: 0 }, result: { artifact: { path: "/generated-graphs/audit-case/" } }, stdout: [{ message: "complete: 4 nodes, 3 edges", created_at: new Date().toISOString() }] } });
     } else {
       caseStatus = "planned";
       sendJson(response, { ok: true, job: { id: "abc123", status: "planned", plan, stdout: [{ message: "planner: scope ready", created_at: new Date().toISOString() }] } });
@@ -336,6 +353,7 @@ try {
     const status = await page.locator("#builder-status").innerText().catch(() => "");
     throw new Error(`${error.message}\nBuilder output: ${status}\nBrowser errors: ${runtimeErrors.join(" | ")}`);
   });
+  assert.match(await page.locator("#builder-feedback").innerText(), /Scope ready/);
   assert.deepEqual(await page.locator("#case-expansion option").evaluateAll((options) => options.map((option) => option.value)), ["0", "1", "2", "3", "4", "5"]);
   assert.equal(await page.locator("#case-entities").getAttribute("max"), "5000");
   assert.equal(await page.locator("#case-recipe").count(), 0, "obsolete recipe control remains");
@@ -365,8 +383,10 @@ try {
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   assert.ok(await page.locator("#case-progress").isVisible(), "Discovery progress is hidden");
   assert.equal(await page.locator("#case-progress-bar").getAttribute("value"), "100");
-  assert.match(await page.locator("#case-progress-detail").innerText(), /4 processed \| 0 queued \| 4 nodes \| 3 edges/);
-  await page.locator("#case-progress").click();
+  assert.match(await page.locator("#case-progress-detail").innerText(), /4 nodes \/ 3 relationships \/ 4 checks complete/);
+  assert.equal(await page.locator("#case-task-list .case-task-row").count(), 1);
+  assert.match(await page.locator("#case-task-list .case-task-status").innerText(), /Graph ready/);
+  await page.locator("#case-progress-open").click();
   assert.ok(await page.locator("#run-log-sheet").isVisible(), "Run log sheet did not open");
   assert.match(await page.locator("#builder-status").innerText(), /complete: 4 nodes, 3 edges/);
   await page.locator("#run-log-close").click();
@@ -389,7 +409,7 @@ try {
   assert.ok(await page.locator("#builder-panel").isHidden(), "Viewer did not reopen");
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, repeated edge hover, evidence, added trees, resolution, subgraph questions, and both Builder entry paths.");
+  console.log("Browser audit passed: rendering, evidence, resolution, questions, Builder paths, task feedback, task history, and run logs.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

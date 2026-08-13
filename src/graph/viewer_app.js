@@ -46,6 +46,7 @@
   const builderFormEl = document.getElementById("builder-form");
   const caseQueryInput = document.getElementById("case-query");
   const casePlanSubmitButton = document.getElementById("case-plan-submit");
+  const builderFeedbackEl = document.getElementById("builder-feedback");
   const caseDirectButton = document.getElementById("case-direct");
   const casePlanEl = document.getElementById("case-plan");
   const casePlanTitleEl = document.getElementById("case-plan-title");
@@ -67,10 +68,16 @@
   const caseOpenResultEl = document.getElementById("case-open-result");
   const builderStatusEl = document.getElementById("builder-status");
   const caseProgressEl = document.getElementById("case-progress");
+  const caseProgressOpenEl = document.getElementById("case-progress-open");
   const caseProgressLabelEl = document.getElementById("case-progress-label");
   const caseProgressPercentEl = document.getElementById("case-progress-percent");
+  const caseProgressPhaseEl = document.getElementById("case-progress-phase");
   const caseProgressBarEl = document.getElementById("case-progress-bar");
   const caseProgressDetailEl = document.getElementById("case-progress-detail");
+  const caseProgressFeedbackEl = document.getElementById("case-progress-feedback");
+  const caseCancelButton = document.getElementById("case-cancel");
+  const caseTaskListEl = document.getElementById("case-task-list");
+  const caseTasksCountEl = document.getElementById("case-tasks-count");
   const runLogBackdropEl = document.getElementById("run-log-backdrop");
   const runLogSheetEl = document.getElementById("run-log-sheet");
   const runLogCloseButton = document.getElementById("run-log-close");
@@ -158,7 +165,10 @@
   let resolutionCandidatesCache = null;
   let canvasSearchAnchor = { x: 0, y: 0 };
   let currentCaseJobId = "";
+  let currentCaseJobStatus = "";
   let currentCasePlan = null;
+  let recentCaseJobs = [];
+  const watchedCaseJobs = new Set();
   let caseNearbyMap = null;
   let caseNearbyLayer = null;
   let caseNearbyCircle = null;
@@ -232,8 +242,20 @@
     builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
   }
 
+  function setBuilderFeedback(message = "", state = "") {
+    if (!builderFeedbackEl) return;
+    builderFeedbackEl.textContent = message;
+    builderFeedbackEl.dataset.state = state;
+    builderFeedbackEl.classList.toggle("hidden", !message);
+  }
+
   function renderBuilderStdout(job = {}) {
     if (!builderStatusEl) return;
+    if (job.id && currentCaseJobId && job.id !== currentCaseJobId) {
+      upsertRecentTask(job);
+      return;
+    }
+    currentCaseJobStatus = String(job.status || currentCaseJobStatus);
     const lines = (Array.isArray(job.stdout) ? job.stdout : []).map((entry) => {
       const timestamp = new Date(entry.created_at || Date.now()).toLocaleTimeString([], { hour12: false });
       return `[${timestamp}] ${String(entry.message || "")}`;
@@ -245,40 +267,220 @@
     builderStatusEl.classList.toggle("error", job.status === "failed");
     builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
     renderBuilderProgress(job);
+    upsertRecentTask(job);
   }
 
   function renderBuilderProgress(job = {}) {
-    const visible = ["queued", "planning", "running", "completed", "failed"].includes(job.status)
+    const status = String(job.status || "");
+    const visible = ["planned", "queued", "planning", "running", "completed", "failed", "cancelled"].includes(status)
       && job.stage !== "planning_failed";
     caseProgressEl?.classList.toggle("hidden", !visible);
     if (!visible) return;
     const progress = job.progress || {};
-    const percent = job.status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    const activity = job.activity || {};
+    const percent = status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
+    const current = Array.isArray(activity.current) ? activity.current : [];
+    const active = Number(progress.active) || current.length;
+    const skipped = Number(activity.skipped) || 0;
+    const retrying = Number(activity.retrying) || 0;
+    caseProgressEl.dataset.status = status;
     caseProgressBarEl.value = percent;
     caseProgressBarEl.textContent = `${percent}%`;
     caseProgressPercentEl.textContent = `${percent}%`;
-    caseProgressLabelEl.textContent = job.status === "completed"
-      ? "Complete"
-      : job.status === "failed"
-        ? "Stopped"
-        : ["queued", "planning"].includes(job.status)
-          ? "Planning"
-          : "Discovery";
-    const details = [
-      `${Number(progress.processed) || 0} processed`,
-      `${Number(progress.queued) || 0} queued`,
-      `${Number(progress.nodes) || 0} nodes`,
-      `${Number(progress.edges) || 0} edges`,
+    caseProgressLabelEl.textContent = taskStatusLabel(status);
+    caseProgressPhaseEl.textContent = taskPhaseLabel(status, current);
+    caseProgressDetailEl.textContent = taskProgressDetail(status, progress, active);
+    const feedback = taskFeedback(status, job.error, skipped, retrying);
+    caseProgressFeedbackEl.textContent = feedback;
+    caseProgressFeedbackEl.classList.toggle("hidden", !feedback);
+    caseProgressFeedbackEl.classList.toggle("warning", Boolean(skipped || retrying) && status !== "failed");
+    caseProgressFeedbackEl.classList.toggle("error", status === "failed");
+    caseCancelButton?.classList.toggle("hidden", !["queued", "planning", "running"].includes(status));
+  }
+
+  function taskStatusLabel(status) {
+    if (status === "planned") return "Ready to run";
+    if (["queued", "planning"].includes(status)) return "Waiting for worker";
+    if (status === "running") return "Discovering records";
+    if (status === "completed") return "Graph ready";
+    if (status === "failed") return "Needs attention";
+    if (status === "cancelled") return "Cancelled";
+    return "Investigation";
+  }
+
+  function taskPhaseLabel(status, current = []) {
+    if (status === "planned") return "Review the scope before discovery starts";
+    if (["queued", "planning"].includes(status)) return "Queued; discovery starts automatically";
+    if (status === "completed") return "Discovery and graph creation completed";
+    if (status === "failed") return "Discovery stopped before the graph was completed";
+    if (status === "cancelled") return "No further registry work will run";
+    if (!current.length) return "Preparing the next registry checks";
+    const labels = [...new Set(current.map(taskOperationLabel))];
+    return labels.length > 1 ? `${labels[0]} and ${labels.length - 1} more` : labels[0];
+  }
+
+  function taskOperationLabel(kind) {
+    const labels = {
+      resolve_seed: "Resolving the starting point",
+      search_seed: "Searching registry candidates",
+      adjudicate_seed: "Checking ambiguous matches",
+      person_appointments: "Finding appointments",
+      company_profile: "Reading company records",
+      company_officers: "Finding company officers",
+      charity_details: "Reading charity records",
+      charity_trustees: "Finding charity trustees",
+      address_companies: "Finding companies at addresses",
+      address_charities: "Finding charities at addresses",
+      address_charity_details: "Checking charity addresses",
+      nearby_addresses: "Finding nearby registered addresses",
+    };
+    return labels[String(kind)] || "Checking registry records";
+  }
+
+  function taskProgressDetail(status, progress, active) {
+    const nodes = Number(progress.nodes) || 0;
+    const edges = Number(progress.edges) || 0;
+    if (status === "planned") return "No registry work has started";
+    if (status === "completed") return `${nodes} nodes / ${edges} relationships / ${Number(progress.processed) || 0} checks complete`;
+    if (status === "cancelled") return `${nodes} nodes / ${edges} relationships retained in the cancelled task`;
+    const work = [
+      `${Number(progress.processed) || 0} complete`,
+      `${active} active`,
+      `${Number(progress.queued) || 0} waiting`,
     ];
-    if (Number(progress.failed)) details.splice(2, 0, `${Number(progress.failed)} failed`);
-    caseProgressDetailEl.textContent = details.join(" | ");
+    if (Number(progress.failed)) work.push(`${Number(progress.failed)} failed`);
+    return `${work.join(" / ")}  |  ${nodes} nodes / ${edges} relationships`;
+  }
+
+  function taskFeedback(status, error, skipped, retrying) {
+    if (status === "failed") return friendlyTaskError(error);
+    const feedback = [];
+    if (retrying) feedback.push(`${retrying} registry request${retrying === 1 ? " is" : "s are"} waiting to retry.`);
+    if (skipped) feedback.push(`${skipped} unavailable registry record${skipped === 1 ? " was" : "s were"} skipped; remaining evidence was preserved.`);
+    return feedback.join(" ");
+  }
+
+  function friendlyTaskError(error) {
+    const message = String(error || "").trim();
+    if (/HTTP 429/i.test(message)) return "A registry rate limit stopped this run. Retry the task after a short wait.";
+    if (/timeout|timed out|abort/i.test(message)) return "A registry request timed out repeatedly. Retry the task; completed work is retained until the retry starts.";
+    if (/HTTP 404/i.test(message)) return "A required starting record is no longer available in its registry. Check the seed and retry.";
+    return message ? `Discovery stopped: ${message}` : "Discovery stopped before completion. Open the log for details, then retry.";
+  }
+
+  function upsertRecentTask(job) {
+    if (!job?.id) return;
+    recentCaseJobs = [job, ...recentCaseJobs.filter((item) => item.id !== job.id)]
+      .sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0))
+      .slice(0, 10);
+    renderRecentTasks();
+  }
+
+  function renderRecentTasks() {
+    if (!caseTaskListEl) return;
+    caseTasksCountEl.textContent = recentCaseJobs.length ? String(recentCaseJobs.length) : "";
+    if (!recentCaseJobs.length) {
+      caseTaskListEl.innerHTML = '<div class="case-task-empty">No investigations yet.</div>';
+      return;
+    }
+    caseTaskListEl.innerHTML = recentCaseJobs.map((job) => {
+      const status = String(job.status || "planned");
+      const draft = job.draft || job.plan || {};
+      const title = String(draft.title || "Untitled investigation");
+      const progress = job.progress || {};
+      const seedCount = Array.isArray(draft.seeds) ? draft.seeds.length : 0;
+      const resultPath = String(job.result?.artifact?.path || "");
+      const selected = job.id === currentCaseJobId;
+      const detail = status === "completed"
+        ? `${Number(progress.nodes) || 0} nodes / ${Number(progress.edges) || 0} relationships`
+        : `${seedCount} seed${seedCount === 1 ? "" : "s"} / ${taskListWorkLabel(status, progress)}`;
+      return `
+        <article class="case-task-row" data-status="${escapeHtml(status)}" data-selected="${selected}">
+          <button class="case-task-select" type="button" data-task-id="${escapeHtml(job.id)}" aria-label="View task ${escapeHtml(title)}">
+            <span class="case-task-state" aria-hidden="true"></span>
+            <span class="case-task-copy">
+              <strong>${escapeHtml(title)}</strong>
+              <small>${escapeHtml(detail)} / ${escapeHtml(relativeTaskTime(job.updated_at || job.created_at))}</small>
+            </span>
+            <span class="case-task-status">${escapeHtml(taskStatusLabel(status))}</span>
+          </button>
+          ${resultPath ? `<a class="case-task-open" href="${escapeHtml(resultPath)}">Open</a>` : ""}
+        </article>
+      `;
+    }).join("");
+  }
+
+  function taskListWorkLabel(status, progress) {
+    if (status === "planned") return "not started";
+    if (["queued", "planning"].includes(status)) return "waiting";
+    if (status === "running") return `${Number(progress.processed) || 0} checks complete`;
+    if (status === "failed") return "stopped";
+    if (status === "cancelled") return "cancelled";
+    return status;
+  }
+
+  function relativeTaskTime(value) {
+    const milliseconds = Date.now() - new Date(value || 0).getTime();
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) return "now";
+    const minutes = Math.floor(milliseconds / 60_000);
+    if (minutes < 1) return "now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
+
+  async function loadRecentTasks() {
+    if (!caseTaskListEl) return;
+    try {
+      const response = await fetch(builderApiUrl("/api/investigations?limit=10"), { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || `Task list failed with ${response.status}`);
+      recentCaseJobs = Array.isArray(data.jobs) ? data.jobs : [];
+      renderRecentTasks();
+    } catch (_error) {
+      caseTaskListEl.innerHTML = '<div class="case-task-empty error">Recent tasks are temporarily unavailable.</div>';
+    }
+  }
+
+  async function showRecentTask(jobId) {
+    const response = await fetch(builderApiUrl(`/api/investigations/${encodeURIComponent(jobId)}`), { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || `Task detail failed with ${response.status}`);
+    const job = data.job || {};
+    currentCaseJobId = String(job.id || "");
+    currentCaseJobStatus = String(job.status || "");
+    setBuilderFeedback();
+    caseOpenResultEl.classList.add("hidden");
+    if (["planned", "failed"].includes(currentCaseJobStatus)) renderCasePlan(job.draft || job.plan);
+    else casePlanEl.classList.add("hidden");
+    const path = String(job.result?.artifact?.path || "");
+    if (path) {
+      caseOpenResultEl.href = path;
+      caseOpenResultEl.classList.remove("hidden");
+    }
+    renderBuilderStdout(job);
+    if (["queued", "planning", "running"].includes(currentCaseJobStatus) && !watchedCaseJobs.has(currentCaseJobId)) {
+      watchBuilderJob(currentCaseJobId).catch((error) => {
+        if (currentCaseJobId === jobId) setBuilderFeedback(error.message || "Live task updates stopped.", "error");
+      });
+    }
+  }
+
+  async function cancelCurrentTask() {
+    if (!currentCaseJobId || !window.confirm("Cancel this investigation? Completed registry work will remain in its task record.")) return;
+    const response = await fetch(builderApiUrl(`/api/investigations/${encodeURIComponent(currentCaseJobId)}`), { method: "DELETE" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) throw new Error(data.error || `Cancellation failed with ${response.status}`);
+    await showRecentTask(currentCaseJobId);
+    await loadRecentTasks();
   }
 
   function setRunLogOpen(open) {
     const next = !!open;
     runLogSheetEl?.classList.toggle("hidden", !next);
     runLogBackdropEl?.classList.toggle("hidden", !next);
-    caseProgressEl?.setAttribute("aria-expanded", String(next));
+    caseProgressOpenEl?.setAttribute("aria-expanded", String(next));
     document.body.classList.toggle("run-log-open", next);
     if (next) {
       builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
@@ -292,6 +494,7 @@
     builderPanelEl?.classList.toggle("hidden", !isBuilder);
     modeViewerButton?.classList.toggle("active", !isBuilder);
     modeBuilderButton?.classList.toggle("active", isBuilder);
+    if (isBuilder) loadRecentTasks();
     if (!isBuilder && renderer) {
       window.requestAnimationFrame(() => applyViewerState());
     }
@@ -362,8 +565,10 @@
 
   function startDirectContract() {
     currentCaseJobId = "";
+    currentCaseJobStatus = "";
     caseOpenResultEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
+    setBuilderFeedback();
     setBuilderStatus("$ new research contract");
     renderCasePlan({
       title: "New investigation",
@@ -525,11 +730,14 @@
     caseOpenResultEl.classList.add("hidden");
     casePlanEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
+    setBuilderFeedback("Interpreting the investigation brief...", "working");
     setBuilderStatus(`$ plan ${query}`);
     const data = await postBuilderJson("/api/investigations/draft", { query });
     if (!data.draft) throw new Error("The planner did not return an investigation form.");
     currentCaseJobId = "";
+    currentCaseJobStatus = "";
     renderCasePlan(data.draft);
+    setBuilderFeedback("Scope ready. Check the seeds and expansion before you run it.", "success");
     setBuilderStatus("contract: ready for review");
     casePlanSubmitButton.disabled = false;
   }
@@ -555,38 +763,51 @@
       }
       consecutiveFailures = 0;
       const job = data.job || {};
+      const selected = currentCaseJobId === jobId;
       renderBuilderStdout(job);
       if (job.status === "completed") {
         const graph = job.result?.artifact || {};
         const path = graph.path || "";
-        if (path) {
+        if (selected && path) {
           caseOpenResultEl.href = path;
           caseOpenResultEl.classList.remove("hidden");
         }
-        caseRunButton.disabled = false;
+        if (selected) caseRunButton.disabled = false;
         await loadGeneratedGraphOptions();
+        await loadRecentTasks();
         return;
       }
       if (["failed", "cancelled"].includes(job.status)) {
-        casePlanSubmitButton.disabled = false;
-        caseRunButton.disabled = false;
+        if (selected) {
+          casePlanSubmitButton.disabled = false;
+          caseRunButton.disabled = false;
+        }
+        await loadRecentTasks();
         return;
       }
     }
-    casePlanSubmitButton.disabled = false;
-    caseRunButton.disabled = false;
-    setBuilderStatus("poll timeout; the backend job may still be running", true);
+    if (currentCaseJobId === jobId) {
+      casePlanSubmitButton.disabled = false;
+      caseRunButton.disabled = false;
+      setBuilderStatus("poll timeout; the backend job may still be running", true);
+    }
   }
 
   async function runPlannedCase() {
     if (!currentCasePlan) throw new Error("Draft a case scope first.");
     caseRunButton.disabled = true;
+    setBuilderFeedback();
     setBuilderStatus("$ run approved scope");
     const draft = approvedCasePlan();
-    const graphId = String(casePlanIdEl.value || "").trim();
-    const created = await postBuilderJson("/api/investigations", { draft, graphId });
-    const plannedJob = created.job || {};
-    currentCaseJobId = String(plannedJob.id || "");
+    let plannedJob = null;
+    if (currentCaseJobId && ["planned", "failed"].includes(currentCaseJobStatus)) {
+      plannedJob = recentCaseJobs.find((job) => job.id === currentCaseJobId) || { id: currentCaseJobId, status: currentCaseJobStatus, draft };
+    } else {
+      const graphId = String(casePlanIdEl.value || "").trim();
+      const created = await postBuilderJson("/api/investigations", { draft, graphId });
+      plannedJob = created.job || {};
+      currentCaseJobId = String(plannedJob.id || "");
+    }
     if (!currentCaseJobId) throw new Error("The backend did not accept the investigation.");
     renderBuilderStdout(plannedJob);
     const data = await postBuilderJson(`/api/investigations/${encodeURIComponent(currentCaseJobId)}/start`, { draft });
@@ -595,61 +816,70 @@
   }
 
   async function watchBuilderJob(jobId) {
-    if (typeof EventSource !== "function") return pollBuilderJob(jobId);
-    await new Promise((resolve, reject) => {
-      let received = false;
-      let settled = false;
-      const stream = new EventSource(builderApiUrl(`/api/investigations/${encodeURIComponent(jobId)}/events`));
-      const fallback = () => {
-        if (settled) return;
-        settled = true;
-        stream.close();
-        pollBuilderJob(jobId).then(resolve, reject);
-      };
-      const timeout = window.setTimeout(() => {
-        if (!received) fallback();
-      }, 5000);
-      stream.addEventListener("update", (event) => {
-        received = true;
-        window.clearTimeout(timeout);
-        try {
-          const data = JSON.parse(event.data || "{}");
-          const job = data.job || {};
-          renderBuilderStdout(job);
-          if (job.status === "completed") {
-            settled = true;
-            stream.close();
-            const path = job.result?.artifact?.path || "";
-            if (path) {
-              caseOpenResultEl.href = path;
-              caseOpenResultEl.classList.remove("hidden");
-            }
-            caseRunButton.disabled = false;
-            loadGeneratedGraphOptions().finally(resolve);
-          } else if (["failed", "cancelled"].includes(job.status)) {
-            settled = true;
-            stream.close();
-            caseRunButton.disabled = false;
-            resolve();
-          }
-        } catch (error) {
+    if (watchedCaseJobs.has(jobId)) return;
+    watchedCaseJobs.add(jobId);
+    try {
+      if (typeof EventSource !== "function") return await pollBuilderJob(jobId);
+      await new Promise((resolve, reject) => {
+        let received = false;
+        let settled = false;
+        const stream = new EventSource(builderApiUrl(`/api/investigations/${encodeURIComponent(jobId)}/events`));
+        const fallback = () => {
+          if (settled) return;
           settled = true;
           stream.close();
-          reject(error);
-        }
+          pollBuilderJob(jobId).then(resolve, reject);
+        };
+        const timeout = window.setTimeout(() => {
+          if (!received) fallback();
+        }, 5000);
+        stream.addEventListener("update", (event) => {
+          received = true;
+          window.clearTimeout(timeout);
+          try {
+            const data = JSON.parse(event.data || "{}");
+            const job = data.job || {};
+            const selected = currentCaseJobId === jobId;
+            renderBuilderStdout(job);
+            if (job.status === "completed") {
+              settled = true;
+              stream.close();
+              const path = job.result?.artifact?.path || "";
+              if (selected && path) {
+                caseOpenResultEl.href = path;
+                caseOpenResultEl.classList.remove("hidden");
+              }
+              if (selected) caseRunButton.disabled = false;
+              Promise.all([loadGeneratedGraphOptions(), loadRecentTasks()]).finally(resolve);
+            } else if (["failed", "cancelled"].includes(job.status)) {
+              settled = true;
+              stream.close();
+              if (selected) caseRunButton.disabled = false;
+              loadRecentTasks().finally(resolve);
+            }
+          } catch (error) {
+            settled = true;
+            stream.close();
+            reject(error);
+          }
+        });
+        stream.onerror = fallback;
       });
-      stream.onerror = fallback;
-    });
+    } finally {
+      watchedCaseJobs.delete(jobId);
+    }
   }
 
   function resetCaseDesk() {
     currentCaseJobId = "";
+    currentCaseJobStatus = "";
     currentCasePlan = null;
     casePlanEl.classList.add("hidden");
     caseOpenResultEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
     casePlanSubmitButton.disabled = false;
     caseRunButton.disabled = false;
+    setBuilderFeedback();
     setRunLogOpen(false);
     setBuilderStatus("");
     caseQueryInput?.focus();
@@ -4223,6 +4453,7 @@
       event.preventDefault();
       submitBuilderJob().catch((error) => {
         casePlanSubmitButton.disabled = false;
+        setBuilderFeedback(error.message || "The investigation brief could not be interpreted.", "error");
         setBuilderStatus(error.message || "Case planning failed to start.", true);
       });
     });
@@ -4230,6 +4461,7 @@
     caseRunButton?.addEventListener("click", () => {
       runPlannedCase().catch((error) => {
         caseRunButton.disabled = false;
+        setBuilderFeedback(error.message || "Discovery could not start.", "error");
         setBuilderStatus(error.message || "Case discovery failed to start.", true);
       });
     });
@@ -4241,12 +4473,14 @@
     caseMaxAddressesInput?.addEventListener("change", () => {
       if (caseNearbyEnabledInput?.checked) scheduleNearbyPreview(0);
     });
-    caseProgressEl?.addEventListener("click", () => setRunLogOpen(true));
-    caseProgressEl?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        setRunLogOpen(true);
-      }
+    caseProgressOpenEl?.addEventListener("click", () => setRunLogOpen(true));
+    caseCancelButton?.addEventListener("click", () => {
+      cancelCurrentTask().catch((error) => setBuilderStatus(error.message || "The task could not be cancelled.", true));
+    });
+    caseTaskListEl?.addEventListener("click", (event) => {
+      const taskButton = event.target.closest(".case-task-select");
+      if (!taskButton) return;
+      showRecentTask(taskButton.dataset.taskId).catch((error) => setBuilderStatus(error.message || "The task could not be opened.", true));
     });
     runLogCloseButton?.addEventListener("click", () => setRunLogOpen(false));
     runLogBackdropEl?.addEventListener("click", () => setRunLogOpen(false));

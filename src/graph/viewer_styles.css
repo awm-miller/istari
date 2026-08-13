@@ -2036,9 +2036,22 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   box-shadow: var(--shadow-hairline);
   font: 11.5px/1.6 "Beautiful Mono", ui-monospace, monospace;
 }}
+.builder-feedback {{
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: var(--radius-control);
+  background: var(--inset);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-hairline);
+  font-size: 11px;
+  line-height: 1.5;
+}}
+.builder-feedback[data-state="working"] {{ color: var(--accent-ink); }}
+.builder-feedback[data-state="success"] {{ color: var(--green); }}
+.builder-feedback[data-state="error"] {{ color: var(--red); }}
 .case-progress {{
   margin-top: 22px;
-  padding: 12px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-card);
   background: var(--surface);
@@ -2051,12 +2064,137 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   background: var(--hover);
   box-shadow: var(--shadow-raised);
 }}
-.case-progress-summary {{ color: var(--ink-2); font-size: 12px; }}
+.case-progress-open {{
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}}
+.case-progress-open:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+.case-progress-body {{ min-width: 0; }}
+.case-progress-summary {{ display: flex; justify-content: space-between; gap: 12px; color: var(--ink-2); font-size: 12px; }}
+.case-progress-summary strong {{ color: var(--ink); font-weight: 600; }}
+.case-progress-phase {{ display: block; margin: 2px 0 10px; color: var(--ink-3); font-size: 11px; }}
+.case-progress-chevron {{
+  width: 7px;
+  height: 7px;
+  margin: 6px auto 0;
+  border-right: 1.5px solid var(--ink-3);
+  border-bottom: 1.5px solid var(--ink-3);
+  transform: rotate(45deg);
+  transition: transform 180ms ease;
+}}
+.case-progress-open[aria-expanded="true"] .case-progress-chevron {{ transform: rotate(225deg); }}
+.case-task-state {{
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  margin: 7px;
+  border: 2px solid var(--ink-3);
+  border-radius: 999px;
+  box-sizing: border-box;
+}}
+[data-status="queued"] .case-task-state,
+[data-status="planning"] .case-task-state,
+[data-status="planned"] .case-task-state {{ border-color: var(--accent); background: var(--accent-tint); }}
+[data-status="running"] .case-task-state {{
+  width: 18px;
+  height: 18px;
+  margin: 3px;
+  border-color: var(--line-strong);
+  border-top-color: var(--orange);
+  animation: case-task-spin 900ms linear infinite;
+}}
+[data-status="completed"] .case-task-state {{ border-color: var(--green); background: var(--green); }}
+[data-status="failed"] .case-task-state {{ border-color: var(--red); background: var(--red); }}
+[data-status="cancelled"] .case-task-state {{ border-color: var(--ink-3); background: var(--ink-3); }}
 .case-progress progress {{ height: 4px; border-radius: 999px; background: var(--line-strong); color: var(--accent); }}
 .case-progress progress::-webkit-progress-bar {{ background: var(--line-strong); }}
 .case-progress progress::-webkit-progress-value {{ border-radius: 999px; background: var(--accent); }}
 .case-progress progress::-moz-progress-bar {{ border-radius: 999px; background: var(--accent); }}
-.case-progress-detail {{ color: var(--ink-3); font: 11px/1.5 "Beautiful Mono", ui-monospace, monospace; }}
+.case-progress[data-status="running"] progress::-webkit-progress-value {{ background: var(--orange); }}
+.case-progress[data-status="running"] progress::-moz-progress-bar {{ background: var(--orange); }}
+.case-progress[data-status="completed"] progress::-webkit-progress-value {{ background: var(--green); }}
+.case-progress[data-status="completed"] progress::-moz-progress-bar {{ background: var(--green); }}
+.case-progress[data-status="failed"] progress::-webkit-progress-value {{ background: var(--red); }}
+.case-progress[data-status="failed"] progress::-moz-progress-bar {{ background: var(--red); }}
+.case-progress-detail {{ display: block; margin-top: 8px; color: var(--ink-3); font: 11px/1.5 "Beautiful Mono", ui-monospace, monospace; }}
+.case-progress-feedback {{ margin: 0 12px 10px 46px; color: var(--ink-2); font-size: 11px; line-height: 1.5; }}
+.case-progress-feedback.hidden {{ display: none; }}
+.case-progress-feedback.warning {{ color: var(--orange); }}
+.case-progress-feedback.error {{ color: var(--red); }}
+.case-progress-actions {{ display: flex; align-items: center; gap: 8px; margin: 0 12px 12px 46px; }}
+.case-progress-actions:empty {{ display: none; }}
+.case-open-result,
+.case-cancel {{
+  min-height: 28px;
+  margin: 0;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow: var(--shadow-btn);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-decoration: none;
+  cursor: pointer;
+}}
+.case-open-result:hover {{ background: var(--hover); color: var(--ink); }}
+.case-cancel {{ color: var(--red); }}
+.case-cancel:hover {{ background: var(--red-tint); }}
+.case-cancel.hidden {{ display: none; }}
+.case-tasks {{ margin-top: 24px; }}
+.case-tasks-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }}
+.case-tasks-header h2 {{ margin: 0; color: var(--ink); font-size: 13px; font-weight: 600; }}
+.case-tasks-header span {{ color: var(--ink-3); font: 10px/1 "Beautiful Mono", ui-monospace, monospace; }}
+.case-task-list {{ overflow: hidden; border-radius: var(--radius-card); background: var(--surface); box-shadow: var(--shadow-card); }}
+.case-task-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 52px; border-bottom: 1px solid var(--line); }}
+.case-task-row:last-child {{ border-bottom: 0; }}
+.case-task-row[data-selected="true"] {{ background: var(--accent-tint); }}
+.case-task-select {{
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}}
+.case-task-select:hover {{ background: var(--hover); }}
+.case-task-select:focus-visible {{ outline: 2px solid var(--accent); outline-offset: -2px; }}
+.case-task-copy {{ display: flex; min-width: 0; flex-direction: column; gap: 2px; }}
+.case-task-copy strong {{ overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }}
+.case-task-copy small {{ overflow: hidden; color: var(--ink-3); font: 10px/1.4 "Beautiful Mono", ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }}
+.case-task-status {{ color: var(--ink-3); font-size: 10px; white-space: nowrap; }}
+.case-task-row[data-status="running"] .case-task-status {{ color: var(--orange); }}
+.case-task-row[data-status="completed"] .case-task-status {{ color: var(--green); }}
+.case-task-row[data-status="failed"] .case-task-status {{ color: var(--red); }}
+.case-task-open {{
+  align-self: center;
+  margin-right: 10px;
+  padding: 5px 8px;
+  border-radius: var(--radius-control);
+  color: var(--accent-ink);
+  font-size: 11px;
+  text-decoration: none;
+}}
+.case-task-open:hover {{ background: var(--hover); color: var(--ink); }}
+.case-task-empty {{ padding: 16px 12px; color: var(--ink-3); font-size: 11px; }}
+.case-task-empty.error {{ color: var(--red); }}
+@keyframes case-task-spin {{ to {{ transform: rotate(360deg); }} }}
 .run-log-backdrop {{ background: rgba(17,18,20,0.76); backdrop-filter: blur(4px); }}
 .run-log-sheet {{
   padding-top: 14px;
@@ -2354,4 +2492,8 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   .search-box input {{ width: 100%; }}
   .case-brief {{ padding: 32px 16px 56px; }}
   .case-plan {{ padding: 14px; }}
+  .case-task-status {{ display: none; }}
+  .case-task-select {{ grid-template-columns: 24px minmax(0, 1fr); }}
+  .case-progress-feedback,
+  .case-progress-actions {{ margin-left: 12px; }}
 }}

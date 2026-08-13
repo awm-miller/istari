@@ -103,8 +103,7 @@
           <button class="case-reset" id="case-direct" type="button">Manual search</button>
         </div>
       </form>
-      <a class="case-open-result hidden" id="case-open-result" href="#">Open graph</a>
-
+      <div class="builder-feedback hidden" id="builder-feedback" role="status" aria-live="polite"></div>
       <section class="case-plan hidden" id="case-plan">
         <div class="case-name-controls">
           <label class="case-title-field">
@@ -167,13 +166,34 @@
           <button class="case-reset" id="case-reset" type="button">Start again</button>
         </div>
       </section>
-      <section class="case-progress hidden" id="case-progress" role="button" tabindex="0" aria-expanded="false" aria-controls="run-log-sheet" aria-label="Open run log">
-        <div class="case-progress-summary">
-          <span id="case-progress-label">Discovery</span>
-          <span id="case-progress-percent">0%</span>
+      <section class="case-progress hidden" id="case-progress" data-status="queued">
+        <button class="case-progress-open" id="case-progress-open" type="button" aria-expanded="false" aria-controls="run-log-sheet">
+          <span class="case-task-state" aria-hidden="true"></span>
+          <span class="case-progress-body">
+            <span class="case-progress-summary">
+              <strong id="case-progress-label">Waiting for worker</strong>
+              <span id="case-progress-percent">0%</span>
+            </span>
+            <span class="case-progress-phase" id="case-progress-phase">Preparing discovery</span>
+            <progress id="case-progress-bar" max="100" value="0">0%</progress>
+            <span class="case-progress-detail" id="case-progress-detail"></span>
+          </span>
+          <span class="case-progress-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="case-progress-feedback hidden" id="case-progress-feedback"></div>
+        <div class="case-progress-actions">
+          <a class="case-open-result hidden" id="case-open-result" href="#">Open graph</a>
+          <button class="case-cancel hidden" id="case-cancel" type="button">Cancel task</button>
         </div>
-        <progress id="case-progress-bar" max="100" value="0">0%</progress>
-        <div class="case-progress-detail" id="case-progress-detail"></div>
+      </section>
+      <section class="case-tasks" aria-labelledby="case-tasks-title">
+        <div class="case-tasks-header">
+          <h2 id="case-tasks-title">Recent tasks</h2>
+          <span id="case-tasks-count"></span>
+        </div>
+        <div class="case-task-list" id="case-task-list">
+          <div class="case-task-empty">No investigations yet.</div>
+        </div>
       </section>
     </section>
   </div>
