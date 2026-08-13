@@ -244,26 +244,22 @@ async function testBuilder(page) {
   await page.locator("#mode-builder").click();
   await page.waitForSelector("#builder-panel:not(.hidden)");
   await page.locator("#case-query").fill(
-    "Investigate Companies House company 00000006. Use one round and no more than 50 entities. Include people, sanctions, documents, and negative news.",
+    "Investigate everything connected to Companies House company 00000006. Include former appointments.",
   );
   await page.locator("#case-plan-submit").click();
   await waitForBuilder(page, "planned", 180_000);
   assert.ok(await page.locator(".case-input").count(), "planner returned no inputs");
-  await page.locator("#case-recipe").selectOption("registry-light");
-  await page.locator("#case-rounds").fill("1");
+  assert.equal(await page.locator(".case-input-kind").first().inputValue(), "company");
+  await page.locator("#case-expansion").selectOption("1");
   await page.locator("#case-entities").fill("50");
-  await page.locator("#case-people").check();
-  await page.locator("#case-sanctions").check();
-  await page.locator("#case-documents").check();
-  await page.locator("#case-negative-news").check();
+  await page.locator("#case-include-former").check();
+  await page.locator("#case-plan-title").fill("Live cutover E2E company");
+  await page.locator("#case-plan-id").fill("live-cutover-e2e-company");
   await page.locator("#case-run").click();
   await waitForBuilder(page, "completed", 900_000);
 
   const stdout = await page.locator("#builder-status").innerText();
   assert.match(stdout, /complete:/i, "Builder stdout has no completion marker");
-  assert.match(stdout, /Sanctions enrichment is not available/i);
-  assert.match(stdout, /Document enrichment is not available/i);
-  assert.match(stdout, /Negative-news enrichment is not available/i);
   const resultPath = await page.locator("#case-open-result").getAttribute("href");
   assert.ok(resultPath?.startsWith("/generated-graphs/"), `unexpected result path ${resultPath}`);
   await page.locator("#case-open-result").click();
@@ -275,6 +271,9 @@ async function testBuilder(page) {
   assert.ok(data.nodes.some((node) => node.kind === "person"), "People discovery produced no person nodes");
   await page.locator("#graph-switcher-button").click();
   assert.equal(await page.locator(`.graph-switcher-option[data-graph-key="${graphKey}"]`).getAttribute("aria-current"), "page");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator(`.graph-switcher-row:has(.graph-switcher-option[data-graph-key="${graphKey}"]) .graph-delete-button`).click();
+  await page.waitForURL(/\/94-park-ave\/?$/, { timeout: 30_000 });
   log(`Builder completed and opened ${graphKey}: ${counts.nodes} nodes, ${counts.edges} edges`);
 }
 
@@ -386,7 +385,7 @@ page.on("console", (message) => {
 page.on("response", (response) => {
   if (response.status() >= 400) runtimeErrors.push(`${response.status()} ${response.url()}`);
   const target = decodeURIComponent(new URL(response.url()).searchParams.get("target") || "");
-  if (response.request().method() === "POST" && target === "/api/case-jobs") {
+  if (response.request().method() === "POST" && target === "/api/investigations") {
     void response.json().then((body) => {
       const jobId = String(body?.job?.id || "");
       if (jobId) log(`backend job ${jobId}`);
