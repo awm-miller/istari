@@ -364,7 +364,7 @@
     const message = String(error || "").trim();
     if (/HTTP 429/i.test(message)) return "A registry rate limit stopped this run. Retry the task after a short wait.";
     if (/timeout|timed out|abort/i.test(message)) return "A registry request timed out repeatedly. Retry the task; completed work is retained until the retry starts.";
-    if (/HTTP 404/i.test(message)) return "A required starting record is no longer available in its registry. Check the seed and retry.";
+    if (/HTTP 404/i.test(message)) return "A registry record is no longer available. Check the starting seed, then retry; new runs skip missing related records.";
     return message ? `Discovery stopped: ${message}` : "Discovery stopped before completion. Open the log for details, then retry.";
   }
 
@@ -450,6 +450,7 @@
     const job = data.job || {};
     currentCaseJobId = String(job.id || "");
     currentCaseJobStatus = String(job.status || "");
+    caseRunButton.textContent = currentCaseJobStatus === "failed" ? "Retry task" : "Run approved scope";
     setBuilderFeedback();
     caseOpenResultEl.classList.add("hidden");
     if (["planned", "failed"].includes(currentCaseJobStatus)) renderCasePlan(job.draft || job.plan);
@@ -568,6 +569,7 @@
     currentCaseJobStatus = "";
     caseOpenResultEl.classList.add("hidden");
     caseProgressEl?.classList.add("hidden");
+    caseRunButton.textContent = "Run approved scope";
     setBuilderFeedback();
     setBuilderStatus("$ new research contract");
     renderCasePlan({
@@ -736,6 +738,7 @@
     if (!data.draft) throw new Error("The planner did not return an investigation form.");
     currentCaseJobId = "";
     currentCaseJobStatus = "";
+    caseRunButton.textContent = "Run approved scope";
     renderCasePlan(data.draft);
     setBuilderFeedback("Scope ready. Check the seeds and expansion before you run it.", "success");
     setBuilderStatus("contract: ready for review");
@@ -879,6 +882,7 @@
     caseProgressEl?.classList.add("hidden");
     casePlanSubmitButton.disabled = false;
     caseRunButton.disabled = false;
+    caseRunButton.textContent = "Run approved scope";
     setBuilderFeedback();
     setRunLogOpen(false);
     setBuilderStatus("");
