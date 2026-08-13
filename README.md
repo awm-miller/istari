@@ -75,7 +75,8 @@ by the model but are not sent to web search. Pasted Companies House officer
 appointment links use their exact officer ID and bypass fuzzy person matching.
 Manual resolution decisions can merge duplicate identities and promote the
 canonical person to a reversible seed identity across graph rebuilds. Promotion
-moves the person to the top identity lane and makes them the active graph root.
+moves the person to a dedicated root lane above addresses and makes them the
+active graph root.
 Bulk identity consolidation is stored in one atomic graph-scoped write so
 closely spaced decisions cannot replace one another.
 

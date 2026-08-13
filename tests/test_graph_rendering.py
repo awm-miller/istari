@@ -131,6 +131,9 @@ class GraphRenderingTests(unittest.TestCase):
     def test_promoted_people_become_the_active_top_level_root(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 
+        self.assertIn("promoted.lane = 0;", html)
+        self.assertIn("[0, 1, 2, 3, 4].forEach((lane) =>", html)
+        self.assertIn("if (node.promoted_to_seed) return 0;", html)
         self.assertIn("const rootDifference = Number(rootIds.has(right.id)) - Number(rootIds.has(left.id));", html)
         self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
         self.assertIn("setSingleFocus(promotedNode.id);", html)

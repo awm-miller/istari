@@ -1970,6 +1970,7 @@
 
   function expandedHiddenLaneFor(node) {
     if (!node) return 2;
+    if (node.promoted_to_seed) return 0;
     const declared = Number(node.lane || 0);
     if (declared >= 1 && declared <= 4) return declared;
     if (node.kind === "address") return 3;
@@ -2598,7 +2599,7 @@
       node._pillHeight = pillHeight(node);
     });
     let curY = bounds.top + 72;
-    [1, 2, 3, 4].forEach((lane) => {
+    [0, 1, 2, 3, 4].forEach((lane) => {
       const laneNodes = nodes.filter((node) => Number(node.lane || 0) === lane);
       const neighborXByNodeId = new Map(
         laneNodes.map((node) => [node.id, avgNeighborX(node, edgeAdjacency, nodeLookup, fallbackCenter)]),
@@ -2607,7 +2608,7 @@
         ? new Map(laneNodes.map((node) => [node.id, lowConfidenceLaneAnchorX(node, edgeAdjacency, nodeLookup)]))
         : new Map();
       laneNodes.sort((left, right) => {
-        if (lane === 1) {
+        if (lane === 0) {
           const rootDifference = Number(rootIds.has(right.id)) - Number(rootIds.has(left.id));
           if (rootDifference !== 0) return rootDifference;
           const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);
@@ -3518,7 +3519,7 @@
       if (node.kind === "seed" || !nodeMergeStableKeys(node).some((key) => promotedKeys.has(key))) return node;
       const promoted = cloneNodeForMerge(node);
       promoted.kind = "seed_alias";
-      promoted.lane = 1;
+      promoted.lane = 0;
       promoted.promoted_to_seed = true;
       promoted.seed_names = uniqueValues([...(promoted.seed_names || []), promoted.label]);
       promoted.tooltip_lines = uniqueValues([...(promoted.tooltip_lines || []), `Seed: ${promoted.label}`]);
