@@ -81,8 +81,8 @@ closely spaced decisions cannot replace one another.
 After interpretation, direct address inputs without a nearby radius are
 normalized to the address-network route and its three-round default.
 
-Production document enrichment uses OpenRouter only. It checks recent Companies
-House filings and Charity Commission accounts for explicit named relationships;
+Production document enrichment uses OpenRouter only. It checks every registry-listed
+Companies House account filing and Charity Commission account or annual-return document for explicit named relationships;
 these appear as source-backed document evidence rather than registry facts.
 
 ## Validation
