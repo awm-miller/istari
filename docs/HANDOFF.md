@@ -63,6 +63,11 @@ npm run audit
 npx netlify deploy --prod --dir netlify_graph_viewer
 ```
 
+Generated graph pages are rendered by the backend. Before a coordinated
+release, copy the rebuilt `netlify_graph_viewer/generated-viewer-template.html`
+to `istari-juicer-sites/public/generated-viewer-template.html`, commit it in the
+backend repository, and deploy the backend before Netlify.
+
 Backend:
 
 ```powershell
