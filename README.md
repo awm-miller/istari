@@ -32,7 +32,10 @@ added nodes immediately. The same centre-node action can hide that latest
 round. A final evidence-based person-resolution pass runs before publication.
 
 Discovery pivots through organisations, addresses, and optionally people.
-Every researched relationship keeps its source URL and exact node referents.
+Every researched relationship keeps its source URL, exact node referents, provider,
+dates, confidence, and a structured evidence record. The viewer also presents
+legacy registry edges that predate structured evidence by using their stored
+source fields.
 
 ## Quick start
 

@@ -210,7 +210,11 @@ const server = createServer(async (request, response) => {
       target: centre.id,
       kind: "role",
       phrase: "is a director of",
-      tooltip: "LATEST ROUND PERSON is a director of the enrichment centre",
+      tooltip: "Is a director of",
+      appointed_on: "2024-01-02",
+      source_provider: "Companies House",
+      source_url: "/company/00000001/appointments/test-appointment",
+      confidence: "high",
     });
     graph.enrichment = {
       source_graph_id: "generated-check",
@@ -480,7 +484,26 @@ try {
   assert.equal(await page.locator('.sidebar-tab[data-tab="enrich"]').count(), 0, "obsolete Enrich tool is still visible");
   const enrichmentTargets = page.locator('.graph-node-label[data-node-id^="org:"]');
   const enrichmentCentre = enrichmentTargets.first();
+  const enrichmentCentreLabel = String(await enrichmentCentre.textContent()).trim();
   assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
+  const latestPerson = page.locator('.graph-node-label[data-node-id="person:latest-round"]');
+  const latestPersonBox = await latestPerson.boundingBox();
+  const enrichmentCentreBox = await enrichmentCentre.boundingBox();
+  assert.ok(latestPersonBox && enrichmentCentreBox, "latest-round evidence endpoints have no hit area");
+  await page.mouse.click(
+    ((latestPersonBox.x + (latestPersonBox.width / 2)) + (enrichmentCentreBox.x + (enrichmentCentreBox.width / 2))) / 2,
+    ((latestPersonBox.y + (latestPersonBox.height / 2)) + (enrichmentCentreBox.y + (enrichmentCentreBox.height / 2))) / 2,
+    { button: "right" },
+  );
+  await page.getByRole("button", { name: "View relationship evidence" }).click();
+  const latestEvidenceText = await page.locator("#details-modal-body").innerText();
+  assert.ok(latestEvidenceText.includes(`LATEST ROUND PERSON is a director of ${enrichmentCentreLabel}.`));
+  assert.match(latestEvidenceText, /Appointment date: 2024-01-02/);
+  assert.equal(
+    await page.getByRole("link", { name: "Open exact source" }).getAttribute("href"),
+    "https://find-and-update.company-information.service.gov.uk/company/00000001/appointments/test-appointment",
+  );
+  await page.locator("#details-modal-close").click();
   await chooseNodeAction(enrichmentCentre, "Hide expanded round");
   assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
   assert.match(await page.locator("#stats").innerText(), /1 latest-round node hidden/);

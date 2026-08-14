@@ -2891,25 +2891,16 @@
         ? edge.tooltip_lines.filter((value) => String(value || "").trim())
         : [];
       if (explicitTooltipLines.length) return explicitTooltipLines.slice();
-      const explicitTooltip = String(edge?.tooltip || "").trim();
-      if (explicitTooltip) return [explicitTooltip];
-      const displayPersonLabels = Array.isArray(edge?.display_person_labels)
-        ? edge.display_person_labels.map((value) => String(value || "").trim()).filter(Boolean)
-        : [];
-      if (edge?.kind === "role" && displayPersonLabels.length) {
+      if (edge?.kind === "role") {
         const sourceNode = displayNodeForEdgeId(edge?.source, edge?._sourceNode) || null;
         const targetNode = displayNodeForEdgeId(edge?.target, edge?._targetNode) || null;
-        const sourceKind = String(sourceNode?.kind || "");
-        const targetKind = String(targetNode?.kind || "");
-        const orgLabel = sourceKind === "organisation"
-          ? String(sourceNode?.label || edge?.source || "Organisation")
-          : String(targetNode?.label || edge?.target || "Organisation");
+        const sourceLabel = String(sourceNode?.label || edge?.source || "Person");
+        const targetLabel = String(targetNode?.label || edge?.target || "Organisation");
         const phrase = String(edge?.phrase || "").trim() || "is linked to";
-        const personLabel = displayPersonLabels.length === 1
-          ? displayPersonLabels[0]
-          : summarizeLabelList(displayPersonLabels);
-        return [`${escapeHtml(personLabel)} ${escapeHtml(phrase)} ${escapeHtml(orgLabel)}.`];
+        return [`${escapeHtml(sourceLabel)} ${escapeHtml(phrase)} ${escapeHtml(targetLabel)}.`];
       }
+      const explicitTooltip = String(edge?.tooltip || "").trim();
+      if (explicitTooltip) return [explicitTooltip];
       return ["link"];
     }
     const sourceLabel = displayNodeLabelForEdgeId(edge?.source, edge?._sourceNode, "Source");
@@ -3128,6 +3119,19 @@
     }
     if (!pageNumber || documentUrl.includes("#") || !/\.pdf($|[?#])/i.test(documentUrl)) return documentUrl;
     return `${documentUrl}#page=${pageNumber}`;
+  }
+
+  function publicEdgeSourceUrl(edge) {
+    const value = String(edge?.source_url || "").trim();
+    if (!value || /^https?:\/\//i.test(value)) return value;
+    const provider = String(edge?.source_provider || edge?.provider || "").toLowerCase();
+    if (provider.includes("companies house")) {
+      return `https://find-and-update.company-information.service.gov.uk/${value.replace(/^\/+/, "")}`;
+    }
+    if (provider.includes("charity commission")) {
+      return `https://register-of-charities.charitycommission.gov.uk/${value.replace(/^\/+/, "")}`;
+    }
+    return value;
   }
 
   function evidenceDisplayTitle(evidence, fallback = "Evidence") {
@@ -4267,6 +4271,14 @@
       (Array.isArray(pathEdge?.evidence_items) ? pathEdge.evidence_items : []).forEach((item) => pushEvidence(item, pathEdge));
       if (pathEdge?.evidence) pushEvidence(pathEdge.evidence, pathEdge);
     });
+    if (!evidenceItems.length && publicEdgeSourceUrl(edge)) {
+      pushEvidence({
+        title: `${String(edge?.source_provider || edge?.provider || "Registry")} record`,
+        document_url: publicEdgeSourceUrl(edge),
+        date: edge?.appointed_on || edge?.start_date || edge?.date || "",
+        notes: plainText(edge?.tooltip || edge?.phrase || "Registry relationship record"),
+      }, edge);
+    }
     return evidenceItems;
   }
 
@@ -4291,6 +4303,8 @@
       ["Filing date", valueFor("filing_date")],
       ["Start date", valueFor("start_date")],
       ["End date", valueFor("end_date")],
+      ["Appointment date", valueFor("appointed_on")],
+      ["Resignation date", valueFor("resigned_on")],
       ["Statement date", valueFor("statement_date")],
       ["Record date", valueFor("date")],
     ];
