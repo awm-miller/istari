@@ -476,6 +476,7 @@ try {
 
   await page.goto(`http://127.0.0.1:${port}/generated-graphs/generated-check/`, { waitUntil: "networkidle" });
   await page.waitForSelector(".graph-node-label");
+  assert.equal(await page.locator('.sidebar-tab[data-tab="enrich"]').count(), 0, "obsolete Enrich tool is still visible");
   const enrichmentTargets = page.locator('.graph-node-label[data-node-id^="org:"]');
   const enrichmentCentre = enrichmentTargets.first();
   assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
@@ -486,27 +487,32 @@ try {
   assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
 
   const directEnrichmentTarget = enrichmentTargets.nth(1);
-  await chooseNodeAction(directEnrichmentTarget, "Expand one round from here");
-  await page.waitForSelector("#enrichment-open:not(.hidden)");
+  const directEnrichmentNodeId = await directEnrichmentTarget.getAttribute("data-node-id");
+  const initialBox = await directEnrichmentTarget.boundingBox();
+  assert.ok(initialBox, "direct expansion target has no hit area");
+  await page.mouse.move(initialBox.x + (initialBox.width / 2), initialBox.y + (initialBox.height / 2));
+  await page.mouse.down();
+  await page.mouse.move(initialBox.x + (initialBox.width / 2) + 80, initialBox.y + (initialBox.height / 2) + 45, { steps: 5 });
+  await page.mouse.up();
+  const movedBox = await directEnrichmentTarget.boundingBox();
+  assert.ok(movedBox && Math.abs(movedBox.x - initialBox.x) > 20, "test node did not move before expansion");
+  const navigation = page.waitForNavigation({ waitUntil: "networkidle" });
+  await chooseNodeAction(directEnrichmentTarget, "Expand this company");
+  await navigation;
   assert.equal(enrichmentRequest?.centralNodeIds.length, 1);
   assert.deepEqual(enrichmentRequest?.scopeNodeIds, []);
-  assert.equal(enrichmentRequest?.expansionCycles, 1);
+  assert.equal(enrichmentRequest?.expansionCycles, 0);
   assert.equal(enrichmentRequest?.expandPeople, true);
   assert.equal(enrichmentRequest?.enrichMissingDocuments, false);
-
-  const customEnrichmentTarget = enrichmentTargets.nth(2);
-  await chooseNodeAction(customEnrichmentTarget, "Configure custom enrichment");
-  assert.equal(await page.locator("#enrichment-centre-count").innerText(), "1 selected");
-  assert.match(await page.locator("#enrichment-scope").innerText(), /currently visible nodes/);
-  await page.locator("#enrichment-run").click();
-  await page.waitForSelector("#enrichment-open:not(.hidden)");
-  assert.equal(enrichmentRequest?.centralNodeIds.length, 1);
-  assert.ok(enrichmentRequest?.scopeNodeIds.length > 0);
-  assert.equal(enrichmentRequest?.enrichMissingDocuments, true);
-  assert.match(await page.locator("#enrichment-status").innerText(), /Version ready/);
+  const refreshedTarget = page.locator(`.graph-node-label[data-node-id="${directEnrichmentNodeId}"]`).first();
+  const refreshedBox = await refreshedTarget.boundingBox();
+  assert.ok(refreshedBox, "expanded graph did not render the centre node");
+  assert.ok(Math.abs(refreshedBox.x - movedBox.x) < 3, "node x-position changed after automatic refresh");
+  assert.ok(Math.abs(refreshedBox.y - movedBox.y) < 3, "node y-position changed after automatic refresh");
+  assert.equal(await page.getByRole("button", { name: "Configure custom enrichment" }).count(), 0);
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, evidence, resolution, enrichment, questions, Builder paths, task feedback, task history, and run logs.");
+  console.log("Browser audit passed: rendering, evidence, resolution, direct node expansion, automatic position-preserving refresh, questions, Builder paths, task feedback, task history, and run logs.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

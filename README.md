@@ -23,11 +23,12 @@ The progress strip opens the live run log. Generated graphs can be
 deleted from the graph menu after confirmation; deletion also removes their
 stored graph job state.
 
-Generated graph node menus can run one complete expansion cycle directly from
-an address, person, company, or charity. The next immutable version records and
-hides nodes added by that cycle until the same centre-node action reveals them.
-The **Enrich** tool remains available for multiple centres, custom cycles, and
-missing-PDF checks bounded by the current visible graph.
+Generated graph node menus can add the direct relationships of one address,
+person, company, or charity. For example, expanding a company adds its officers
+without continuing through their addresses or other organisations. The viewer
+opens the new immutable version automatically, preserves the current node
+positions and viewport, and hides newly added nodes until the same centre-node
+action reveals them.
 
 Discovery pivots through organisations, addresses, and optionally people.
 Every researched relationship keeps its source URL and exact node referents.

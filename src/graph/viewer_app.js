@@ -114,21 +114,9 @@
   const questionSubmitEl = document.getElementById("question-submit");
   const questionClearEl = document.getElementById("question-clear");
   const questionResultEl = document.getElementById("question-result");
-  const enrichmentPanelEl = document.getElementById("enrichment-panel");
-  const enrichmentUnavailableEl = document.getElementById("enrichment-unavailable");
-  const enrichmentControlsEl = document.getElementById("enrichment-controls");
-  const enrichmentCentreCountEl = document.getElementById("enrichment-centre-count");
-  const enrichmentCentresEl = document.getElementById("enrichment-centres");
-  const enrichmentVisibleScopeInput = document.getElementById("enrichment-visible-scope");
-  const enrichmentScopeEl = document.getElementById("enrichment-scope");
-  const enrichmentExpandInput = document.getElementById("enrichment-expand");
-  const enrichmentCyclesInput = document.getElementById("enrichment-cycles");
-  const enrichmentPeopleInput = document.getElementById("enrichment-people");
-  const enrichmentDocumentsInput = document.getElementById("enrichment-documents");
-  const enrichmentCeilingInput = document.getElementById("enrichment-ceiling");
-  const enrichmentRunButton = document.getElementById("enrichment-run");
-  const enrichmentStatusEl = document.getElementById("enrichment-status");
-  const enrichmentOpenEl = document.getElementById("enrichment-open");
+  const graphExpansionStatusEl = document.getElementById("graph-expansion-status");
+  const graphExpansionLabelEl = document.getElementById("graph-expansion-label");
+  const graphExpansionProgressEl = document.getElementById("graph-expansion-progress");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
@@ -207,6 +195,7 @@
   let casePlannerRequest = 0;
   let currentEnrichmentJobId = "";
   let currentEnrichmentStatus = "";
+  let enrichmentNavigationStarted = false;
   const rawMainNodeIds = new Set(rawMainNodes.map((node) => node.id));
 
   const viewerState = {
@@ -223,7 +212,6 @@
     maxFocalDistanceMetres: null,
     showLatestEnrichmentRound: false,
     questionNodeIds: [],
-    enrichmentNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
@@ -308,7 +296,7 @@
     builderStatusEl.classList.toggle("error", job.status === "failed");
     builderStatusEl.scrollTop = builderStatusEl.scrollHeight;
     renderBuilderProgress(job);
-    if (job.id === currentEnrichmentJobId) renderEnrichmentTask(job);
+    if (job.id === currentEnrichmentJobId) renderNodeExpansionTask(job);
     upsertRecentTask(job);
   }
 
@@ -414,23 +402,55 @@
     return message ? `Discovery stopped: ${message}` : "Discovery stopped before completion. Open the log for details, then retry.";
   }
 
-  function renderEnrichmentTask(job = {}) {
-    if (!enrichmentStatusEl) return;
+  function graphRefreshStateKey() {
+    return currentGeneratedGraphId ? `istari:graph-refresh:${currentGeneratedGraphId}` : "";
+  }
+
+  function saveGraphRefreshState() {
+    const key = graphRefreshStateKey();
+    const view = renderer?.getViewState?.();
+    if (!key || !view) return;
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), view }));
+    } catch (_error) {
+      // Navigation can continue when browser storage is unavailable.
+    }
+  }
+
+  function restoreGraphRefreshState() {
+    const key = graphRefreshStateKey();
+    if (!key) return;
+    let stored = null;
+    try {
+      stored = JSON.parse(sessionStorage.getItem(key) || "null");
+      sessionStorage.removeItem(key);
+    } catch (_error) {
+      return;
+    }
+    if (!stored?.view || (Date.now() - Number(stored.savedAt || 0)) > 300000) return;
+    renderer?.restoreViewState?.(stored.view);
+  }
+
+  function renderNodeExpansionTask(job = {}) {
+    if (!graphExpansionStatusEl) return;
     const status = String(job.status || "");
     currentEnrichmentStatus = status;
     const progress = job.progress || {};
     const percent = status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
-    enrichmentStatusEl.dataset.state = status === "failed" ? "error" : status === "completed" ? "success" : "working";
-    enrichmentStatusEl.textContent = status === "failed"
+    graphExpansionStatusEl.classList.remove("hidden");
+    graphExpansionStatusEl.dataset.state = status === "failed" ? "error" : "working";
+    graphExpansionProgressEl.value = percent;
+    graphExpansionProgressEl.textContent = `${percent}%`;
+    graphExpansionLabelEl.textContent = status === "failed"
       ? friendlyTaskError(job.error)
       : status === "completed"
-        ? `Version ready: ${Number(progress.nodes) || 0} nodes and ${Number(progress.edges) || 0} relationships.`
+        ? "Expansion complete. Updating graph."
         : `${taskStatusLabel(status)}: ${percent}% / ${Number(progress.processed) || 0} checks complete.`;
-    enrichmentRunButton.disabled = ["creating", "planned", "queued", "running"].includes(status);
     const path = String(job.result?.artifact?.path || "");
-    if (status === "completed" && path) {
-      enrichmentOpenEl.href = path;
-      enrichmentOpenEl.classList.remove("hidden");
+    if (status === "completed" && path && !enrichmentNavigationStarted) {
+      enrichmentNavigationStarted = true;
+      saveGraphRefreshState();
+      window.setTimeout(() => window.location.assign(new URL(path, window.location.origin).toString()), 150);
     }
   }
 
@@ -466,52 +486,19 @@
         nodeId: node.id,
       };
     }
-    return { label: "Expand one round from here", type: "enrichment_round_run", nodeId: node.id };
+    return { label: `Expand this ${nodeTypeLabel(node)}`, type: "enrichment_round_run", nodeId: node.id };
   }
 
-  function renderEnrichmentPanel() {
-    if (!enrichmentPanelEl) return;
-    const available = Boolean(currentGeneratedGraphId);
-    enrichmentUnavailableEl.classList.toggle("hidden", available);
-    enrichmentControlsEl.classList.toggle("hidden", !available);
-    if (!available) return;
-    viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id, index, ids) => (
-      ids.indexOf(id) === index && enrichmentNodeEligible(nodeById.get(id))
-    ));
-    const selected = viewerState.enrichmentNodeIds.map((id) => nodeById.get(id)).filter(Boolean);
-    enrichmentCentreCountEl.textContent = `${selected.length} selected`;
-    enrichmentCentresEl.innerHTML = selected.length
-      ? selected.map((node) => `
-          <div class="enrichment-centre">
-            <span title="${escapeHtml(node.label || node.id)}">${escapeHtml(node.label || node.id)}</span>
-            <button type="button" data-enrichment-remove="${escapeHtml(node.id)}" aria-label="Remove ${escapeHtml(node.label || node.id)}">&times;</button>
-          </div>
-        `).join("")
-      : "Select nodes from their context menus.";
-    const scopedIds = visibleSourceNodeIds();
-    enrichmentScopeEl.textContent = enrichmentVisibleScopeInput.checked
-      ? `${scopedIds.length.toLocaleString()} currently visible nodes will define the PDF scope.`
-      : `${rawMainNodeIds.size.toLocaleString()} source nodes are in the whole graph.`;
-    const expand = enrichmentExpandInput.checked;
-    enrichmentCyclesInput.disabled = !expand;
-    enrichmentPeopleInput.disabled = !expand;
-    const actionable = (expand && selected.length > 0) || enrichmentDocumentsInput.checked;
-    if (!["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) enrichmentRunButton.disabled = !actionable;
-  }
-
-  function visibleSourceNodeIds() {
-    return [...new Set(visibleNodes.map((node) => node.id).filter((id) => rawMainNodeIds.has(id)))];
-  }
-
-  async function startGraphEnrichment(request, statusMessage = "Creating enrichment task.") {
+  async function startGraphEnrichment(request, statusMessage = "Creating direct expansion task.") {
     if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
-      throw new Error("An enrichment task is already running.");
+      throw new Error("A node expansion is already running.");
     }
     currentEnrichmentStatus = "creating";
-    enrichmentRunButton.disabled = true;
-    enrichmentOpenEl.classList.add("hidden");
-    enrichmentStatusEl.dataset.state = "working";
-    enrichmentStatusEl.textContent = statusMessage;
+    enrichmentNavigationStarted = false;
+    graphExpansionStatusEl.classList.remove("hidden");
+    graphExpansionStatusEl.dataset.state = "working";
+    graphExpansionProgressEl.value = 0;
+    graphExpansionLabelEl.textContent = statusMessage;
     const created = await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(currentGeneratedGraphId)}/enrich`, request);
     const job = created.job || {};
     currentEnrichmentJobId = String(job.id || "");
@@ -525,25 +512,6 @@
     await watchBuilderJob(currentEnrichmentJobId);
   }
 
-  async function runGraphEnrichment() {
-    if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be enriched.");
-    const expandRelationships = enrichmentExpandInput.checked;
-    const centralNodeIds = viewerState.enrichmentNodeIds.filter((id) => rawMainNodeIds.has(id));
-    if (expandRelationships && !centralNodeIds.length) throw new Error("Select at least one central node from its context menu.");
-    if (!expandRelationships && !enrichmentDocumentsInput.checked) throw new Error("Select relationship expansion or PDF enrichment.");
-    await startGraphEnrichment({
-      sourceVersion: currentGeneratedGraphVersion || undefined,
-      centralNodeIds,
-      scopeNodeIds: enrichmentVisibleScopeInput.checked ? visibleSourceNodeIds() : [],
-      expandRelationships,
-      expansionCycles: Number(enrichmentCyclesInput.value || 0),
-      expandPeople: enrichmentPeopleInput.checked,
-      enrichMissingDocuments: enrichmentDocumentsInput.checked,
-      entityCeiling: Number(enrichmentCeilingInput.value || 5000),
-      includeFormer: true,
-    });
-  }
-
   async function runOneEnrichmentRound(nodeId) {
     if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be expanded.");
     const node = rawMainNodes.find((candidate) => String(candidate.id) === String(nodeId));
@@ -551,20 +519,17 @@
     if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
       throw new Error("An enrichment task is already running.");
     }
-    setSidebarTab("enrich");
-    toggleSidebar(true);
-    renderEnrichmentPanel();
     await startGraphEnrichment({
       sourceVersion: currentGeneratedGraphVersion || undefined,
       centralNodeIds: [node.id],
       scopeNodeIds: [],
       expandRelationships: true,
-      expansionCycles: 1,
+      expansionCycles: 0,
       expandPeople: true,
       enrichMissingDocuments: false,
       entityCeiling: 5000,
       includeFormer: true,
-    }, `Expanding one round from ${node.label || node.id}.`);
+    }, `Expanding direct relationships for ${node.label || node.id}.`);
   }
 
   function upsertRecentTask(job) {
@@ -4145,18 +4110,10 @@
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const questionSelected = viewerState.questionNodeIds.includes(node.id);
-    const enrichmentSelected = viewerState.enrichmentNodeIds.includes(node.id);
     const enrichmentRoundAction = enrichmentRoundActionForNode(node);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
       enrichmentRoundAction,
-      enrichmentNodeEligible(node)
-        ? {
-            label: enrichmentSelected ? "Remove from custom enrichment" : "Configure custom enrichment",
-            type: enrichmentSelected ? "enrichment_remove" : "enrichment_add",
-            nodeId: node.id,
-          }
-        : null,
       questionSelected
         ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
         : viewerState.questionNodeIds.length < 8
@@ -4678,7 +4635,6 @@
     renderScorePanel();
     if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
     renderQuestionSelection();
-    renderEnrichmentPanel();
 
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
       openMapView().catch(() => {});
@@ -4852,29 +4808,11 @@
       questionResultEl.innerHTML = "";
       renderQuestionSelection();
     });
-    enrichmentPanelEl?.addEventListener("click", (event) => {
-      const removeButton = event.target.closest("[data-enrichment-remove]");
-      if (!removeButton) return;
-      viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id) => id !== removeButton.dataset.enrichmentRemove);
-      renderEnrichmentPanel();
-    });
-    [enrichmentVisibleScopeInput, enrichmentExpandInput, enrichmentDocumentsInput].forEach((input) => {
-      input?.addEventListener("change", renderEnrichmentPanel);
-    });
-    enrichmentRunButton?.addEventListener("click", () => {
-      runGraphEnrichment().catch((error) => {
-        currentEnrichmentStatus = "failed";
-        enrichmentRunButton.disabled = false;
-        enrichmentStatusEl.dataset.state = "error";
-        enrichmentStatusEl.textContent = error.message || "Enrichment could not start.";
-      });
-    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
         setSidebarTab(tabName);
         if (tabName === "resolve") renderResolutionPanel();
-        if (tabName === "enrich") renderEnrichmentPanel();
         if (tabName === "map") {
           openMapView().catch(() => {});
         }
@@ -4914,18 +4852,11 @@
       } else if (action.type === "enrichment_round_run") {
         runOneEnrichmentRound(action.nodeId).catch((error) => {
           currentEnrichmentStatus = "failed";
-          enrichmentRunButton.disabled = false;
-          enrichmentStatusEl.dataset.state = "error";
-          enrichmentStatusEl.textContent = error.message || "The expansion could not start.";
+          graphExpansionStatusEl.classList.remove("hidden");
+          graphExpansionStatusEl.dataset.state = "error";
+          graphExpansionProgressEl.value = 0;
+          graphExpansionLabelEl.textContent = error.message || "The expansion could not start.";
         });
-      } else if (action.type === "enrichment_add") {
-        viewerState.enrichmentNodeIds = [...viewerState.enrichmentNodeIds, action.nodeId];
-        setSidebarTab("enrich");
-        toggleSidebar(true);
-        renderEnrichmentPanel();
-      } else if (action.type === "enrichment_remove") {
-        viewerState.enrichmentNodeIds = viewerState.enrichmentNodeIds.filter((id) => id !== action.nodeId);
-        renderEnrichmentPanel();
       } else if (action.type === "low_confidence_expand" || action.type === "low_confidence_collapse") {
         viewerState.searchQuery = "";
         searchInput.value = "";
@@ -5104,6 +5035,7 @@
     await renderer.init();
     bindUiEvents();
     await applyViewerState();
+    restoreGraphRefreshState();
   }
 
   boot().catch((error) => {

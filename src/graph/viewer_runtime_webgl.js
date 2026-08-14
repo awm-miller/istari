@@ -486,6 +486,39 @@
       }
     }
 
+    function getViewState() {
+      return {
+        transform: { x: transform.x, y: transform.y, k: transform.k },
+        positions: Object.fromEntries(sceneNodes.map((node) => [
+          nodeSceneKey(node),
+          { x: Number(node.x) || 0, y: Number(node.y) || 0 },
+        ])),
+      };
+    }
+
+    function restoreViewState(state) {
+      const positions = state?.positions && typeof state.positions === "object" ? state.positions : {};
+      sceneNodes.forEach((node) => {
+        const position = positions[nodeSceneKey(node)];
+        if (!Number.isFinite(Number(position?.x)) || !Number.isFinite(Number(position?.y))) return;
+        node.x = Number(position.x);
+        node.y = Number(position.y);
+      });
+      const savedTransform = state?.transform;
+      if (
+        Number.isFinite(Number(savedTransform?.x))
+        && Number.isFinite(Number(savedTransform?.y))
+        && Number.isFinite(Number(savedTransform?.k))
+      ) {
+        const nextTransform = d3.zoomIdentity
+          .translate(Number(savedTransform.x), Number(savedTransform.y))
+          .scale(clamp(Number(savedTransform.k), 0.05, 6));
+        if (zoomBehavior) d3.select(host).call(zoomBehavior.transform, nextTransform);
+        else syncWorldTransform(nextTransform);
+      }
+      drawScene();
+    }
+
     function pickHit(clientX, clientY) {
       const rect = host.getBoundingClientRect();
       const worldX = transform.invertX(clientX - rect.left);
@@ -666,6 +699,8 @@
       init,
       destroy,
       fitToNodes,
+      getViewState,
+      restoreViewState,
       setGraph,
       drawScene,
     };
