@@ -501,7 +501,7 @@ try {
   assert.match(latestEvidenceText, /Appointment date: 2024-01-02/);
   assert.equal(
     await page.getByRole("link", { name: "Open exact source" }).getAttribute("href"),
-    "https://find-and-update.company-information.service.gov.uk/company/00000001/appointments/test-appointment",
+    "https://find-and-update.company-information.service.gov.uk/company/00000001/officers",
   );
   await page.locator("#details-modal-close").click();
   await chooseNodeAction(enrichmentCentre, "Hide expanded round");

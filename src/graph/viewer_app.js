@@ -3123,7 +3123,12 @@
 
   function publicEdgeSourceUrl(edge) {
     const value = String(edge?.source_url || "").trim();
-    if (!value || /^https?:\/\//i.test(value)) return value;
+    if (!value) return "";
+    const companyAppointment = value.match(/(?:^https?:\/\/find-and-update\.company-information\.service\.gov\.uk)?\/?company\/([^/?#]+)\/appointments\/[^/?#]+/i);
+    if (companyAppointment) {
+      return `https://find-and-update.company-information.service.gov.uk/company/${encodeURIComponent(companyAppointment[1])}/officers`;
+    }
+    if (/^https?:\/\//i.test(value)) return value;
     const provider = String(edge?.source_provider || edge?.provider || "").toLowerCase();
     if (provider.includes("companies house")) {
       return `https://find-and-update.company-information.service.gov.uk/${value.replace(/^\/+/, "")}`;
