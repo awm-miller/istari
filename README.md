@@ -23,11 +23,11 @@ The progress strip opens the live run log. Generated graphs can be
 deleted from the graph menu after confirmation; deletion also removes their
 stored graph job state.
 
-Generated graphs also have an **Enrich** tool. Node context menus designate
-central expansion points. The current visible graph can bound the enrichment
-scope, and missing-PDF enrichment checks only organisations without existing
-document-source evidence. Completion creates a new immutable version under the
-same graph URL.
+Generated graph node menus can run one complete expansion cycle directly from
+an address, person, company, or charity. The next immutable version records and
+hides nodes added by that cycle until the same centre-node action reveals them.
+The **Enrich** tool remains available for multiple centres, custom cycles, and
+missing-PDF checks bounded by the current visible graph.
 
 Discovery pivots through organisations, addresses, and optionally people.
 Every researched relationship keeps its source URL and exact node referents.

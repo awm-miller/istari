@@ -199,9 +199,27 @@ const server = createServer(async (request, response) => {
       readFile(path.join(root, "generated-viewer-template.html"), "utf8"),
       readFile(path.join(root, "94-park-ave", "graph-data.json"), "utf8"),
     ]);
+    const graph = JSON.parse(graphJson);
+    const centre = graph.nodes.find((node) => node.kind === "organisation");
+    const addedNode = { id: "person:latest-round", label: "LATEST ROUND PERSON", kind: "person", lane: 4 };
+    graph.nodes.push(addedNode);
+    graph.edges.push({
+      id: "edge:latest-round",
+      source: addedNode.id,
+      target: centre.id,
+      kind: "role",
+      phrase: "is a director of",
+      tooltip: "LATEST ROUND PERSON is a director of the enrichment centre",
+    });
+    graph.enrichment = {
+      source_graph_id: "generated-check",
+      source_version: 1,
+      central_node_ids: [centre.id],
+      added_node_ids: [addedNode.id],
+    };
     const html = template.replace(
       /(<script id="graph-data" type="application\/json">)[\s\S]*?(<\/script>)/,
-      `$1${graphJson.replaceAll("<", "\\u003c")}$2`,
+      `$1${JSON.stringify(graph).replaceAll("<", "\\u003c")}$2`,
     );
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(html);
@@ -458,8 +476,26 @@ try {
 
   await page.goto(`http://127.0.0.1:${port}/generated-graphs/generated-check/`, { waitUntil: "networkidle" });
   await page.waitForSelector(".graph-node-label");
-  const enrichmentTarget = page.locator('.graph-node-label[data-node-id^="org:"]').first();
-  await chooseNodeAction(enrichmentTarget, "Set as enrichment centre");
+  const enrichmentTargets = page.locator('.graph-node-label[data-node-id^="org:"]');
+  const enrichmentCentre = enrichmentTargets.first();
+  assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
+  assert.match(await page.locator("#stats").innerText(), /1 latest-round node hidden/);
+  await chooseNodeAction(enrichmentCentre, "Show expanded round (1)");
+  assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
+  await chooseNodeAction(enrichmentCentre, "Hide expanded round");
+  assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
+
+  const directEnrichmentTarget = enrichmentTargets.nth(1);
+  await chooseNodeAction(directEnrichmentTarget, "Expand one round from here");
+  await page.waitForSelector("#enrichment-open:not(.hidden)");
+  assert.equal(enrichmentRequest?.centralNodeIds.length, 1);
+  assert.deepEqual(enrichmentRequest?.scopeNodeIds, []);
+  assert.equal(enrichmentRequest?.expansionCycles, 1);
+  assert.equal(enrichmentRequest?.expandPeople, true);
+  assert.equal(enrichmentRequest?.enrichMissingDocuments, false);
+
+  const customEnrichmentTarget = enrichmentTargets.nth(2);
+  await chooseNodeAction(customEnrichmentTarget, "Configure custom enrichment");
   assert.equal(await page.locator("#enrichment-centre-count").innerText(), "1 selected");
   assert.match(await page.locator("#enrichment-scope").innerText(), /currently visible nodes/);
   await page.locator("#enrichment-run").click();

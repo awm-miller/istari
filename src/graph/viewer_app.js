@@ -5,6 +5,15 @@
   const rawMainNodes = Array.isArray(graphData.nodes) ? graphData.nodes : [];
   const rawMainEdges = (Array.isArray(graphData.edges) ? graphData.edges : [])
     .filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed");
+  const latestEnrichment = graphData.enrichment && typeof graphData.enrichment === "object"
+    ? graphData.enrichment
+    : {};
+  const latestEnrichmentCentreIds = new Set(
+    (Array.isArray(latestEnrichment.central_node_ids) ? latestEnrichment.central_node_ids : []).map(String),
+  );
+  const latestEnrichmentAddedNodeIds = new Set(
+    (Array.isArray(latestEnrichment.added_node_ids) ? latestEnrichment.added_node_ids : []).map(String),
+  );
   const LOW_CONFIDENCE_DATA_URL = "graph-data-open-letters.json";
   const LOW_CONFIDENCE_NODES_DATA_URL = "graph-data-low-confidence-nodes.json";
   const GRAPH_OPTIONS = [
@@ -212,6 +221,7 @@
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
     maxFocalDistanceMetres: null,
+    showLatestEnrichmentRound: false,
     questionNodeIds: [],
     enrichmentNodeIds: [],
     pendingMergeNodeId: "",
@@ -416,7 +426,7 @@
       : status === "completed"
         ? `Version ready: ${Number(progress.nodes) || 0} nodes and ${Number(progress.edges) || 0} relationships.`
         : `${taskStatusLabel(status)}: ${percent}% / ${Number(progress.processed) || 0} checks complete.`;
-    enrichmentRunButton.disabled = ["planned", "queued", "running"].includes(status);
+    enrichmentRunButton.disabled = ["creating", "planned", "queued", "running"].includes(status);
     const path = String(job.result?.artifact?.path || "");
     if (status === "completed" && path) {
       enrichmentOpenEl.href = path;
@@ -429,6 +439,34 @@
     if (["address", "person", "seed", "seed_alias"].includes(node.kind)) return true;
     const registryType = String(node.registry_type || "").toLowerCase();
     return node.kind === "organisation" && ["company", "charity"].includes(registryType);
+  }
+
+  function latestEnrichmentAddedCount() {
+    return baseNodes.filter((node) => latestEnrichmentAddedNodeIds.has(String(node.id))).length;
+  }
+
+  function hiddenLatestEnrichmentNodeIds() {
+    if (viewerState.showLatestEnrichmentRound) return new Set();
+    return new Set(
+      baseNodes
+        .filter((node) => latestEnrichmentAddedNodeIds.has(String(node.id)))
+        .map((node) => node.id),
+    );
+  }
+
+  function enrichmentRoundActionForNode(node) {
+    if (!enrichmentNodeEligible(node)) return null;
+    const addedCount = latestEnrichmentAddedCount();
+    if (addedCount && latestEnrichmentCentreIds.has(String(node.id))) {
+      return {
+        label: viewerState.showLatestEnrichmentRound
+          ? "Hide expanded round"
+          : `Show expanded round (${addedCount.toLocaleString()})`,
+        type: viewerState.showLatestEnrichmentRound ? "enrichment_round_hide" : "enrichment_round_show",
+        nodeId: node.id,
+      };
+    }
+    return { label: "Expand one round from here", type: "enrichment_round_run", nodeId: node.id };
   }
 
   function renderEnrichmentPanel() {
@@ -458,34 +496,23 @@
     enrichmentCyclesInput.disabled = !expand;
     enrichmentPeopleInput.disabled = !expand;
     const actionable = (expand && selected.length > 0) || enrichmentDocumentsInput.checked;
-    if (!["planned", "queued", "running"].includes(currentEnrichmentStatus)) enrichmentRunButton.disabled = !actionable;
+    if (!["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) enrichmentRunButton.disabled = !actionable;
   }
 
   function visibleSourceNodeIds() {
     return [...new Set(visibleNodes.map((node) => node.id).filter((id) => rawMainNodeIds.has(id)))];
   }
 
-  async function runGraphEnrichment() {
-    if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be enriched.");
-    const expandRelationships = enrichmentExpandInput.checked;
-    const centralNodeIds = viewerState.enrichmentNodeIds.filter((id) => rawMainNodeIds.has(id));
-    if (expandRelationships && !centralNodeIds.length) throw new Error("Select at least one central node from its context menu.");
-    if (!expandRelationships && !enrichmentDocumentsInput.checked) throw new Error("Select relationship expansion or PDF enrichment.");
+  async function startGraphEnrichment(request, statusMessage = "Creating enrichment task.") {
+    if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
+      throw new Error("An enrichment task is already running.");
+    }
+    currentEnrichmentStatus = "creating";
     enrichmentRunButton.disabled = true;
     enrichmentOpenEl.classList.add("hidden");
     enrichmentStatusEl.dataset.state = "working";
-    enrichmentStatusEl.textContent = "Creating enrichment task.";
-    const created = await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(currentGeneratedGraphId)}/enrich`, {
-      sourceVersion: currentGeneratedGraphVersion || undefined,
-      centralNodeIds,
-      scopeNodeIds: enrichmentVisibleScopeInput.checked ? visibleSourceNodeIds() : [],
-      expandRelationships,
-      expansionCycles: Number(enrichmentCyclesInput.value || 0),
-      expandPeople: enrichmentPeopleInput.checked,
-      enrichMissingDocuments: enrichmentDocumentsInput.checked,
-      entityCeiling: Number(enrichmentCeilingInput.value || 5000),
-      includeFormer: true,
-    });
+    enrichmentStatusEl.textContent = statusMessage;
+    const created = await postBuilderJson(`/api/generated-graphs/${encodeURIComponent(currentGeneratedGraphId)}/enrich`, request);
     const job = created.job || {};
     currentEnrichmentJobId = String(job.id || "");
     currentEnrichmentStatus = String(job.status || "planned");
@@ -496,6 +523,48 @@
     const started = await postBuilderJson(`/api/investigations/${encodeURIComponent(currentEnrichmentJobId)}/start`, {});
     renderBuilderStdout(started.job || {});
     await watchBuilderJob(currentEnrichmentJobId);
+  }
+
+  async function runGraphEnrichment() {
+    if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be enriched.");
+    const expandRelationships = enrichmentExpandInput.checked;
+    const centralNodeIds = viewerState.enrichmentNodeIds.filter((id) => rawMainNodeIds.has(id));
+    if (expandRelationships && !centralNodeIds.length) throw new Error("Select at least one central node from its context menu.");
+    if (!expandRelationships && !enrichmentDocumentsInput.checked) throw new Error("Select relationship expansion or PDF enrichment.");
+    await startGraphEnrichment({
+      sourceVersion: currentGeneratedGraphVersion || undefined,
+      centralNodeIds,
+      scopeNodeIds: enrichmentVisibleScopeInput.checked ? visibleSourceNodeIds() : [],
+      expandRelationships,
+      expansionCycles: Number(enrichmentCyclesInput.value || 0),
+      expandPeople: enrichmentPeopleInput.checked,
+      enrichMissingDocuments: enrichmentDocumentsInput.checked,
+      entityCeiling: Number(enrichmentCeilingInput.value || 5000),
+      includeFormer: true,
+    });
+  }
+
+  async function runOneEnrichmentRound(nodeId) {
+    if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be expanded.");
+    const node = rawMainNodes.find((candidate) => String(candidate.id) === String(nodeId));
+    if (!enrichmentNodeEligible(node)) throw new Error("This node cannot be used as a discovery seed.");
+    if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
+      throw new Error("An enrichment task is already running.");
+    }
+    setSidebarTab("enrich");
+    toggleSidebar(true);
+    renderEnrichmentPanel();
+    await startGraphEnrichment({
+      sourceVersion: currentGeneratedGraphVersion || undefined,
+      centralNodeIds: [node.id],
+      scopeNodeIds: [],
+      expandRelationships: true,
+      expansionCycles: 1,
+      expandPeople: true,
+      enrichMissingDocuments: false,
+      entityCeiling: 5000,
+      includeFormer: true,
+    }, `Expanding one round from ${node.label || node.id}.`);
   }
 
   function upsertRecentTask(job) {
@@ -1670,11 +1739,14 @@
   }
 
   function rebuildActiveGraph() {
-    const mainNodeIds = new Set(baseNodes.map((node) => node.id));
-    allEdges = baseEdges.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed").map((edge) => ({ ...edge }));
+    const hiddenEnrichmentNodeIds = hiddenLatestEnrichmentNodeIds();
+    const activeBaseNodes = baseNodes.filter((node) => !hiddenEnrichmentNodeIds.has(node.id));
+    const mainNodeIds = new Set(activeBaseNodes.map((node) => node.id));
+    const activeBaseEdges = baseEdges.filter((edge) => mainNodeIds.has(edge.source) && mainNodeIds.has(edge.target));
+    allEdges = activeBaseEdges.filter((edge) => edge.kind !== "shared_org" && edge.kind !== "cross_seed").map((edge) => ({ ...edge }));
     if ((!viewerState.showLowConfidence || !lowConfidenceLoaded)
       && (!viewerState.showLowConfidenceNodes || !lowConfidenceOrgLoaded)) {
-      allNodes = baseNodes.filter((node) => node.kind !== "seed").map((node) => ({ ...node }));
+      allNodes = activeBaseNodes.filter((node) => node.kind !== "seed").map((node) => ({ ...node }));
       if (Array.isArray(mergeOverrides?.organisation) && mergeOverrides.organisation.length) {
         const merged = applyMergeOverrides(allNodes, allEdges, { organisation: mergeOverrides.organisation });
         allNodes = merged.nodes;
@@ -1684,7 +1756,7 @@
       return;
     }
     const activeSeedIds = new Set(
-      baseNodes
+      activeBaseNodes
         .filter((node) => node.kind === "seed" && viewerState.searchQuery && nodeMatchesQuery(node, viewerState.searchQuery))
         .map((node) => node.id),
     );
@@ -1723,7 +1795,7 @@
       });
     }
 
-    allNodes = baseNodes
+    allNodes = activeBaseNodes
       .filter((node) => node.kind !== "seed" || activeSeedIds.has(node.id))
       .map((node) => ({ ...node }));
     allNodes.push(...lowConfidenceNodes.filter((node) => activeLowNodeIds.has(node.id)).map((node) => ({ ...node })));
@@ -4074,11 +4146,13 @@
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const enrichmentSelected = viewerState.enrichmentNodeIds.includes(node.id);
+    const enrichmentRoundAction = enrichmentRoundActionForNode(node);
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      enrichmentRoundAction,
       enrichmentNodeEligible(node)
         ? {
-            label: enrichmentSelected ? "Remove as enrichment centre" : "Set as enrichment centre",
+            label: enrichmentSelected ? "Remove from custom enrichment" : "Configure custom enrichment",
             type: enrichmentSelected ? "enrichment_remove" : "enrichment_add",
             nodeId: node.id,
           }
@@ -4611,8 +4685,10 @@
     }
 
     const extraSuffix = viewerState.extraRootIds.length ? ` + ${viewerState.extraRootIds.length} added tree${viewerState.extraRootIds.length === 1 ? "" : "s"}` : "";
+    const hiddenEnrichmentCount = hiddenLatestEnrichmentNodeIds().size;
+    const enrichmentSuffix = hiddenEnrichmentCount ? ` / ${hiddenEnrichmentCount.toLocaleString()} latest-round node${hiddenEnrichmentCount === 1 ? "" : "s"} hidden` : "";
     const distanceSuffix = viewerState.maxFocalDistanceMetres === null ? "" : ` / up to ${viewerState.maxFocalDistanceMetres} m`;
-    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges${extraSuffix}${distanceSuffix}`;
+    statsEl.textContent = `showing ${visibleNodes.length} nodes, ${visibleEdges.length} edges${extraSuffix}${enrichmentSuffix}${distanceSuffix}`;
   }
 
   function bindUiEvents() {
@@ -4832,6 +4908,16 @@
         setSidebarTab("ask");
         toggleSidebar(true);
         questionInputEl.focus();
+      } else if (action.type === "enrichment_round_show" || action.type === "enrichment_round_hide") {
+        viewerState.showLatestEnrichmentRound = action.type === "enrichment_round_show";
+        applyViewerState();
+      } else if (action.type === "enrichment_round_run") {
+        runOneEnrichmentRound(action.nodeId).catch((error) => {
+          currentEnrichmentStatus = "failed";
+          enrichmentRunButton.disabled = false;
+          enrichmentStatusEl.dataset.state = "error";
+          enrichmentStatusEl.textContent = error.message || "The expansion could not start.";
+        });
       } else if (action.type === "enrichment_add") {
         viewerState.enrichmentNodeIds = [...viewerState.enrichmentNodeIds, action.nodeId];
         setSidebarTab("enrich");
