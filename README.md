@@ -27,8 +27,9 @@ Generated graph node menus can add the direct relationships of one address,
 person, company, or charity. For example, expanding a company adds its officers
 without continuing through their addresses or other organisations. The viewer
 opens the new immutable version automatically, preserves the current node
-positions and viewport, and hides newly added nodes until the same centre-node
-action reveals them.
+positions and viewport, repairs stale-position collisions, and shows newly
+added nodes immediately. The same centre-node action can hide that latest
+round. A final evidence-based person-resolution pass runs before publication.
 
 Discovery pivots through organisations, addresses, and optionally people.
 Every researched relationship keeps its source URL and exact node referents.

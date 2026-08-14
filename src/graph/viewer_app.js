@@ -210,7 +210,7 @@
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
     maxFocalDistanceMetres: null,
-    showLatestEnrichmentRound: false,
+    showLatestEnrichmentRound: latestEnrichmentAddedNodeIds.size > 0,
     questionNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
@@ -406,12 +406,29 @@
     return currentGeneratedGraphId ? `istari:graph-refresh:${currentGeneratedGraphId}` : "";
   }
 
-  function saveGraphRefreshState() {
+  function expansionResolutionFeedback(job = {}) {
+    const messages = (Array.isArray(job.stdout) ? job.stdout : []).map((entry) => String(entry.message || ""));
+    const merged = messages.reduce((total, message) => {
+      const match = message.match(/cleanup: merged (\d+) duplicate person record/i);
+      return total + Number(match?.[1] || 0);
+    }, 0);
+    const groupMessage = messages.find((message) => /cleanup: found \d+ possible duplicate person group/i.test(message));
+    const groups = Number(groupMessage?.match(/found (\d+)/i)?.[1] || 0);
+    if (merged) return `Resolution merged ${merged} duplicate person record${merged === 1 ? "" : "s"}.`;
+    if (groups) return `Resolution reviewed ${groups} possible duplicate name group${groups === 1 ? "" : "s"}; no merge was supported.`;
+    return "Resolution checked the expanded names; no duplicate match was supported.";
+  }
+
+  function saveGraphRefreshState(job = {}) {
     const key = graphRefreshStateKey();
     const view = renderer?.getViewState?.();
     if (!key || !view) return;
     try {
-      sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), view }));
+      sessionStorage.setItem(key, JSON.stringify({
+        savedAt: Date.now(),
+        view,
+        feedback: expansionResolutionFeedback(job),
+      }));
     } catch (_error) {
       // Navigation can continue when browser storage is unavailable.
     }
@@ -429,6 +446,14 @@
     }
     if (!stored?.view || (Date.now() - Number(stored.savedAt || 0)) > 300000) return;
     renderer?.restoreViewState?.(stored.view);
+    if (stored.feedback && graphExpansionStatusEl) {
+      graphExpansionStatusEl.classList.remove("hidden");
+      graphExpansionStatusEl.dataset.state = "complete";
+      graphExpansionProgressEl.value = 100;
+      graphExpansionProgressEl.textContent = "100%";
+      graphExpansionLabelEl.textContent = `Expansion complete. ${stored.feedback}`;
+      window.setTimeout(() => graphExpansionStatusEl.classList.add("hidden"), 8000);
+    }
   }
 
   function renderNodeExpansionTask(job = {}) {
@@ -436,6 +461,7 @@
     const status = String(job.status || "");
     currentEnrichmentStatus = status;
     const progress = job.progress || {};
+    const currentOperations = Array.isArray(job.activity?.current) ? job.activity.current : [];
     const percent = status === "completed" ? 100 : Math.max(0, Math.min(100, Number(progress.percent) || 0));
     graphExpansionStatusEl.classList.remove("hidden");
     graphExpansionStatusEl.dataset.state = status === "failed" ? "error" : "working";
@@ -445,11 +471,11 @@
       ? friendlyTaskError(job.error)
       : status === "completed"
         ? "Expansion complete. Updating graph."
-        : `${taskStatusLabel(status)}: ${percent}% / ${Number(progress.processed) || 0} checks complete.`;
+        : `${currentOperations.length ? taskOperationLabel(currentOperations[0]) : taskStatusLabel(status)}: ${percent}% / ${Number(progress.processed) || 0} checks complete.`;
     const path = String(job.result?.artifact?.path || "");
     if (status === "completed" && path && !enrichmentNavigationStarted) {
       enrichmentNavigationStarted = true;
-      saveGraphRefreshState();
+      saveGraphRefreshState(job);
       window.setTimeout(() => window.location.assign(new URL(path, window.location.origin).toString()), 150);
     }
   }

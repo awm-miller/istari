@@ -104,7 +104,8 @@ const server = createServer(async (request, response) => {
       id: "enrich123", status: "completed", stage: "completed",
       progress: { processed: 1, active: 0, queued: 0, failed: 0, total: 1, nodes: 14, edges: 14, percent: 100 },
       activity: { current: [], retrying: 0, skipped: 0 },
-      result: { artifact: { path: "/generated-graphs/generated-check/" } }, stdout: [],
+      result: { artifact: { path: "/generated-graphs/generated-check/" } },
+      stdout: [{ message: "cleanup: found 0 possible duplicate person groups", created_at: new Date().toISOString() }],
     } })}\n\n`);
     return;
   }
@@ -479,23 +480,27 @@ try {
   assert.equal(await page.locator('.sidebar-tab[data-tab="enrich"]').count(), 0, "obsolete Enrich tool is still visible");
   const enrichmentTargets = page.locator('.graph-node-label[data-node-id^="org:"]');
   const enrichmentCentre = enrichmentTargets.first();
+  assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
+  await chooseNodeAction(enrichmentCentre, "Hide expanded round");
   assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
   assert.match(await page.locator("#stats").innerText(), /1 latest-round node hidden/);
   await chooseNodeAction(enrichmentCentre, "Show expanded round (1)");
   assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
-  await chooseNodeAction(enrichmentCentre, "Hide expanded round");
-  assert.equal(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).count(), 0);
 
   const directEnrichmentTarget = enrichmentTargets.nth(1);
-  const directEnrichmentNodeId = await directEnrichmentTarget.getAttribute("data-node-id");
-  const initialBox = await directEnrichmentTarget.boundingBox();
-  assert.ok(initialBox, "direct expansion target has no hit area");
-  await page.mouse.move(initialBox.x + (initialBox.width / 2), initialBox.y + (initialBox.height / 2));
+  const stableTarget = page.locator('.graph-node-label[data-node-id*="address:"]').first();
+  const stableNodeId = await stableTarget.getAttribute("data-node-id");
+  const stableBox = await stableTarget.boundingBox();
+  assert.ok(stableBox, "stable node has no hit area");
+  const collisionTarget = enrichmentTargets.nth(2);
+  const collisionAnchor = enrichmentTargets.nth(3);
+  const collisionBox = await collisionTarget.boundingBox();
+  const anchorBox = await collisionAnchor.boundingBox();
+  assert.ok(collisionBox && anchorBox, "collision test nodes have no hit area");
+  await page.mouse.move(collisionBox.x + (collisionBox.width / 2), collisionBox.y + (collisionBox.height / 2));
   await page.mouse.down();
-  await page.mouse.move(initialBox.x + (initialBox.width / 2) + 80, initialBox.y + (initialBox.height / 2) + 45, { steps: 5 });
+  await page.mouse.move(anchorBox.x + (anchorBox.width / 2), anchorBox.y + (anchorBox.height / 2), { steps: 5 });
   await page.mouse.up();
-  const movedBox = await directEnrichmentTarget.boundingBox();
-  assert.ok(movedBox && Math.abs(movedBox.x - initialBox.x) > 20, "test node did not move before expansion");
   const navigation = page.waitForNavigation({ waitUntil: "networkidle" });
   await chooseNodeAction(directEnrichmentTarget, "Expand this company");
   await navigation;
@@ -504,11 +509,26 @@ try {
   assert.equal(enrichmentRequest?.expansionCycles, 0);
   assert.equal(enrichmentRequest?.expandPeople, true);
   assert.equal(enrichmentRequest?.enrichMissingDocuments, false);
-  const refreshedTarget = page.locator(`.graph-node-label[data-node-id="${directEnrichmentNodeId}"]`).first();
-  const refreshedBox = await refreshedTarget.boundingBox();
-  assert.ok(refreshedBox, "expanded graph did not render the centre node");
-  assert.ok(Math.abs(refreshedBox.x - movedBox.x) < 3, "node x-position changed after automatic refresh");
-  assert.ok(Math.abs(refreshedBox.y - movedBox.y) < 3, "node y-position changed after automatic refresh");
+  const refreshedStableTarget = page.locator(`.graph-node-label[data-node-id="${stableNodeId}"]`).first();
+  const refreshedStableBox = await refreshedStableTarget.boundingBox();
+  assert.ok(refreshedStableBox, "expanded graph did not render the stable node");
+  assert.ok(Math.abs(refreshedStableBox.x - stableBox.x) < 3, "stable node x-position changed after automatic refresh");
+  assert.ok(Math.abs(refreshedStableBox.y - stableBox.y) < 3, "stable node y-position changed after automatic refresh");
+  assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
+  assert.match(await page.locator("#graph-expansion-label").innerText(), /resolution checked the expanded names/i);
+  const overlapCount = await page.locator(".graph-node-label").evaluateAll((elements) => {
+    const boxes = elements.map((element) => element.getBoundingClientRect());
+    let count = 0;
+    for (let left = 0; left < boxes.length; left += 1) {
+      for (let right = left + 1; right < boxes.length; right += 1) {
+        const horizontal = Math.min(boxes[left].right, boxes[right].right) - Math.max(boxes[left].left, boxes[right].left);
+        const vertical = Math.min(boxes[left].bottom, boxes[right].bottom) - Math.max(boxes[left].top, boxes[right].top);
+        if (horizontal > 2 && vertical > 2) count += 1;
+      }
+    }
+    return count;
+  });
+  assert.equal(overlapCount, 0, "automatic refresh retained overlapping node positions");
   assert.equal(await page.getByRole("button", { name: "Configure custom enrichment" }).count(), 0);
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);

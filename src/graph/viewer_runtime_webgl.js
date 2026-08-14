@@ -486,6 +486,56 @@
       }
     }
 
+    function separateOverlappingRows(nodes, gap = 16) {
+      const nodesByLane = new Map();
+      nodes.forEach((node) => {
+        const lane = Number(node.lane || 0);
+        if (!nodesByLane.has(lane)) nodesByLane.set(lane, []);
+        nodesByLane.get(lane).push(node);
+      });
+      nodesByLane.forEach((laneNodes) => {
+        const rows = [];
+        laneNodes
+          .slice()
+          .sort((left, right) => Number(left.y || 0) - Number(right.y || 0))
+          .forEach((node) => {
+            const row = rows.find((candidate) => (
+              Math.abs(Number(node.y || 0) - candidate.y)
+              < ((pillHeight(node) + candidate.height) / 2) + gap
+            ));
+            if (row) {
+              row.nodes.push(node);
+              row.height = Math.max(row.height, pillHeight(node));
+              return;
+            }
+            rows.push({ y: Number(node.y || 0), height: pillHeight(node), nodes: [node] });
+          });
+        rows.forEach((row) => {
+          const ordered = row.nodes.slice().sort((left, right) => Number(left.x || 0) - Number(right.x || 0));
+          if (ordered.length < 2) return;
+          const desiredLeft = Math.min(...ordered.map((node) => Number(node.x || 0) - (pillWidth(node) / 2)));
+          const desiredRight = Math.max(...ordered.map((node) => Number(node.x || 0) + (pillWidth(node) / 2)));
+          const packed = [];
+          let previousRight = Number.NEGATIVE_INFINITY;
+          let changed = false;
+          ordered.forEach((node) => {
+            const halfWidth = pillWidth(node) / 2;
+            const desiredX = Number(node.x || 0);
+            const nextX = Math.max(desiredX, previousRight + gap + halfWidth);
+            if (Math.abs(nextX - desiredX) > 0.5) changed = true;
+            packed.push({ node, x: nextX });
+            previousRight = nextX + halfWidth;
+          });
+          if (!changed) return;
+          const packedLeft = packed[0].x - (pillWidth(packed[0].node) / 2);
+          const last = packed[packed.length - 1];
+          const packedRight = last.x + (pillWidth(last.node) / 2);
+          const offset = ((desiredLeft + desiredRight) - (packedLeft + packedRight)) / 2;
+          packed.forEach((item) => { item.node.x = item.x + offset; });
+        });
+      });
+    }
+
     function getViewState() {
       return {
         transform: { x: transform.x, y: transform.y, k: transform.k },
@@ -504,6 +554,7 @@
         node.x = Number(position.x);
         node.y = Number(position.y);
       });
+      separateOverlappingRows(sceneNodes);
       const savedTransform = state?.transform;
       if (
         Number.isFinite(Number(savedTransform?.x))
@@ -691,6 +742,7 @@
         node._focused = rootIds.has(node.id);
         node._hovered = nodeSceneKey(node) === hoveredNodeKey;
       });
+      separateOverlappingRows(sceneNodes);
       if (fit) fitToNodes(sceneNodes);
       drawScene();
     }
