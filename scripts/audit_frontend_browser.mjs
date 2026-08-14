@@ -54,24 +54,13 @@ const server = createServer(async (request, response) => {
     sendJson(response, { overrides: mergeOverrides });
     return;
   }
-  if (url.pathname === "/.netlify/functions/analyze-connection" && request.method === "POST") {
+  if (url.pathname === "/.netlify/functions/graph-question" && request.method === "POST") {
     const body = await requestJson(request);
-    if (body.question) {
-      const edge = body.subgraph.edges[0];
-      sendJson(response, {
-        answer: "The selected nodes are connected by the cited visible relationship.",
-        claims: [{ text: "The visible graph supports this connection.", edge_ids: [edge.id], evidence_ids: [] }],
-        context: { nodes: body.subgraph.nodes, edges: body.subgraph.edges, evidence: [] },
-      });
-      return;
-    }
+    const edge = body.subgraph.edges[0];
     sendJson(response, {
-      sourceNodeId: body.source_id,
-      targetNodeId: body.target_id,
-      summary: "The selected nodes are linked by the displayed graph path.",
-      claims: [],
-      evidence: [],
-      path: { edges: [{ source_label: "Source", phrase: "is linked to", target_label: "Target" }] },
+      answer: "The selected nodes are connected by the cited visible relationship.",
+      claims: [{ text: "The visible graph supports this connection.", edge_ids: [edge.id], evidence_ids: [] }],
+      context: { nodes: body.subgraph.nodes, edges: body.subgraph.edges, evidence: [] },
     });
     return;
   }
@@ -374,20 +363,10 @@ try {
   assert.ok(firstBox, "first node has no hit area");
   await page.mouse.click(firstBox.x + 8, firstBox.y + (firstBox.height / 2), { button: "right" });
   assert.ok(await page.locator("#context-menu").isVisible(), "node context menu did not open");
-  assert.ok(await page.getByRole("button", { name: "Add to connection analysis" }).isVisible());
+  assert.equal(await page.getByRole("button", { name: /connection analysis/i }).count(), 0);
   await page.getByRole("button", { name: "Explain claims and attribution" }).click();
   assert.ok(await page.locator("#details-modal").evaluate((element) => element.classList.contains("open")), "claims modal did not open");
   await page.locator("#details-modal-close").click();
-
-  await page.mouse.click(firstBox.x + 8, firstBox.y + (firstBox.height / 2), { button: "right" });
-  await page.getByRole("button", { name: "Add to connection analysis" }).click();
-  const secondLabel = page.locator(".graph-node-label").nth(1);
-  const secondBox = await secondLabel.boundingBox();
-  assert.ok(secondBox, "second node has no hit area");
-  await page.mouse.click(secondBox.x + 8, secondBox.y + (secondBox.height / 2), { button: "right" });
-  await page.getByRole("button", { name: "Add to connection analysis" }).click();
-  await page.waitForSelector(".analysis-path-item");
-  assert.match(await page.locator(".analysis-path-item").innerText(), /Source is linked to Target/);
 
   await page.locator('.sidebar-tab[data-tab="map"]').click();
   await page.waitForSelector("#address-map.leaflet-container", { timeout: 15_000 });

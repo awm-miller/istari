@@ -1,29 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const analysis = require("../netlify/functions/analyze-connection")._private;
+const graphQuestion = require("../netlify/functions/graph-question");
+const questions = graphQuestion._private;
 const merges = require("../netlify/functions/merge-overrides")._private;
 
 test("graph functions preserve every static and generated graph key", () => {
   for (const key of ["mb", "94-park-ave", "iums", "iran", "sevenspikes", "expanded-mb-names", "backend-rebuild-smoke"]) {
-    assert.equal(analysis.normalizeGraphKey(key), key);
     assert.equal(merges.normalizeGraphKey(key), key);
   }
-  assert.equal(analysis.normalizeGraphKey("../../secret"), "mb");
-});
-
-test("connection analysis loads static and generated graph paths", () => {
-  assert.equal(analysis.graphDataPath("94-park-ave"), "/94-park-ave/graph-data.json");
-  assert.equal(analysis.graphDataPath("backend-rebuild-smoke"), "/generated-graphs/backend-rebuild-smoke/graph-data.json");
-});
-
-test("shortest paths preserve edge endpoint referents", () => {
-  const graph = {
-    nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }, { id: "c", label: "C" }],
-    edges: [{ source: "a", target: "b", phrase: "knows" }, { source: "b", target: "c", phrase: "directs" }],
-  };
-  const context = analysis.buildPathContext(graph, "a", "c");
-  assert.deepEqual(context.path.node_ids, ["a", "b", "c"]);
-  assert.deepEqual(context.path.edges.map(({ source_id, target_id }) => [source_id, target_id]), [["a", "b"], ["b", "c"]]);
 });
 
 test("merge override stores are isolated per graph", () => {
@@ -33,7 +17,7 @@ test("merge override stores are isolated per graph", () => {
 });
 
 test("selected subgraphs retain only edges with valid node referents", () => {
-  const context = analysis.buildSubgraphContext({
+  const context = questions.buildSubgraphContext({
     nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
     edges: [
       { id: "ab", source: "a", target: "b", phrase: "controls", evidence: { title: "Filing", document_url: "https://example.test/filing" } },
@@ -41,9 +25,31 @@ test("selected subgraphs retain only edges with valid node referents", () => {
     ],
   });
   assert.deepEqual(context.edges.map((edge) => edge.id), ["ab"]);
-  const fallback = analysis.fallbackSubgraphAnswer("How?", context);
+  const fallback = questions.fallbackSubgraphAnswer("How?", context);
   assert.deepEqual(fallback.claims[0].edge_ids, ["ab"]);
   assert.deepEqual(fallback.claims[0].evidence_ids, ["e1"]);
+});
+
+test("graph question endpoint rejects obsolete connection-analysis payloads", async () => {
+  const obsolete = await graphQuestion.handler({
+    httpMethod: "POST",
+    body: JSON.stringify({ source_id: "a", target_id: "b" }),
+  });
+  assert.equal(obsolete.statusCode, 400);
+  assert.match(JSON.parse(obsolete.body).error, /question is required/i);
+
+  const response = await graphQuestion.handler({
+    httpMethod: "POST",
+    body: JSON.stringify({
+      question: "How are these nodes connected?",
+      subgraph: {
+        nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+        edges: [{ id: "ab", source: "a", target: "b", phrase: "controls" }],
+      },
+    }),
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body).claims[0].edge_ids, ["ab"]);
 });
 
 test("resolution decisions preserve metadata and bounded audit history", () => {
@@ -74,7 +80,7 @@ test("batch merge rows are bounded and reject invalid pairs", () => {
   }]);
 });
 
-test("graph analysis uses the configured OpenRouter chat-completions model", async () => {
+test("graph questions use the configured OpenRouter chat-completions model", async () => {
   const previous = {
     key: process.env.OPENROUTER_API_KEY,
     base: process.env.OPENROUTER_BASE_URL,
@@ -93,7 +99,7 @@ test("graph analysis uses the configured OpenRouter chat-completions model", asy
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"grounded"}' } }] }));
   };
   try {
-    assert.deepEqual(await analysis.requestModelJson("question"), { answer: "grounded" });
+    assert.deepEqual(await questions.requestModelJson("question"), { answer: "grounded" });
   } finally {
     global.fetch = previous.fetch;
     if (previous.key == null) delete process.env.OPENROUTER_API_KEY;

@@ -159,9 +159,9 @@ async function testViewer(page) {
   await selectNodeAction(page, 0, "Explain claims and attribution");
   assert.ok(await page.locator("#details-modal").evaluate((element) => element.classList.contains("open")));
   await page.locator("#details-modal-close").click();
-  await selectNodeAction(page, 0, "Add to connection analysis");
-  await selectNodeAction(page, 1, "Add to connection analysis");
-  await page.waitForSelector(".analysis-path-item", { timeout: 60_000 });
+  await selectNodeAction(page, 0, "Add to question selection");
+  assert.equal(await page.getByRole("button", { name: /connection analysis/i }).count(), 0);
+  await selectNodeAction(page, 0, "Remove from question selection");
 
   await page.locator('.sidebar-tab[data-tab="resolve"]').click();
   await page.waitForSelector("#resolution-panel");
@@ -175,37 +175,22 @@ async function testViewer(page) {
 
   await page.locator('.sidebar-tab[data-tab="map"]').click();
   await page.waitForSelector("#address-map.leaflet-container", { timeout: 30_000 });
-  log("hover, evidence, added trees, resolution, cited questions, filters, analysis, and map passed");
+  log("hover, evidence, added trees, resolution, cited questions, filters, and map passed");
 }
 
 async function testFunctions(page) {
   const result = await page.evaluate(async () => {
-    const graph = await (await fetch("/94-park-ave/graph-data.json", { cache: "no-store" })).json();
-    const edge = graph.edges[0];
-    const [analysisResponse, mergeResponse, catalogResponse] = await Promise.all([
-      fetch("/.netlify/functions/analyze-connection", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ graph: "94-park-ave", source_id: edge.source, target_id: edge.target }),
-      }),
+    const [mergeResponse, catalogResponse] = await Promise.all([
       fetch("/.netlify/functions/merge-overrides?graph=94-park-ave", { cache: "no-store" }),
       fetch("/api/generated-graphs", { cache: "no-store" }),
     ]);
     return {
-      edge,
-      analysisStatus: analysisResponse.status,
-      analysis: await analysisResponse.json(),
       mergeStatus: mergeResponse.status,
       merge: await mergeResponse.json(),
       catalogStatus: catalogResponse.status,
       catalog: await catalogResponse.json(),
     };
   });
-  assert.equal(result.analysisStatus, 200);
-  assert.equal(result.analysis.graph, "94-park-ave");
-  assert.equal(result.analysis.sourceNodeId, result.edge.source);
-  assert.equal(result.analysis.targetNodeId, result.edge.target);
-  assert.ok(result.analysis.path.edges.length >= 1);
   assert.equal(result.mergeStatus, 200);
   assert.equal(result.merge.graph, "94-park-ave");
   assert.equal(result.catalogStatus, 200);

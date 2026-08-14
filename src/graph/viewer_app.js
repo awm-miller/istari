@@ -15,7 +15,7 @@
     { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
     { key: "expanded-mb-names", label: "Expanded MB Names", path: "/expanded-mb-names/" },
   ];
-  const ANALYZE_CONNECTION_URL = "/.netlify/functions/analyze-connection";
+  const GRAPH_QUESTION_URL = "/.netlify/functions/graph-question";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
   const LEAFLET_CSS_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
@@ -212,7 +212,6 @@
     showSanctionedOnly: false,
     showNegativeNewsOnly: false,
     maxFocalDistanceMetres: null,
-    analysisNodeIds: [],
     questionNodeIds: [],
     enrichmentNodeIds: [],
     pendingMergeNodeId: "",
@@ -4073,7 +4072,6 @@
       sourceKey: String(row.sourceId || ""),
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
-    const analysisSelected = viewerState.analysisNodeIds.includes(node.id);
     const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const enrichmentSelected = viewerState.enrichmentNodeIds.includes(node.id);
     const actions = [
@@ -4092,17 +4090,6 @@
           : null,
       viewerState.questionNodeIds.length
         ? { label: "Ask about selected subgraph", type: "question_open" }
-        : null,
-      analysisSelected
-        ? { label: "Remove from connection analysis", type: "analysis_remove", nodeId: node.id }
-        : viewerState.analysisNodeIds.length < 2
-          ? { label: "Add to connection analysis", type: "analysis_add", nodeId: node.id }
-          : null,
-      viewerState.analysisNodeIds.length === 2
-        ? { label: "Explain selected connection", type: "analysis_run" }
-        : null,
-      viewerState.analysisNodeIds.length
-        ? { label: "Clear connection selection", type: "analysis_clear" }
         : null,
       expandableLowConfidenceNode
         ? {
@@ -4450,7 +4437,7 @@
     questionSubmitEl.disabled = true;
     questionResultEl.innerHTML = '<div class="analysis-empty">Reading the selected visible relationships...</div>';
     try {
-      const response = await fetch(graphFunctionUrl(ANALYZE_CONNECTION_URL), {
+      const response = await fetch(graphFunctionUrl(GRAPH_QUESTION_URL), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ graph: currentGraphKey, question, subgraph }),
@@ -4461,83 +4448,6 @@
     } finally {
       questionSubmitEl.disabled = false;
     }
-  }
-
-  function renderAnalysisHtml(payload) {
-    if (!payload || typeof payload !== "object") {
-      return '<div class="analysis-error">Connection analysis returned an invalid payload.</div>';
-    }
-    const evidenceById = new Map((Array.isArray(payload.evidence) ? payload.evidence : []).map((item) => [String(item.id || ""), item]));
-    const claims = Array.isArray(payload.claims) ? payload.claims : [];
-    const pathItems = Array.isArray(payload.path?.edges)
-      ? payload.path.edges
-      : Array.isArray(payload.path) ? payload.path : [];
-    const sourceNode = nodeById.get(payload.sourceNodeId);
-    const targetNode = nodeById.get(payload.targetNodeId);
-    return `
-      <div class="analysis-selection">${escapeHtml(sourceNode?.label || payload.sourceNodeId)} to ${escapeHtml(targetNode?.label || payload.targetNodeId)}</div>
-      <div class="analysis-text">${escapeHtml(payload.summary || "No explanation returned.").replaceAll("\n", "<br>")}</div>
-      ${claims.length
-        ? `<div class="analysis-claims">${claims.map((claim, index) => {
-            const links = (Array.isArray(claim.evidence_ids) ? claim.evidence_ids : [])
-              .map((id) => evidenceById.get(String(id)))
-              .filter(Boolean)
-              .map((item) => {
-                const url = evidenceActionUrl(item);
-                if (!url) return "";
-                return `<a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>`;
-              })
-              .filter(Boolean)
-              .join("");
-            return `
-              <div class="analysis-claim">
-                <div class="analysis-claim-header">
-                  <div class="analysis-claim-index">${index + 1}</div>
-                  <div class="analysis-claim-text">${escapeHtml(claim.text || "")}</div>
-                </div>
-                <div class="analysis-claim-evidence">
-                  <span class="analysis-claim-evidence-label">Evidence</span>
-                  ${links || '<span class="dim">No linked evidence.</span>'}
-                </div>
-              </div>
-            `;
-          }).join("")}</div>`
-        : ""
-      }
-      ${pathItems.length
-        ? `<div class="analysis-path">${pathItems.map((edge) => `
-            <div class="analysis-path-item">${escapeHtml(edge.source_label || edge.source_id)} ${escapeHtml(edge.phrase || "is linked to")} ${escapeHtml(edge.target_label || edge.target_id)}</div>
-          `).join("")}</div>`
-        : ""
-      }
-    `;
-  }
-
-  async function openAnalysisView() {
-    if (viewerState.analysisNodeIds.length !== 2) return;
-    const [sourceId, targetId] = viewerState.analysisNodeIds;
-    const sourceNode = nodeById.get(sourceId);
-    const targetNode = nodeById.get(targetId);
-    if (!sourceNode || !targetNode) return;
-
-    scorePanelEl.innerHTML = `
-      <div class="analysis-viewer">
-        <div class="analysis-empty">Analyzing connection between <strong>${escapeHtml(sourceNode.label || sourceId)}</strong> and <strong>${escapeHtml(targetNode.label || targetId)}</strong>...</div>
-      </div>
-    `;
-    setSidebarTab("ranked");
-    toggleSidebar(true);
-
-    const response = await fetch(graphFunctionUrl(ANALYZE_CONNECTION_URL), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_id: sourceId, target_id: targetId, graph: currentGraphKey }),
-    });
-    if (!response.ok) {
-      throw new Error(`Connection analysis failed (${response.status})`);
-    }
-    const payload = await response.json();
-    scorePanelEl.innerHTML = renderAnalysisHtml(payload);
   }
 
   function loadExternalAsset(tagName, url) {
@@ -5023,19 +4933,6 @@
       } else if (action.type === "focus_clear") {
         viewerState.focusedNodeIds.clear();
         applyViewerState();
-      } else if (action.type === "analysis_add") {
-        viewerState.analysisNodeIds = [...viewerState.analysisNodeIds, action.nodeId].slice(0, 2);
-        if (viewerState.analysisNodeIds.length === 2) {
-          openAnalysisView().catch(() => window.alert("Connection analysis failed."));
-        }
-      } else if (action.type === "analysis_remove") {
-        viewerState.analysisNodeIds = viewerState.analysisNodeIds.filter((id) => id !== action.nodeId);
-      } else if (action.type === "analysis_run") {
-        openAnalysisView().catch(() => {
-          window.alert("Connection analysis failed.");
-        });
-      } else if (action.type === "analysis_clear") {
-        viewerState.analysisNodeIds = [];
       }
     });
     document.addEventListener("pointerdown", (event) => {
