@@ -159,23 +159,18 @@ async function testViewer(page) {
   await selectNodeAction(page, 0, "Explain claims and attribution");
   assert.ok(await page.locator("#details-modal").evaluate((element) => element.classList.contains("open")));
   await page.locator("#details-modal-close").click();
-  await selectNodeAction(page, 0, "Add to question selection");
+  await selectNodeAction(page, 0, "Select");
+  assert.equal(await page.locator("#graph-selection-count").innerText(), "1 selected");
+  assert.ok(await page.locator(".graph-node-label.selected").count());
   assert.equal(await page.getByRole("button", { name: /connection analysis/i }).count(), 0);
-  await selectNodeAction(page, 0, "Remove from question selection");
+  assert.equal(await page.locator('.sidebar-tab[data-tab="ask"]').count(), 0);
+  await selectNodeAction(page, 0, "Deselect");
 
   await page.locator('.sidebar-tab[data-tab="resolve"]').click();
   await page.waitForSelector("#resolution-panel");
-  await selectNodeLocatorAction(page, sourceLabel, "Add to question selection");
-  await selectNodeLocatorAction(page, targetLabel, "Add to question selection");
-  await page.locator('.sidebar-tab[data-tab="ask"]').click();
-  await page.locator("#question-input").fill("How are these nodes connected?");
-  await page.locator("#question-submit").click();
-  await page.waitForSelector(".question-citation", { timeout: 60_000 });
-  await page.locator("#question-clear").click();
-
   await page.locator('.sidebar-tab[data-tab="map"]').click();
   await page.waitForSelector("#address-map.leaflet-container", { timeout: 30_000 });
-  log("hover, evidence, added trees, resolution, cited questions, filters, and map passed");
+  log("hover, evidence, added trees, selection, resolution, filters, and map passed");
 }
 
 async function testFunctions(page) {

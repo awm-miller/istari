@@ -71,7 +71,7 @@ Case state is isolated under `data/cases/<case-id>/`. The schemas are in
 
 ## AI routing
 
-Case planning, entity resolution, and graph questions use OpenRouter chat
+Case planning and entity resolution use OpenRouter chat
 completions. The default is `~deepseek/deepseek-v4-flash-latest`. Requests set
 `provider.data_collection=deny` and `provider.zdr=true`, so OpenRouter must
 select a zero-data-retention route or fail. Registry records remain the source

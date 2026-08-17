@@ -24,7 +24,6 @@
     { key: "sevenspikes", label: "Seven Spikes", path: "/sevenspikes/" },
     { key: "expanded-mb-names", label: "Expanded MB Names", path: "/expanded-mb-names/" },
   ];
-  const GRAPH_QUESTION_URL = "/.netlify/functions/graph-question";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
   const MAX_BATCH_SELECTION = 25;
@@ -110,11 +109,6 @@
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
   const resolutionPanelEl = document.getElementById("resolution-panel");
-  const questionSelectionEl = document.getElementById("question-selection");
-  const questionInputEl = document.getElementById("question-input");
-  const questionSubmitEl = document.getElementById("question-submit");
-  const questionClearEl = document.getElementById("question-clear");
-  const questionResultEl = document.getElementById("question-result");
   const graphExpansionStatusEl = document.getElementById("graph-expansion-status");
   const graphExpansionLabelEl = document.getElementById("graph-expansion-label");
   const graphExpansionProgressEl = document.getElementById("graph-expansion-progress");
@@ -218,7 +212,6 @@
     showNegativeNewsOnly: false,
     maxFocalDistanceMetres: null,
     showLatestEnrichmentRound: latestEnrichmentAddedNodeIds.size > 0,
-    questionNodeIds: [],
     pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
@@ -1381,6 +1374,13 @@
     ));
     viewerState.expandedLowConfidenceNodeIds = new Set(
       [...viewerState.expandedLowConfidenceNodeIds].filter((id) => isLowConfidenceDocumentNode(lowConfidenceNodeLookup(id))),
+    );
+    renderGraphSelectionActions();
+  }
+
+  function retainVisibleSelection(visibleIds) {
+    viewerState.selectedNodeIds = new Set(
+      [...viewerState.selectedNodeIds].filter((id) => visibleIds.has(id)),
     );
     renderGraphSelectionActions();
   }
@@ -2825,8 +2825,8 @@
           const widthForNode = node._pillWidth;
           node.x = cx + (widthForNode / 2);
           node.y = rowY;
-          node._focused = rootIds.has(node.id);
           node._batchSelected = viewerState.selectedNodeIds.has(node.id);
+          node._focused = rootIds.has(node.id) && !node._batchSelected;
           node._searchHit = viewerState.searchQuery && String(node.label || "").toLowerCase().includes(viewerState.searchQuery.toLowerCase());
           node._rankScore = nodeRankScore(node);
           cx += widthForNode + spacing;
@@ -4271,7 +4271,6 @@
       sourceKey: String(row.sourceId || ""),
       targetKey: String(row.targetId || ""),
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
-    const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const enrichmentRoundAction = enrichmentRoundActionForNode(node);
     const batchSelected = viewerState.selectedNodeIds.has(node.id);
     const selectedCount = selectedBatchNodes().length;
@@ -4281,7 +4280,7 @@
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
       isComparableNode(node)
         ? {
-            label: batchSelected ? "Remove from selection" : "Select for batch actions",
+            label: batchSelected ? "Deselect" : "Select",
             type: "batch_select_toggle",
             nodeId: node.id,
           }
@@ -4296,14 +4295,6 @@
         ? { label: "Clear selection", type: "batch_select_clear" }
         : null,
       enrichmentRoundAction,
-      questionSelected
-        ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
-        : viewerState.questionNodeIds.length < 8
-          ? { label: "Add to question selection", type: "question_add", nodeId: node.id }
-          : null,
-      viewerState.questionNodeIds.length
-        ? { label: "Ask about selected subgraph", type: "question_open" }
-        : null,
       expandableLowConfidenceNode
         ? {
             label: viewerState.expandedLowConfidenceNodeIds.has(node.id)
@@ -4546,133 +4537,6 @@
     contextMenuEl._actions = [];
   }
 
-  function renderQuestionSelection() {
-    if (!questionSelectionEl) return;
-    viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id, index, ids) => ids.indexOf(id) === index && nodeById.has(id)).slice(0, 8);
-    const labels = viewerState.questionNodeIds.map((id) => nodeById.get(id)?.label || id);
-    questionSelectionEl.textContent = labels.length
-      ? `Selected: ${labels.join(" · ")}`
-      : "Select nodes from their context menus.";
-    questionSubmitEl.disabled = !labels.length;
-  }
-
-  function shortestVisiblePath(sourceId, targetId) {
-    const adjacency = new Map();
-    visibleEdges.forEach((edge) => {
-      if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
-      if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
-      adjacency.get(edge.source).push({ next: edge.target, edge });
-      adjacency.get(edge.target).push({ next: edge.source, edge });
-    });
-    const queue = [sourceId];
-    const visited = new Set(queue);
-    const previous = new Map();
-    while (queue.length) {
-      const current = queue.shift();
-      if (current === targetId) break;
-      for (const step of adjacency.get(current) || []) {
-        if (visited.has(step.next)) continue;
-        visited.add(step.next);
-        previous.set(step.next, { from: current, edge: step.edge });
-        queue.push(step.next);
-      }
-    }
-    if (!visited.has(targetId)) return [];
-    const edges = [];
-    let cursor = targetId;
-    while (cursor !== sourceId) {
-      const step = previous.get(cursor);
-      if (!step) return [];
-      edges.unshift(step.edge);
-      cursor = step.from;
-    }
-    return edges;
-  }
-
-  function buildQuestionSubgraph() {
-    const selected = viewerState.questionNodeIds.filter((id) => nodeById.has(id));
-    const collectedEdges = [];
-    if (selected.length === 1) {
-      visibleEdges.filter((edge) => edge.source === selected[0] || edge.target === selected[0]).slice(0, 40).forEach((edge) => collectedEdges.push(edge));
-    } else {
-      for (let index = 1; index < selected.length; index += 1) {
-        shortestVisiblePath(selected[0], selected[index]).forEach((edge) => collectedEdges.push(edge));
-      }
-    }
-    const uniqueEdges = [...new Map(collectedEdges.map((edge, index) => {
-      const key = `${edge.source}||${edge.target}||${edge.kind || ""}||${edge.role_type || ""}`;
-      return [key, { ...edge, id: String(edge.id || `visible-edge-${index + 1}`) }];
-    })).values()].slice(0, 100);
-    const nodeIds = new Set(selected);
-    uniqueEdges.forEach((edge) => {
-      nodeIds.add(edge.source);
-      nodeIds.add(edge.target);
-    });
-    const nodes = [...nodeIds].map((id) => nodeById.get(id)).filter(Boolean).slice(0, 60).map((node) => ({
-      id: node.id,
-      label: node.label || node.id,
-      kind: node.kind,
-    }));
-    const allowedIds = new Set(nodes.map((node) => node.id));
-    const edges = uniqueEdges.filter((edge) => allowedIds.has(edge.source) && allowedIds.has(edge.target)).map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      source_label: nodeById.get(edge.source)?.label || edge.source,
-      target: edge.target,
-      target_label: nodeById.get(edge.target)?.label || edge.target,
-      kind: edge.kind,
-      phrase: edge.phrase || edge.role_type || "is linked to",
-      confidence: edge.confidence || "",
-      evidence: edge.evidence,
-      evidence_items: edge.evidence_items,
-    }));
-    return { nodes, edges };
-  }
-
-  function renderQuestionAnswer(payload) {
-    const edges = new Map((Array.isArray(payload?.context?.edges) ? payload.context.edges : []).map((edge) => [String(edge.id), edge]));
-    const evidence = new Map((Array.isArray(payload?.context?.evidence) ? payload.context.evidence : []).map((item) => [String(item.id), item]));
-    const claims = Array.isArray(payload?.claims) ? payload.claims : [];
-    questionResultEl.innerHTML = `
-      <div class="analysis-text">${escapeHtml(payload?.answer || "No answer returned.").replaceAll("\n", "<br>")}</div>
-      ${claims.map((claim) => `
-        <div class="analysis-claim">
-          <div class="analysis-claim-text">${escapeHtml(claim.text || "")}</div>
-          ${(Array.isArray(claim.edge_ids) ? claim.edge_ids : []).map((id) => edges.get(String(id))).filter(Boolean).map((edge) => `
-            <div class="question-citation">
-              ${escapeHtml(edge.source_label || edge.source_id)} ${escapeHtml(edge.phrase || "is linked to")} ${escapeHtml(edge.target_label || edge.target_id)} · ${escapeHtml(edge.confidence || "confidence unavailable")}
-              ${(Array.isArray(edge.evidence_ids) ? edge.evidence_ids : []).map((id) => evidence.get(String(id))).filter(Boolean).map((item) => {
-                const url = evidenceActionUrl(item);
-                return url ? ` · <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(evidenceDisplayTitle(item))}</a>` : "";
-              }).join("")}
-            </div>
-          `).join("")}
-        </div>
-      `).join("")}
-    `;
-  }
-
-  async function askSelectedSubgraph() {
-    const question = String(questionInputEl.value || "").trim();
-    if (!question) throw new Error("Enter a question first.");
-    const subgraph = buildQuestionSubgraph();
-    if (!subgraph.edges.length) throw new Error("The selected nodes have no visible connecting path.");
-    questionSubmitEl.disabled = true;
-    questionResultEl.innerHTML = '<div class="analysis-empty">Reading the selected visible relationships...</div>';
-    try {
-      const response = await fetch(graphFunctionUrl(GRAPH_QUESTION_URL), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ graph: currentGraphKey, question, subgraph }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || `Subgraph question failed (${response.status})`);
-      renderQuestionAnswer(payload);
-    } finally {
-      questionSubmitEl.disabled = false;
-    }
-  }
-
   function loadExternalAsset(tagName, url) {
     const attribute = tagName === "link" ? "href" : "src";
     const existing = document.querySelector(`${tagName}[${attribute}="${url}"]`);
@@ -4813,6 +4677,7 @@
     const projection = projectVisibleGraph();
     const scene = buildCombinedScene(projection);
     const visibleIds = new Set(scene.nodes.map((node) => node.id));
+    retainVisibleSelection(visibleIds);
     allNodes.forEach((node) => {
       node._visible = visibleIds.has(node.id);
     });
@@ -4826,8 +4691,6 @@
     renderExtraTreeSummary();
     renderScorePanel();
     if (document.querySelector('.sidebar-pane[data-pane="resolve"]')?.classList.contains("active")) renderResolutionPanel();
-    renderQuestionSelection();
-
     if (document.querySelector('.sidebar-pane[data-pane="map"]')?.classList.contains("active") && addressMap) {
       openMapView().catch(() => {});
     }
@@ -5000,17 +4863,6 @@
         button.disabled = false;
       }
     });
-    questionSubmitEl?.addEventListener("click", () => {
-      askSelectedSubgraph().catch((error) => {
-        questionResultEl.innerHTML = `<div class="analysis-error">${escapeHtml(error.message || "Question failed.")}</div>`;
-      });
-    });
-    questionClearEl?.addEventListener("click", () => {
-      viewerState.questionNodeIds = [];
-      questionInputEl.value = "";
-      questionResultEl.innerHTML = "";
-      renderQuestionSelection();
-    });
     sidebarTabEls.forEach((element) => {
       element.addEventListener("click", () => {
         const tabName = String(element.dataset.tab || "legend");
@@ -5053,16 +4905,6 @@
           console.error(error);
           window.alert("Seed status could not be saved.");
         }
-      } else if (action.type === "question_add") {
-        viewerState.questionNodeIds = [...viewerState.questionNodeIds, action.nodeId].slice(0, 8);
-        renderQuestionSelection();
-      } else if (action.type === "question_remove") {
-        viewerState.questionNodeIds = viewerState.questionNodeIds.filter((id) => id !== action.nodeId);
-        renderQuestionSelection();
-      } else if (action.type === "question_open") {
-        setSidebarTab("ask");
-        toggleSidebar(true);
-        questionInputEl.focus();
       } else if (action.type === "enrichment_round_show" || action.type === "enrichment_round_hide") {
         viewerState.showLatestEnrichmentRound = action.type === "enrichment_round_show";
         applyViewerState();

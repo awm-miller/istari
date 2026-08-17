@@ -110,13 +110,15 @@ async function auditControls() {
     "graph-switcher-button", "search", "mode-viewer", "mode-builder", "toggle-sidebar",
     "indirect-only", "sanctioned-only", "negative-news-only", "case-plan-submit", "case-direct", "case-plan-title", "case-plan-id", "case-run", "case-progress", "case-progress-bar",
     "case-reset", "case-add-input", "case-expansion", "case-entities", "case-max-addresses", "case-include-former", "compare-clear", "details-modal-close",
-    "resolution-panel", "question-selection", "question-input", "question-submit", "question-clear", "run-log-sheet", "run-log-close",
+    "resolution-panel", "run-log-sheet", "run-log-close",
     "graph-selection-actions", "graph-selection-count", "graph-selection-expand", "graph-selection-promote", "graph-selection-clear",
   ];
   for (const id of controls) {
     check(markup.includes(`id="${id}"`), `markup: missing intended control #${id}`);
     check(app.includes(`getElementById("${id}")`), `viewer app: #${id} is not bound`);
   }
+  check(!markup.includes('data-tab="ask"'), "markup: obsolete Ask tab is still present");
+  check(!app.includes("questionNodeIds"), "viewer app: obsolete question selection state is still present");
   const rendererEvents = ["pointerdown", "pointermove", "pointerup", "click", "contextmenu", "dblclick"];
   for (const event of rendererEvents) {
     check(runtime.includes(`addEventListener("${event}"`), `renderer: missing ${event} interaction`);

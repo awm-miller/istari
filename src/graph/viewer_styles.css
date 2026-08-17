@@ -1454,8 +1454,7 @@ body.builder-mode #compact-legend {{
 .tools-actions .toolbar-btn {{
   min-width: 150px;
 }}
-.resolution-panel,
-.question-panel {{
+.resolution-panel {{
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1494,15 +1493,13 @@ body.builder-mode #compact-legend {{
   font-size: 10px;
   line-height: 1.45;
 }}
-.resolution-actions,
-.question-actions {{
+.resolution-actions {{
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 9px;
 }}
-.resolution-actions button,
-.question-actions button {{
+.resolution-actions button {{
   border: 1px solid rgba(88,166,255,0.24);
   border-radius: 7px;
   padding: 7px 9px;
@@ -1514,35 +1511,6 @@ body.builder-mode #compact-legend {{
 .resolution-actions button[data-resolution-action="reject"] {{
   border-color: rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.04);
-}}
-.question-selection {{
-  color: var(--text-dim);
-  font-size: 11px;
-  line-height: 1.5;
-}}
-#question-input {{
-  width: 100%;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 10px;
-  background: rgba(8,12,18,0.6);
-  color: var(--text-bright);
-  font: inherit;
-  font-size: 12px;
-}}
-.question-result {{
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}}
-.question-citation {{
-  border-left: 2px solid rgba(88,166,255,0.45);
-  padding: 7px 9px;
-  background: rgba(88,166,255,0.06);
-  color: var(--text-dim);
-  font-size: 10px;
-  line-height: 1.45;
 }}
 .viewer-sidebar {{
   position: fixed;
@@ -2477,8 +2445,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .score-item-title span {{ color: var(--ink-3); font: 11px "Beautiful Mono", ui-monospace, monospace; }}
 .score-item-meta,
 .score-empty {{ color: var(--ink-3); font-size: 11.5px; }}
-.resolution-panel,
-.question-panel {{ gap: 10px; padding: 4px; }}
+.resolution-panel {{ gap: 10px; padding: 4px; }}
 .resolution-heading {{
   padding: 5px 4px 2px;
   color: var(--ink);
@@ -2496,9 +2463,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   font-size: 10.5px;
 }}
 .resolution-card,
-.resolution-decision,
-.question-selection,
-.question-citation {{
+.resolution-decision {{
   border: 0;
   border-radius: var(--radius-card);
   background: var(--inset);
@@ -2509,8 +2474,7 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .resolution-pair {{ color: var(--ink); font-size: 12.5px; font-weight: 500; }}
 .resolution-reason,
 .resolution-audit {{ color: var(--ink-3); font-size: 11px; }}
-.resolution-actions button,
-.question-actions button {{
+.resolution-actions button {{
   min-height: 28px;
   padding: 5px 9px;
   border: 0;
@@ -2522,35 +2486,10 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
   font-weight: 500;
   transition: background-color 100ms ease, color 100ms ease, transform 100ms ease;
 }}
-.resolution-actions button:hover,
-.question-actions button:hover {{ background: var(--hover); color: var(--ink); }}
+.resolution-actions button:hover {{ background: var(--hover); color: var(--ink); }}
 .resolution-actions button[data-resolution-action="reject"] {{
   border-color: transparent;
   background: var(--surface);
-}}
-#question-submit {{
-  background: var(--accent);
-  color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 0 0 1px rgba(16,24,40,0.12), 0 1px 2px rgba(16,24,40,0.1);
-}}
-#question-submit:hover {{ background: #238cf6; color: #fff; }}
-.question-selection {{ padding: 10px; color: var(--ink-2); font-size: 12px; }}
-#question-input {{
-  min-height: 96px;
-  padding: 10px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: var(--field);
-  color: var(--ink);
-  box-shadow: var(--shadow-inset-field), var(--shadow-hairline);
-  font: 13px/1.4 "Beautiful Inter", Inter, ui-sans-serif, system-ui, sans-serif;
-}}
-#question-input::placeholder {{ color: var(--ink-3); }}
-#question-input:focus {{ box-shadow: var(--shadow-inset-field), 0 0 0 1px var(--line-strong); }}
-.question-citation {{
-  padding: 8px 10px;
-  color: var(--ink-3);
-  font-size: 11px;
 }}
 #address-map {{
   border-radius: var(--radius-card);

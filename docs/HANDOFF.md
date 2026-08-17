@@ -87,7 +87,7 @@ script installs production dependencies and restarts `istari-api.service` and
 4. Change a control, approve the plan, and confirm the run log advances without duplicate work.
    Planning output should show public model and registry status, never hidden chain-of-thought.
 5. Open the generated graph and verify that entity-address edges point to the specific researched entities named by their evidence.
-6. Check repeated edge tooltips, graph selection, deletion confirmation, duplicate resolution, selected-subgraph questions, and immutable version URLs.
+6. Check repeated edge tooltips, graph selection, deletion confirmation, duplicate resolution, and immutable version URLs.
 7. Check that a promoted person becomes the active seed in a dedicated lane above addresses and can be restored without losing merged edges.
 8. On a generated graph, Ctrl-click two nodes and run the selected-node expansion. Confirm one task contains both centres, the next immutable version opens automatically, preserves collision-free node positions and the viewport, and shows its newly added relationships by default. Also promote two selected people and confirm both enter the root lane in one write.
 9. Check both systemd service logs after the run and treat any 5xx response as a failed acceptance test.

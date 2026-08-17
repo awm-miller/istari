@@ -1,7 +1,5 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const graphQuestion = require("../netlify/functions/graph-question");
-const questions = graphQuestion._private;
 const merges = require("../netlify/functions/merge-overrides")._private;
 
 test("graph functions preserve every static and generated graph key", () => {
@@ -14,42 +12,6 @@ test("merge override stores are isolated per graph", () => {
   assert.equal(merges.storeKeyForGraph("mb"), "overrides");
   assert.equal(merges.storeKeyForGraph("94-park-ave"), "overrides:94-park-ave");
   assert.equal(merges.storeKeyForGraph("backend-rebuild-smoke"), "overrides:backend-rebuild-smoke");
-});
-
-test("selected subgraphs retain only edges with valid node referents", () => {
-  const context = questions.buildSubgraphContext({
-    nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
-    edges: [
-      { id: "ab", source: "a", target: "b", phrase: "controls", evidence: { title: "Filing", document_url: "https://example.test/filing" } },
-      { id: "missing", source: "a", target: "c" },
-    ],
-  });
-  assert.deepEqual(context.edges.map((edge) => edge.id), ["ab"]);
-  const fallback = questions.fallbackSubgraphAnswer("How?", context);
-  assert.deepEqual(fallback.claims[0].edge_ids, ["ab"]);
-  assert.deepEqual(fallback.claims[0].evidence_ids, ["e1"]);
-});
-
-test("graph question endpoint rejects obsolete connection-analysis payloads", async () => {
-  const obsolete = await graphQuestion.handler({
-    httpMethod: "POST",
-    body: JSON.stringify({ source_id: "a", target_id: "b" }),
-  });
-  assert.equal(obsolete.statusCode, 400);
-  assert.match(JSON.parse(obsolete.body).error, /question is required/i);
-
-  const response = await graphQuestion.handler({
-    httpMethod: "POST",
-    body: JSON.stringify({
-      question: "How are these nodes connected?",
-      subgraph: {
-        nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
-        edges: [{ id: "ab", source: "a", target: "b", phrase: "controls" }],
-      },
-    }),
-  });
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(JSON.parse(response.body).claims[0].edge_ids, ["ab"]);
 });
 
 test("resolution decisions preserve metadata and bounded audit history", () => {
@@ -94,35 +56,4 @@ test("batch seed rows are bounded and reject invalid nodes", () => {
     merges.normalizeSeedRows(Array.from({ length: 30 }, (_, index) => ({ nodeId: `person:${index}` }))).length,
     25,
   );
-});
-
-test("graph questions use the configured OpenRouter chat-completions model", async () => {
-  const previous = {
-    key: process.env.OPENROUTER_API_KEY,
-    base: process.env.OPENROUTER_BASE_URL,
-    model: process.env.OPENROUTER_RESOLUTION_MODEL,
-    fetch: global.fetch,
-  };
-  process.env.OPENROUTER_API_KEY = "test-key";
-  process.env.OPENROUTER_BASE_URL = "https://openrouter.example/api/v1";
-  process.env.OPENROUTER_RESOLUTION_MODEL = "deepseek/test";
-  global.fetch = async (url, options) => {
-    assert.equal(url, "https://openrouter.example/api/v1/chat/completions");
-    const body = JSON.parse(options.body);
-    assert.equal(body.model, "deepseek/test");
-    assert.equal(body.messages[0].content, "question");
-    assert.deepEqual(body.provider, { data_collection: "deny", zdr: true });
-    return new Response(JSON.stringify({ choices: [{ message: { content: '{"answer":"grounded"}' } }] }));
-  };
-  try {
-    assert.deepEqual(await questions.requestModelJson("question"), { answer: "grounded" });
-  } finally {
-    global.fetch = previous.fetch;
-    if (previous.key == null) delete process.env.OPENROUTER_API_KEY;
-    else process.env.OPENROUTER_API_KEY = previous.key;
-    if (previous.base == null) delete process.env.OPENROUTER_BASE_URL;
-    else process.env.OPENROUTER_BASE_URL = previous.base;
-    if (previous.model == null) delete process.env.OPENROUTER_RESOLUTION_MODEL;
-    else process.env.OPENROUTER_RESOLUTION_MODEL = previous.model;
-  }
 });

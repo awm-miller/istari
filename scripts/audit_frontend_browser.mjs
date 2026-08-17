@@ -63,16 +63,6 @@ const server = createServer(async (request, response) => {
     sendJson(response, { overrides: mergeOverrides });
     return;
   }
-  if (url.pathname === "/.netlify/functions/graph-question" && request.method === "POST") {
-    const body = await requestJson(request);
-    const edge = body.subgraph.edges[0];
-    sendJson(response, {
-      answer: "The selected nodes are connected by the cited visible relationship.",
-      claims: [{ text: "The visible graph supports this connection.", edge_ids: [edge.id], evidence_ids: [] }],
-      context: { nodes: body.subgraph.nodes, edges: body.subgraph.edges, evidence: [] },
-    });
-    return;
-  }
   if (url.pathname === "/api/nearby-addresses/preview" && request.method === "POST") {
     const body = await requestJson(request);
     sendJson(response, {
@@ -401,14 +391,14 @@ try {
       );
     }
   }
-  await chooseNodeAction(sourceLabel, "Add to question selection");
-  await chooseNodeAction(targetLabel, "Add to question selection");
-  await chooseNodeAction(targetLabel, "Ask about selected subgraph");
-  await page.locator("#question-input").fill("How are these nodes connected?");
-  await page.locator("#question-submit").click();
-  await page.waitForSelector(".question-citation");
-  assert.match(await page.locator("#question-result").innerText(), /visible graph supports this connection/i);
-  await page.locator("#question-clear").click();
+  await chooseNodeAction(sourceLabel, "Select");
+  assert.equal(await page.locator("#graph-selection-count").innerText(), "1 selected");
+  assert.ok(await sourceLabel.evaluate((element) => element.classList.contains("selected")), "selected node is not highlighted");
+  assert.ok(!(await sourceLabel.evaluate((element) => element.classList.contains("highlight"))), "selected node still has the focus highlight");
+  assert.equal(await page.locator('.sidebar-tab[data-tab="ask"]').count(), 0);
+  assert.equal(await page.getByRole("button", { name: /question selection|selected subgraph/i }).count(), 0);
+  await chooseNodeAction(sourceLabel, "Deselect");
+  assert.ok(await page.locator("#graph-selection-actions").evaluate((element) => element.classList.contains("hidden")));
 
   const firstLabel = page.locator(".graph-node-label").first();
   const firstBox = await firstLabel.boundingBox();
@@ -601,7 +591,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Configure custom enrichment" }).count(), 0);
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, evidence, resolution, batch promotion, multi-node expansion, automatic position-preserving refresh, questions, Builder paths, task feedback, task history, and run logs.");
+  console.log("Browser audit passed: rendering, evidence, aligned selection, resolution, batch promotion, multi-node expansion, automatic position-preserving refresh, Builder paths, task feedback, task history, and run logs.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
