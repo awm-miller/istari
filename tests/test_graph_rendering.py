@@ -136,7 +136,7 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("if (node.promoted_to_seed) return 0;", html)
         self.assertIn("const rootDifference = Number(rootIds.has(right.id)) - Number(rootIds.has(left.id));", html)
         self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
-        self.assertIn("setSingleFocus(promotedNode.id);", html)
+        self.assertIn("viewerState.focusedNodeIds = new Set(promotedNodes.map((node) => node.id));", html)
 
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})

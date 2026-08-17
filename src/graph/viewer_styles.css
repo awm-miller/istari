@@ -509,6 +509,64 @@ body {{
 .graph-expansion-status progress::-moz-progress-bar {{ background: var(--blue); }}
 .graph-expansion-status[data-state="complete"] progress::-webkit-progress-value {{ background: #45c47c; }}
 .graph-expansion-status[data-state="complete"] progress::-moz-progress-bar {{ background: #45c47c; }}
+.graph-selection-actions {{
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  z-index: 25;
+  max-width: calc(100vw - 24px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(20, 24, 32, 0.96);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.34);
+}}
+.graph-selection-actions.hidden {{ display: none; }}
+.graph-selection-count {{
+  min-width: 82px;
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}}
+.graph-selection-actions button {{
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}}
+.graph-selection-actions button.primary {{
+  border-color: rgba(88, 166, 255, 0.72);
+  background: rgba(88, 166, 255, 0.16);
+  color: var(--text-bright);
+}}
+.graph-selection-actions button.quiet {{
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-dim);
+}}
+.graph-selection-actions button:hover:not(:disabled) {{
+  border-color: var(--blue);
+  color: var(--text-bright);
+}}
+.graph-selection-actions button:disabled {{
+  opacity: 0.42;
+  cursor: default;
+}}
+body.graph-selection-active .graph-expansion-status {{ bottom: 78px; }}
+body.builder-mode .graph-selection-actions {{ display: none; }}
 body.builder-mode #graph,
 body.builder-mode .viewer-sidebar,
 body.builder-mode #toggle-sidebar,
@@ -1014,6 +1072,9 @@ body.builder-mode #compact-legend {{
   overflow: hidden;
 }
 .graph-node-label.highlight {{
+  color: var(--text-bright);
+}
+.graph-node-label.selected {{
   color: var(--text-bright);
 }
 .graph-node-label.sanctioned {{

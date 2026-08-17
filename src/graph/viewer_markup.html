@@ -217,6 +217,12 @@
   <pre class="builder-stdout" id="builder-status" aria-label="Run output"></pre>
 </section>
 <div id="graph"></div>
+<div class="graph-selection-actions hidden" id="graph-selection-actions" role="toolbar" aria-label="Selected node actions">
+  <span class="graph-selection-count" id="graph-selection-count">0 selected</span>
+  <button class="primary" id="graph-selection-expand" type="button">Expand</button>
+  <button id="graph-selection-promote" type="button">Promote to seeds</button>
+  <button class="quiet" id="graph-selection-clear" type="button">Clear</button>
+</div>
 <div class="graph-expansion-status hidden" id="graph-expansion-status" role="status" aria-live="polite">
   <span id="graph-expansion-label">Expanding direct relationships</span>
   <progress id="graph-expansion-progress" max="100" value="0">0%</progress>

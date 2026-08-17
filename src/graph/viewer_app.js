@@ -27,6 +27,7 @@
   const GRAPH_QUESTION_URL = "/.netlify/functions/graph-question";
   const EVIDENCE_FILE_URL = "/.netlify/functions/evidence-file";
   const MERGE_OVERRIDES_URL = "/.netlify/functions/merge-overrides";
+  const MAX_BATCH_SELECTION = 25;
   const LEAFLET_CSS_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
   const LEAFLET_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
 
@@ -117,6 +118,11 @@
   const graphExpansionStatusEl = document.getElementById("graph-expansion-status");
   const graphExpansionLabelEl = document.getElementById("graph-expansion-label");
   const graphExpansionProgressEl = document.getElementById("graph-expansion-progress");
+  const graphSelectionActionsEl = document.getElementById("graph-selection-actions");
+  const graphSelectionCountEl = document.getElementById("graph-selection-count");
+  const graphSelectionExpandEl = document.getElementById("graph-selection-expand");
+  const graphSelectionPromoteEl = document.getElementById("graph-selection-promote");
+  const graphSelectionClearEl = document.getElementById("graph-selection-clear");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
   const negativeNewsOnlyInput = document.getElementById("negative-news-only");
@@ -201,6 +207,7 @@
   const viewerState = {
     searchQuery: "",
     focusedNodeIds: new Set(),
+    selectedNodeIds: new Set(),
     extraRootIds: [],
     expandedHiddenConnections: [],
     hiddenTypes: new Set(),
@@ -517,7 +524,7 @@
 
   async function startGraphEnrichment(request, statusMessage = "Creating direct expansion task.") {
     if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
-      throw new Error("A node expansion is already running.");
+      throw new Error("An expansion batch is already running.");
     }
     currentEnrichmentStatus = "creating";
     enrichmentNavigationStarted = false;
@@ -538,16 +545,19 @@
     await watchBuilderJob(currentEnrichmentJobId);
   }
 
-  async function runOneEnrichmentRound(nodeId) {
+  async function runEnrichmentRound(nodeIds) {
     if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be expanded.");
-    const node = rawMainNodes.find((candidate) => String(candidate.id) === String(nodeId));
-    if (!enrichmentNodeEligible(node)) throw new Error("This node cannot be used as a discovery seed.");
+    const requestedIds = [...new Set((Array.isArray(nodeIds) ? nodeIds : [nodeIds]).map(String))].slice(0, MAX_BATCH_SELECTION);
+    const nodes = requestedIds
+      .map((nodeId) => rawMainNodes.find((candidate) => String(candidate.id) === nodeId))
+      .filter(enrichmentNodeEligible);
+    if (!nodes.length) throw new Error("None of the selected nodes can be used as discovery seeds.");
     if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
-      throw new Error("An enrichment task is already running.");
+      throw new Error("An expansion batch is already running.");
     }
     await startGraphEnrichment({
       sourceVersion: currentGeneratedGraphVersion || undefined,
-      centralNodeIds: [node.id],
+      centralNodeIds: nodes.map((node) => node.id),
       scopeNodeIds: [],
       expandRelationships: true,
       expansionCycles: 0,
@@ -555,7 +565,33 @@
       enrichMissingDocuments: false,
       entityCeiling: 5000,
       includeFormer: true,
-    }, `Expanding direct relationships for ${node.label || node.id}.`);
+    }, nodes.length === 1
+      ? `Expanding direct relationships for ${nodes[0].label || nodes[0].id}.`
+      : `Expanding direct relationships from ${nodes.length} selected nodes.`);
+  }
+
+  function showExpansionError(error) {
+    currentEnrichmentStatus = "failed";
+    graphExpansionStatusEl.classList.remove("hidden");
+    graphExpansionStatusEl.dataset.state = "error";
+    graphExpansionProgressEl.value = 0;
+    graphExpansionLabelEl.textContent = error.message || "The expansion could not start.";
+  }
+
+  function runSelectedExpansion() {
+    const nodes = selectedExpansionNodes();
+    if (!nodes.length) return;
+    clearBatchSelection();
+    applyViewerState({ preserveViewport: true });
+    runEnrichmentRound(nodes.map((node) => node.id)).catch(showExpansionError);
+  }
+
+  async function promoteSelectedSeeds() {
+    const promotions = selectedSeedPromotions();
+    if (!promotions.length) return;
+    const confirmed = window.confirm(`Promote ${promotions.length} selected ${promotions.length === 1 ? "person" : "people"} to seeds?`);
+    if (!confirmed) return;
+    await persistSeedOverrides(promotions.map((promotion) => ({ ...promotion, operation: "add" })));
   }
 
   function upsertRecentTask(job) {
@@ -1247,6 +1283,68 @@
     return !!node && node.kind !== "seed";
   }
 
+  function selectedBatchNodes() {
+    return [...viewerState.selectedNodeIds]
+      .map((id) => nodeById.get(id))
+      .filter(isComparableNode);
+  }
+
+  function selectedExpansionNodes() {
+    return selectedBatchNodes().filter(enrichmentNodeEligible);
+  }
+
+  function promotedSeedKeys() {
+    return new Set(normalizeHiddenOverrideRows(mergeOverrides.seed).map((row) => row.nodeId));
+  }
+
+  function seedPromotionForNode(node, promotedKeys = promotedSeedKeys()) {
+    if (mergeKindForNode(node) !== "name") return null;
+    const nodeKey = nodeMergePrimaryKey(node);
+    if (!nodeKey || nodeMergeStableKeys(node).some((key) => promotedKeys.has(key))) return null;
+    return { nodeKey, nodeLabel: String(node.label || node.id || "node") };
+  }
+
+  function selectedSeedPromotions() {
+    const promotedKeys = promotedSeedKeys();
+    return selectedBatchNodes().map((node) => seedPromotionForNode(node, promotedKeys)).filter(Boolean);
+  }
+
+  function renderGraphSelectionActions() {
+    if (!graphSelectionActionsEl) return;
+    const count = selectedBatchNodes().length;
+    const expansionCount = selectedExpansionNodes().length;
+    const promotionCount = selectedSeedPromotions().length;
+    graphSelectionActionsEl.classList.toggle("hidden", !count);
+    document.body.classList.toggle("graph-selection-active", !!count);
+    graphSelectionCountEl.textContent = `${count} selected`;
+    graphSelectionExpandEl.textContent = expansionCount ? `Expand ${expansionCount}` : "Expand";
+    graphSelectionExpandEl.disabled = !expansionCount;
+    graphSelectionPromoteEl.textContent = promotionCount ? `Promote ${promotionCount}` : "Promote to seeds";
+    graphSelectionPromoteEl.disabled = !promotionCount;
+  }
+
+  function clearBatchSelection() {
+    viewerState.selectedNodeIds.clear();
+    renderGraphSelectionActions();
+  }
+
+  function toggleBatchSelection(nodeId) {
+    const node = nodeById.get(nodeId);
+    if (!isComparableNode(node)) return false;
+    if (viewerState.selectedNodeIds.has(nodeId)) {
+      viewerState.selectedNodeIds.delete(nodeId);
+      renderGraphSelectionActions();
+      return true;
+    }
+    if (viewerState.selectedNodeIds.size >= MAX_BATCH_SELECTION) {
+      window.alert(`Select up to ${MAX_BATCH_SELECTION} nodes at once.`);
+      return false;
+    }
+    viewerState.selectedNodeIds.add(nodeId);
+    renderGraphSelectionActions();
+    return true;
+  }
+
   function setSingleFocus(nodeId = "") {
     viewerState.focusedNodeIds = nodeId ? new Set([nodeId]) : new Set();
   }
@@ -1272,8 +1370,11 @@
   }
 
   function sanitizeSelectionState() {
-    setSingleFocus(
-      [...viewerState.focusedNodeIds].find((id) => isComparableNode(nodeById.get(id))) || "",
+    viewerState.focusedNodeIds = new Set(
+      [...viewerState.focusedNodeIds].filter((id) => isComparableNode(nodeById.get(id))),
+    );
+    viewerState.selectedNodeIds = new Set(
+      [...viewerState.selectedNodeIds].filter((id) => isComparableNode(nodeById.get(id))),
     );
     viewerState.extraRootIds = viewerState.extraRootIds.filter((id, index, ids) => (
       ids.indexOf(id) === index && isComparableNode(nodeById.get(id))
@@ -1281,6 +1382,7 @@
     viewerState.expandedLowConfidenceNodeIds = new Set(
       [...viewerState.expandedLowConfidenceNodeIds].filter((id) => isLowConfidenceDocumentNode(lowConfidenceNodeLookup(id))),
     );
+    renderGraphSelectionActions();
   }
 
   function addExtraRoot(nodeId) {
@@ -2724,6 +2826,7 @@
           node.x = cx + (widthForNode / 2);
           node.y = rowY;
           node._focused = rootIds.has(node.id);
+          node._batchSelected = viewerState.selectedNodeIds.has(node.id);
           node._searchHit = viewerState.searchQuery && String(node.label || "").toLowerCase().includes(viewerState.searchQuery.toLowerCase());
           node._rankScore = nodeRankScore(node);
           cx += widthForNode + spacing;
@@ -3861,35 +3964,59 @@
     await applyViewerState();
   }
 
-  async function persistSeedOverride(action) {
-    const affectedNodeId = baseNodes.find((node) => nodeMergeStableKeys(node).includes(action.nodeKey))?.id || "";
+  async function persistSeedOverrides(actions) {
+    const rows = (Array.isArray(actions) ? actions : [actions]).filter((action) => action?.nodeKey);
+    if (!rows.length) return;
+    const operation = String(rows[0].operation || "add");
+    if (rows.some((action) => String(action.operation || "add") !== operation)) {
+      throw new Error("Seed changes must use one operation.");
+    }
+    if (rows.length > 1 && operation !== "add") {
+      throw new Error("Batch seed restoration is not supported.");
+    }
+    const affectedNodeIds = new Set(rows.map((action) => (
+      baseNodes.find((node) => nodeMergeStableKeys(node).includes(action.nodeKey))?.id || ""
+    )).filter(Boolean));
+    const request = rows.length === 1
+      ? {
+          graph: currentGraphKey,
+          operation,
+          kind: "seed",
+          nodeId: rows[0].nodeKey,
+          label: rows[0].nodeLabel,
+        }
+      : {
+          graph: currentGraphKey,
+          operation: "add_many",
+          kind: "seed",
+          rows: rows.map((action) => ({ nodeId: action.nodeKey, label: action.nodeLabel })),
+        };
     const response = await fetch(graphFunctionUrl(MERGE_OVERRIDES_URL), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        graph: currentGraphKey,
-        operation: String(action.operation || "add"),
-        kind: "seed",
-        nodeId: action.nodeKey,
-        label: action.nodeLabel,
-      }),
+      body: JSON.stringify(request),
     });
     if (!response.ok) throw new Error(`Seed promotion persistence failed (${response.status})`);
     const payload = await response.json();
     mergeOverrides = readMergeOverrides(payload?.overrides || {});
     resolutionCandidatesCache = null;
     rebuildBaseGraph();
-    const promotedNode = baseNodes.find((node) => (
+    const promotedNodes = rows.map((action) => baseNodes.find((node) => (
       node.promoted_to_seed && nodeMergeStableKeys(node).includes(action.nodeKey)
-    ));
-    if (action.operation === "add" && promotedNode) {
+    ))).filter(Boolean);
+    if (operation === "add" && promotedNodes.length) {
       searchInput.value = "";
       viewerState.searchQuery = "";
-      setSingleFocus(promotedNode.id);
-    } else if (action.operation === "remove" && viewerState.focusedNodeIds.has(affectedNodeId)) {
-      viewerState.focusedNodeIds.clear();
+      viewerState.focusedNodeIds = new Set(promotedNodes.map((node) => node.id));
+    } else if (operation === "remove") {
+      affectedNodeIds.forEach((nodeId) => viewerState.focusedNodeIds.delete(nodeId));
     }
+    clearBatchSelection();
     await applyViewerState();
+  }
+
+  async function persistSeedOverride(action) {
+    await persistSeedOverrides([action]);
   }
 
   async function persistResolutionDecision(action) {
@@ -4125,8 +4252,8 @@
     const mergeKind = mergeKindForNode(node);
     const mergePrimaryKey = nodeMergePrimaryKey(node);
     const hidePrimaryKey = nodeHidePrimaryKey(node);
-    const promotedSeedKeys = new Set(normalizeHiddenOverrideRows(mergeOverrides.seed).map((row) => row.nodeId));
-    const isPromotedSeed = nodeMergeStableKeys(node).some((key) => promotedSeedKeys.has(key));
+    const promotedKeys = promotedSeedKeys();
+    const isPromotedSeed = nodeMergeStableKeys(node).some((key) => promotedKeys.has(key));
     const pendingMergeNode = nodeById.get(viewerState.pendingMergeNodeId) || null;
     const compatiblePendingMergeNode = pendingMergeNode
       && pendingMergeNode.id !== node.id
@@ -4146,8 +4273,28 @@
     })).filter((row) => row.kind && row.sourceKey && row.targetKey);
     const questionSelected = viewerState.questionNodeIds.includes(node.id);
     const enrichmentRoundAction = enrichmentRoundActionForNode(node);
+    const batchSelected = viewerState.selectedNodeIds.has(node.id);
+    const selectedCount = selectedBatchNodes().length;
+    const expansionCount = selectedExpansionNodes().length;
+    const promotionCount = selectedSeedPromotions().length;
     const actions = [
       { label: "Explain claims and attribution", type: "node_claims", nodeId: node.id },
+      isComparableNode(node)
+        ? {
+            label: batchSelected ? "Remove from selection" : "Select for batch actions",
+            type: "batch_select_toggle",
+            nodeId: node.id,
+          }
+        : null,
+      batchSelected && selectedCount > 1 && expansionCount
+        ? { label: `Expand selected (${expansionCount})`, type: "enrichment_batch_run" }
+        : null,
+      batchSelected && selectedCount > 1 && promotionCount
+        ? { label: `Promote selected (${promotionCount})`, type: "seed_batch_add" }
+        : null,
+      batchSelected && selectedCount > 1
+        ? { label: "Clear selection", type: "batch_select_clear" }
+        : null,
       enrichmentRoundAction,
       questionSelected
         ? { label: "Remove from question selection", type: "question_remove", nodeId: node.id }
@@ -4719,6 +4866,17 @@
       if (caseNearbyEnabledInput?.checked) scheduleNearbyPreview(0);
     });
     caseProgressOpenEl?.addEventListener("click", () => setRunLogOpen(true));
+    graphSelectionExpandEl?.addEventListener("click", runSelectedExpansion);
+    graphSelectionPromoteEl?.addEventListener("click", () => {
+      promoteSelectedSeeds().catch((error) => {
+        console.error(error);
+        window.alert("Seed status could not be saved.");
+      });
+    });
+    graphSelectionClearEl?.addEventListener("click", () => {
+      clearBatchSelection();
+      applyViewerState({ preserveViewport: true });
+    });
     caseCancelButton?.addEventListener("click", () => {
       cancelCurrentTask().catch((error) => setBuilderStatus(error.message || "The task could not be cancelled.", true));
     });
@@ -4881,6 +5039,20 @@
       } else if (action.type === "node_claims") {
         const node = nodeById.get(action.nodeId);
         if (node) openNodeAttributionView(node);
+      } else if (action.type === "batch_select_toggle") {
+        if (toggleBatchSelection(action.nodeId)) applyViewerState({ preserveViewport: true });
+      } else if (action.type === "batch_select_clear") {
+        clearBatchSelection();
+        applyViewerState({ preserveViewport: true });
+      } else if (action.type === "enrichment_batch_run") {
+        runSelectedExpansion();
+      } else if (action.type === "seed_batch_add") {
+        try {
+          await promoteSelectedSeeds();
+        } catch (error) {
+          console.error(error);
+          window.alert("Seed status could not be saved.");
+        }
       } else if (action.type === "question_add") {
         viewerState.questionNodeIds = [...viewerState.questionNodeIds, action.nodeId].slice(0, 8);
         renderQuestionSelection();
@@ -4895,13 +5067,7 @@
         viewerState.showLatestEnrichmentRound = action.type === "enrichment_round_show";
         applyViewerState();
       } else if (action.type === "enrichment_round_run") {
-        runOneEnrichmentRound(action.nodeId).catch((error) => {
-          currentEnrichmentStatus = "failed";
-          graphExpansionStatusEl.classList.remove("hidden");
-          graphExpansionStatusEl.dataset.state = "error";
-          graphExpansionProgressEl.value = 0;
-          graphExpansionLabelEl.textContent = error.message || "The expansion could not start.";
-        });
+        runEnrichmentRound([action.nodeId]).catch(showExpansionError);
       } else if (action.type === "low_confidence_expand" || action.type === "low_confidence_collapse") {
         viewerState.searchQuery = "";
         searchInput.value = "";
@@ -5016,6 +5182,10 @@
       if (event.key === "Escape") {
         closeContextMenu();
         hideCanvasSearchPopover();
+        if (viewerState.selectedNodeIds.size) {
+          clearBatchSelection();
+          applyViewerState({ preserveViewport: true });
+        }
       }
     });
   }
@@ -5053,8 +5223,13 @@
       onBackgroundContextMenu(event) {
         openCanvasContextMenu(event);
       },
-      onClick(node) {
+      onClick(node, event) {
         if (!node) return;
+        if (event?.ctrlKey || event?.metaKey) {
+          if (toggleBatchSelection(node.id)) applyViewerState({ preserveViewport: true });
+          return;
+        }
+        clearBatchSelection();
         setSingleFocus(node.id);
         viewerState.searchQuery = "";
         searchInput.value = "";
@@ -5062,6 +5237,7 @@
       },
       onFocusButton(node) {
         if (!node) return;
+        clearBatchSelection();
         searchInput.value = node.label || "";
         viewerState.searchQuery = (node.label || "").trim();
         viewerState.focusedNodeIds.clear();
@@ -5072,8 +5248,9 @@
         closeContextMenu();
       },
       onBackgroundDoubleClick() {
-        if (!viewerState.focusedNodeIds.size) return;
+        if (!viewerState.focusedNodeIds.size && !viewerState.selectedNodeIds.size) return;
         viewerState.focusedNodeIds.clear();
+        clearBatchSelection();
         applyViewerState();
       },
     });

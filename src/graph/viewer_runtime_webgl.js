@@ -85,6 +85,7 @@
   }
 
   function nodeFillAlpha(node) {
+    if (node._batchSelected) return 0.34;
     if (node._focused) return 0.28;
     if (node.is_low_confidence) return 0.14;
     if (node.sanctioned) return 0.48;
@@ -237,6 +238,8 @@
     let hoveredEdgeKey = "";
     let draggingNode = null;
     let draggingPointerId = null;
+    let dragStartClient = null;
+    let dragMoved = false;
     let suppressClickUntil = 0;
 
     function nodeSceneKey(node) {
@@ -293,6 +296,7 @@
     function labelClasses(node) {
       const classes = ["graph-node-label"];
       if (node._focused) classes.push("highlight");
+      if (node._batchSelected) classes.push("selected");
       if (node.sanctioned) classes.push("sanctioned");
       if (node.egypt_judgment_hit) classes.push("egypt-judgment");
       if (node.adverse_media_hit) classes.push("adverse-media");
@@ -443,6 +447,10 @@
           if (node._lowConfidenceOnlyVisible) {
             drawDashedCapsuleBorder(overlayLayer, bounds, 0xfacc15, 1.8);
           }
+        }
+        if (node._batchSelected) {
+          overlayLayer.roundRect(bounds.x - 2, bounds.y - 2, bounds.width + 4, bounds.height + 4, bounds.radius + 2);
+          overlayLayer.stroke({ color: 0x58a6ff, width: 2.4, alpha: 1 });
         }
       });
       nodeFillGroups.forEach((group) => {
@@ -641,6 +649,8 @@
       if (!hit || hit.zone !== "body") return;
       draggingNode = hit.node;
       draggingPointerId = event.pointerId;
+      dragStartClient = { x: event.clientX, y: event.clientY };
+      dragMoved = false;
       host.dataset.dragging = "1";
       host.setPointerCapture?.(event.pointerId);
       event.preventDefault();
@@ -650,6 +660,11 @@
 
     function handlePointerMove(event) {
       if (draggingNode && draggingPointerId === event.pointerId) {
+        if (!dragMoved) {
+          const distance = Math.hypot(event.clientX - dragStartClient.x, event.clientY - dragStartClient.y);
+          if (distance < 4) return;
+          dragMoved = true;
+        }
         const rect = host.getBoundingClientRect();
         draggingNode.x = transform.invertX(event.clientX - rect.left);
         draggingNode.y = transform.invertY(event.clientY - rect.top);
@@ -678,12 +693,15 @@
     function handlePointerUp(event) {
       if (!draggingNode || draggingPointerId !== event.pointerId) return;
       const finishedNode = draggingNode;
+      const finishedDragMoved = dragMoved;
       draggingNode = null;
       draggingPointerId = null;
+      dragStartClient = null;
+      dragMoved = false;
       delete host.dataset.dragging;
-      suppressClickUntil = Date.now() + 180;
+      if (finishedDragMoved) suppressClickUntil = Date.now() + 180;
       host.releasePointerCapture?.(event.pointerId);
-      options.onDragEnd?.(finishedNode, event);
+      if (finishedDragMoved) options.onDragEnd?.(finishedNode, event);
     }
 
     function handlePointerLeave() {

@@ -107,6 +107,13 @@ function normalizeMergeRows(rows) {
     .filter(Boolean);
 }
 
+function normalizeSeedRows(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice(0, 25)
+    .map((row) => normalizeSeedRow(row?.nodeId, row?.label))
+    .filter(Boolean);
+}
+
 function normalizeAuditRow(row) {
   const action = optionalText(row?.action);
   const at = optionalText(row?.at);
@@ -254,6 +261,25 @@ exports.handler = async function handler(event) {
     return json(400, { error: "Unsupported override operation." });
   }
   if (operation === "add_many") {
+    if (kind === "seed") {
+      const rows = normalizeSeedRows(payload.rows);
+      if (!rows.length) {
+        return json(400, { error: "Batch write contains no valid seed nodes." });
+      }
+      rows.forEach((row, index) => {
+        upsertSeedUnique(current.seed, row.nodeId, row.label, decidedAt);
+        appendAudit(current, {
+          id: `${Date.now()}:${index}:add:seed`,
+          action: "promote_seed",
+          at: decidedAt,
+          kind,
+          sourceId: row.nodeId,
+          sourceLabel: row.label,
+        });
+      });
+      await store.setJSON(storeKey, current);
+      return json(200, { graph: graphKey, overrides: current });
+    }
     if (!["address", "name", "organisation"].includes(kind)) {
       return json(400, { error: "Batch writes require a merge kind." });
     }
@@ -352,4 +378,4 @@ exports.handler = async function handler(event) {
   return json(200, { graph: graphKey, overrides: current });
 };
 
-exports._private = { normalizeGraphKey, storeKeyForGraph, normalizeOverrides, normalizeMergeRows };
+exports._private = { normalizeGraphKey, storeKeyForGraph, normalizeOverrides, normalizeMergeRows, normalizeSeedRows };

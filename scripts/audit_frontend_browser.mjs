@@ -26,8 +26,9 @@ let createdGraphId = "";
 let generatedGraphDeleted = false;
 let deleteConfirmation = "";
 let enrichmentRequest = null;
+let seedBatchRequest = null;
 let mergeOverrides = {
-  address: [], name: [], organisation: [], hidden: [],
+  address: [], name: [], organisation: [], seed: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
   audit: [{ id: "audit-1", action: "reject", at: "2026-07-27T12:00:00Z", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef" }],
 };
@@ -50,7 +51,15 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/.netlify/functions/merge-overrides") {
-    if (request.method === "POST") mergeOverrides = { address: [], name: [], organisation: [], hidden: [], rejected: [], audit: mergeOverrides.audit };
+    if (request.method === "POST") {
+      const body = await requestJson(request);
+      if (body.kind === "seed" && body.operation === "add_many") {
+        seedBatchRequest = body;
+        mergeOverrides.seed = body.rows.map((row) => ({ ...row, decidedAt: new Date().toISOString() }));
+      } else {
+        mergeOverrides = { address: [], name: [], organisation: [], seed: mergeOverrides.seed, hidden: [], rejected: [], audit: mergeOverrides.audit };
+      }
+    }
     sendJson(response, { overrides: mergeOverrides });
     return;
   }
@@ -372,6 +381,26 @@ try {
     await page.mouse.click(box.x + 8, box.y + (box.height / 2), { button: "right" });
     await page.getByRole("button", { name: actionName }).click();
   }
+  async function ctrlSelectNodes(locators) {
+    const points = [];
+    for (const locator of locators) {
+      const box = await locator.boundingBox();
+      assert.ok(box, "selected node has no hit area");
+      points.push({ x: box.x + 8, y: box.y + (box.height / 2) });
+    }
+    for (let index = 0; index < points.length; index += 1) {
+      await page.locator(".graph-stage").dispatchEvent("click", {
+        bubbles: true,
+        clientX: points[index].x,
+        clientY: points[index].y,
+        ctrlKey: true,
+      });
+      await page.waitForFunction(
+        (expected) => document.querySelector("#graph-selection-count")?.textContent === `${expected} selected`,
+        index + 1,
+      );
+    }
+  }
   await chooseNodeAction(sourceLabel, "Add to question selection");
   await chooseNodeAction(targetLabel, "Add to question selection");
   await chooseNodeAction(targetLabel, "Ask about selected subgraph");
@@ -510,13 +539,30 @@ try {
   await chooseNodeAction(enrichmentCentre, "Show expanded round (1)");
   assert.ok(await page.locator("#graph").getByText("LATEST ROUND PERSON", { exact: true }).isVisible());
 
+  const promotionTargets = page.locator('.graph-node-label[data-node-id*="person"]');
+  assert.ok(await promotionTargets.count() >= 2, "batch promotion requires two visible people");
+  await ctrlSelectNodes([promotionTargets.nth(0), promotionTargets.nth(1)]);
+  await page.waitForSelector("#graph-selection-actions:not(.hidden)");
+  assert.equal(await page.locator("#graph-selection-count").innerText(), "2 selected");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#graph-selection-promote").click();
+  await page.waitForFunction(() => document.querySelector("#graph-selection-actions")?.classList.contains("hidden"));
+  assert.equal(seedBatchRequest?.operation, "add_many");
+  assert.equal(seedBatchRequest?.kind, "seed");
+  assert.equal(seedBatchRequest?.rows.length, 2);
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForSelector(".graph-node-label");
+
   const directEnrichmentTarget = enrichmentTargets.nth(1);
   const stableTarget = page.locator('.graph-node-label[data-node-id*="address:"]').first();
   const stableNodeId = await stableTarget.getAttribute("data-node-id");
   const stableBox = await stableTarget.boundingBox();
   assert.ok(stableBox, "stable node has no hit area");
-  const collisionTarget = enrichmentTargets.nth(2);
-  const collisionAnchor = enrichmentTargets.nth(3);
+  await ctrlSelectNodes([directEnrichmentTarget, enrichmentTargets.nth(2)]);
+  assert.equal(await page.locator("#graph-selection-count").innerText(), "2 selected");
+  assert.equal(await page.locator("#graph-selection-expand").innerText(), "Expand 2");
+  const collisionTarget = enrichmentTargets.nth(3);
+  const collisionAnchor = enrichmentTargets.nth(4);
   const collisionBox = await collisionTarget.boundingBox();
   const anchorBox = await collisionAnchor.boundingBox();
   assert.ok(collisionBox && anchorBox, "collision test nodes have no hit area");
@@ -525,9 +571,9 @@ try {
   await page.mouse.move(anchorBox.x + (anchorBox.width / 2), anchorBox.y + (anchorBox.height / 2), { steps: 5 });
   await page.mouse.up();
   const navigation = page.waitForNavigation({ waitUntil: "networkidle" });
-  await chooseNodeAction(directEnrichmentTarget, "Expand this company");
+  await page.locator("#graph-selection-expand").click();
   await navigation;
-  assert.equal(enrichmentRequest?.centralNodeIds.length, 1);
+  assert.equal(enrichmentRequest?.centralNodeIds.length, 2);
   assert.deepEqual(enrichmentRequest?.scopeNodeIds, []);
   assert.equal(enrichmentRequest?.expansionCycles, 0);
   assert.equal(enrichmentRequest?.expandPeople, true);
@@ -555,7 +601,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Configure custom enrichment" }).count(), 0);
 
   assert.deepEqual(runtimeErrors, [], `browser errors:\n${runtimeErrors.join("\n")}`);
-  console.log("Browser audit passed: rendering, evidence, resolution, direct node expansion, automatic position-preserving refresh, questions, Builder paths, task feedback, task history, and run logs.");
+  console.log("Browser audit passed: rendering, evidence, resolution, batch promotion, multi-node expansion, automatic position-preserving refresh, questions, Builder paths, task feedback, task history, and run logs.");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

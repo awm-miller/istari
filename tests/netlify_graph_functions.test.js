@@ -80,6 +80,22 @@ test("batch merge rows are bounded and reject invalid pairs", () => {
   }]);
 });
 
+test("batch seed rows are bounded and reject invalid nodes", () => {
+  const rows = merges.normalizeSeedRows([
+    { nodeId: "person:a", label: "A Person" },
+    { nodeId: "", label: "Missing" },
+    { nodeId: "person:b" },
+  ]);
+  assert.deepEqual(rows, [
+    { nodeId: "person:a", label: "A Person" },
+    { nodeId: "person:b" },
+  ]);
+  assert.equal(
+    merges.normalizeSeedRows(Array.from({ length: 30 }, (_, index) => ({ nodeId: `person:${index}` }))).length,
+    25,
+  );
+});
+
 test("graph questions use the configured OpenRouter chat-completions model", async () => {
   const previous = {
     key: process.env.OPENROUTER_API_KEY,

@@ -26,7 +26,10 @@ stored graph job state.
 Generated graph node menus can add the direct relationships of one address,
 person, company, or charity. For example, expanding a company adds its officers
 without continuing through their addresses or other organisations. The viewer
-opens the new immutable version automatically, preserves the current node
+also supports Ctrl-click selection of up to 25 nodes. One selected-node action
+can expand all valid centres in a single durable task or promote all selected
+people to seeds in one atomic write. This avoids competing graph versions.
+The viewer opens the new immutable version automatically, preserves the current node
 positions and viewport, repairs stale-position collisions, and shows newly
 added nodes immediately. The same centre-node action can hide that latest
 round. A final evidence-based person-resolution pass runs before publication.
