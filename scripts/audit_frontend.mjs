@@ -111,7 +111,7 @@ async function auditControls() {
     "indirect-only", "sanctioned-only", "negative-news-only", "case-plan-submit", "case-direct", "case-plan-title", "case-plan-id", "case-run", "case-progress", "case-progress-bar",
     "case-reset", "case-add-input", "case-expansion", "case-entities", "case-max-addresses", "case-include-former", "compare-clear", "details-modal-close",
     "resolution-panel", "run-log-sheet", "run-log-close",
-    "graph-selection-actions", "graph-selection-count", "graph-selection-expand", "graph-selection-promote", "graph-selection-clear",
+    "graph-selection-actions", "graph-selection-count", "graph-selection-expand", "graph-selection-promote", "graph-selection-merge", "graph-selection-clear",
   ];
   for (const id of controls) {
     check(markup.includes(`id="${id}"`), `markup: missing intended control #${id}`);

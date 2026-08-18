@@ -138,6 +138,17 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
         self.assertIn("viewerState.focusedNodeIds = new Set(promotedNodes.map((node) => node.id));", html)
 
+    def test_ctrl_selection_merges_and_expands_all_merged_members(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('id="graph-selection-merge"', html)
+        self.assertIn("function selectedMergeAction()", html)
+        self.assertIn("The first selected node will remain visible", html)
+        self.assertIn("merge_member_node_ids", html)
+        self.assertIn("centralNodeIds,", html)
+        self.assertNotIn('label: "Start merge"', html)
+        self.assertNotIn('type: "merge_start"', html)
+
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 

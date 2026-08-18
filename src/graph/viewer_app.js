@@ -116,6 +116,7 @@
   const graphSelectionCountEl = document.getElementById("graph-selection-count");
   const graphSelectionExpandEl = document.getElementById("graph-selection-expand");
   const graphSelectionPromoteEl = document.getElementById("graph-selection-promote");
+  const graphSelectionMergeEl = document.getElementById("graph-selection-merge");
   const graphSelectionClearEl = document.getElementById("graph-selection-clear");
   const indirectOnlyInput = document.getElementById("indirect-only");
   const sanctionedOnlyInput = document.getElementById("sanctioned-only");
@@ -212,7 +213,6 @@
     showNegativeNewsOnly: false,
     maxFocalDistanceMetres: null,
     showLatestEnrichmentRound: latestEnrichmentAddedNodeIds.size > 0,
-    pendingMergeNodeId: "",
     expandedLowConfidenceNodeIds: new Set(),
     rankedCategory: "people",
   };
@@ -542,15 +542,20 @@
     if (!currentGeneratedGraphId) throw new Error("Only generated graphs can be expanded.");
     const requestedIds = [...new Set((Array.isArray(nodeIds) ? nodeIds : [nodeIds]).map(String))].slice(0, MAX_BATCH_SELECTION);
     const nodes = requestedIds
-      .map((nodeId) => rawMainNodes.find((candidate) => String(candidate.id) === nodeId))
+      .map((nodeId) => nodeById.get(nodeId))
       .filter(enrichmentNodeEligible);
     if (!nodes.length) throw new Error("None of the selected nodes can be used as discovery seeds.");
     if (["creating", "planned", "queued", "running"].includes(currentEnrichmentStatus)) {
       throw new Error("An expansion batch is already running.");
     }
+    const rawNodeIds = new Set(rawMainNodes.map((node) => String(node.id)));
+    const centralNodeIds = uniqueValues(nodes.flatMap((node) => [
+      String(node.id),
+      ...(Array.isArray(node.merge_member_node_ids) ? node.merge_member_node_ids.map(String) : []),
+    ])).filter((nodeId) => rawNodeIds.has(nodeId));
     await startGraphEnrichment({
       sourceVersion: currentGeneratedGraphVersion || undefined,
-      centralNodeIds: nodes.map((node) => node.id),
+      centralNodeIds,
       scopeNodeIds: [],
       expandRelationships: true,
       expansionCycles: 0,
@@ -1302,11 +1307,41 @@
     return selectedBatchNodes().map((node) => seedPromotionForNode(node, promotedKeys)).filter(Boolean);
   }
 
+  function selectedMergeAction() {
+    const [target, source, extra] = selectedBatchNodes();
+    if (!target || !source || extra) return null;
+    const kind = mergeKindForNode(target);
+    if (!kind || mergeKindForNode(source) !== kind) return null;
+    const sourceKey = nodeMergePrimaryKey(source);
+    const targetKey = nodeMergePrimaryKey(target);
+    if (!sourceKey || !targetKey || sourceKey === targetKey) return null;
+    return {
+      kind,
+      sourceKey,
+      targetKey,
+      leaderKey: targetKey,
+      sourceLabel: String(source.label || source.id),
+      targetLabel: String(target.label || target.id),
+      leaderLabel: String(target.label || target.id),
+    };
+  }
+
+  async function mergeSelectedNodes() {
+    const action = selectedMergeAction();
+    if (!action) return;
+    const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}"? The first selected node will remain visible.`);
+    if (!confirmed) return;
+    await persistMergeOverride({ ...action, operation: "add" });
+    clearBatchSelection();
+    await applyViewerState({ preserveViewport: true });
+  }
+
   function renderGraphSelectionActions() {
     if (!graphSelectionActionsEl) return;
     const count = selectedBatchNodes().length;
     const expansionCount = selectedExpansionNodes().length;
     const promotionCount = selectedSeedPromotions().length;
+    const mergeAction = selectedMergeAction();
     graphSelectionActionsEl.classList.toggle("hidden", !count);
     document.body.classList.toggle("graph-selection-active", !!count);
     graphSelectionCountEl.textContent = `${count} selected`;
@@ -1314,6 +1349,8 @@
     graphSelectionExpandEl.disabled = !expansionCount;
     graphSelectionPromoteEl.textContent = promotionCount ? `Promote ${promotionCount}` : "Promote to seeds";
     graphSelectionPromoteEl.disabled = !promotionCount;
+    graphSelectionMergeEl.textContent = mergeAction ? "Merge 2" : "Merge";
+    graphSelectionMergeEl.disabled = !mergeAction;
   }
 
   function clearBatchSelection() {
@@ -3453,6 +3490,10 @@
   function cloneNodeForMerge(node) {
     return {
       ...node,
+      merge_member_node_ids: uniqueValues([
+        String(node.id),
+        ...(Array.isArray(node.merge_member_node_ids) ? node.merge_member_node_ids.map(String) : []),
+      ]),
       aliases: Array.isArray(node.aliases) ? node.aliases.slice() : [],
       identity_keys: Array.isArray(node.identity_keys) ? node.identity_keys.slice() : [],
       person_ids: Array.isArray(node.person_ids) ? node.person_ids.slice() : [],
@@ -3494,6 +3535,12 @@
     target.person_ids = uniqueValues([
       ...(Array.isArray(target.person_ids) ? target.person_ids : []),
       ...(Array.isArray(source.person_ids) ? source.person_ids : []),
+    ]);
+    target.merge_member_node_ids = uniqueValues([
+      String(target.id),
+      String(source.id),
+      ...(Array.isArray(target.merge_member_node_ids) ? target.merge_member_node_ids.map(String) : []),
+      ...(Array.isArray(source.merge_member_node_ids) ? source.merge_member_node_ids.map(String) : []),
     ]);
     target.normalized_keys = uniqueValues([
       ...(Array.isArray(target.normalized_keys) ? target.normalized_keys : []),
@@ -3959,7 +4006,6 @@
     const overrides = payload?.overrides || {};
     mergeOverrides = readMergeOverrides(overrides);
     resolutionCandidatesCache = null;
-    viewerState.pendingMergeNodeId = "";
     rebuildBaseGraph();
     await applyViewerState();
   }
@@ -4065,19 +4111,6 @@
       rebuildBaseGraph();
       await applyViewerState();
     }
-  }
-
-  function promptForMergeLeader(action) {
-    const choice = window.prompt(
-      `Choose which label should lead this merge:\n1. ${action.sourceLabel}\n2. ${action.targetLabel}\n\nEnter 1 or 2.`,
-      "2",
-    );
-    if (choice === null) return "";
-    const trimmed = String(choice || "").trim();
-    if (trimmed === "1") return action.sourceKey;
-    if (trimmed === "2") return action.targetKey;
-    window.alert("Please enter 1 or 2.");
-    return "";
   }
 
   function resolutionPairKey(kind, sourceKey, targetKey) {
@@ -4254,14 +4287,6 @@
     const hidePrimaryKey = nodeHidePrimaryKey(node);
     const promotedKeys = promotedSeedKeys();
     const isPromotedSeed = nodeMergeStableKeys(node).some((key) => promotedKeys.has(key));
-    const pendingMergeNode = nodeById.get(viewerState.pendingMergeNodeId) || null;
-    const compatiblePendingMergeNode = pendingMergeNode
-      && pendingMergeNode.id !== node.id
-      && mergeKind
-      && mergeKindForNode(pendingMergeNode) === mergeKind
-      && nodeMergePrimaryKey(pendingMergeNode)
-      ? pendingMergeNode
-      : null;
     const undoActions = (Array.isArray(node.manual_merge_rows) ? node.manual_merge_rows : []).map((row) => ({
       label: `Undo merge with ${row.sourceLabel || row.sourceId}`,
       type: "merge_remove",
@@ -4324,24 +4349,7 @@
             nodeLabel: String(node.label || node.id || "node"),
           }
         : null,
-      mergeKind && mergePrimaryKey && compatiblePendingMergeNode
-        ? {
-            label: `Merge ${compatiblePendingMergeNode.label} into this node`,
-            type: "merge_persist",
-            kind: mergeKind,
-            sourceLabel: compatiblePendingMergeNode.label,
-            targetLabel: node.label,
-            sourceKey: nodeMergePrimaryKey(compatiblePendingMergeNode),
-            targetKey: mergePrimaryKey,
-            leaderKey: "",
-          }
-        : null,
       ...undoActions,
-      mergeKind && mergePrimaryKey && viewerState.pendingMergeNodeId === node.id
-        ? { label: "Cancel merge", type: "merge_cancel" }
-        : mergeKind && mergePrimaryKey
-          ? { label: "Start merge", type: "merge_start", nodeId: node.id }
-          : null,
       viewerState.focusedNodeIds.has(node.id) ? { label: "Clear focus", type: "focus_clear" } : null,
     ].filter(Boolean);
     contextMenuEl.innerHTML = `
@@ -4736,6 +4744,12 @@
         window.alert("Seed status could not be saved.");
       });
     });
+    graphSelectionMergeEl?.addEventListener("click", () => {
+      mergeSelectedNodes().catch((error) => {
+        console.error(error);
+        window.alert("Persisted merge failed.");
+      });
+    });
     graphSelectionClearEl?.addEventListener("click", () => {
       clearBatchSelection();
       applyViewerState({ preserveViewport: true });
@@ -4916,22 +4930,6 @@
         setSingleFocus(action.nodeId);
         setLowConfidenceNodeExpanded(action.nodeId, action.type === "low_confidence_expand");
         applyViewerState();
-      } else if (action.type === "merge_start") {
-        viewerState.pendingMergeNodeId = action.nodeId;
-      } else if (action.type === "merge_cancel") {
-        viewerState.pendingMergeNodeId = "";
-      } else if (action.type === "merge_persist") {
-        const leaderKey = promptForMergeLeader(action);
-        if (!leaderKey) return;
-        const leaderLabel = leaderKey === action.sourceKey ? action.sourceLabel : action.targetLabel;
-        const confirmed = window.confirm(`Merge "${action.sourceLabel}" into "${action.targetLabel}" and display "${leaderLabel}"? This will persist across graph rebuilds.`);
-        if (!confirmed) return;
-        try {
-          await persistMergeOverride({ ...action, operation: "add", leaderKey, leaderLabel });
-        } catch (error) {
-          console.error(error);
-          window.alert("Persisted merge failed.");
-        }
       } else if (action.type === "merge_remove") {
         const confirmed = window.confirm(`Undo the merge of "${action.sourceLabel}" into "${action.targetLabel}"?`);
         if (!confirmed) return;
