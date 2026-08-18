@@ -146,6 +146,17 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
         self.assertIn("viewerState.focusedNodeIds = new Set(promotedNodes.map((node) => node.id));", html)
 
+    def test_ranked_panel_exposes_network_overlap_and_reach(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('rankedMode: "network-overlap"', html)
+        self.assertIn("function rankedNetworkStats()", html)
+        self.assertIn('data-ranked-mode="network-overlap"', html)
+        self.assertIn('data-ranked-mode="network-reach"', html)
+        self.assertIn("Institutions by network overlap", html)
+        self.assertIn("other institutions via overlap", html)
+        self.assertIn('edge.kind !== "role" && edge.kind !== "address_link"', html)
+
     def test_seed_restoration_removes_the_persisted_matching_identity_key(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 

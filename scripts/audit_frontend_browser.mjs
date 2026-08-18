@@ -361,7 +361,7 @@ try {
   await page.locator("#search").fill("");
 
   await page.locator('.sidebar-tab[data-tab="ranked"]').click();
-  assert.ok(await page.locator("#score-panel [data-ranked-type]").count() >= 3, "ranked controls did not render");
+  assert.ok(await page.locator("#score-panel [data-ranked-mode]").count() >= 5, "ranked controls did not render");
   await page.locator('.sidebar-tab[data-tab="legend"]').click();
   await page.locator("#show-companies").uncheck();
   assert.ok(!(await page.locator("#show-companies").isChecked()), "company filter did not toggle");

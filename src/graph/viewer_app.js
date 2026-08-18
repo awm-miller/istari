@@ -215,7 +215,8 @@
     maxFocalDistanceMetres: null,
     showLatestEnrichmentRound: latestEnrichmentAddedNodeIds.size > 0,
     expandedLowConfidenceNodeIds: new Set(),
-    rankedCategory: "people",
+    rankedMode: "network-overlap",
+    rankedCategory: "orgs",
   };
 
   const measureCtx = document.createElement("canvas").getContext("2d");
@@ -3111,17 +3112,105 @@
     return counts;
   }
 
-  function rankedNodeScore(node, category, edgeCounts) {
-    if (category === "people") return nodeRankScore(node);
+  let rankedNetworkCache = { nodes: null, edges: null, stats: null };
+
+  function rankedNetworkStats() {
+    if (rankedNetworkCache.nodes === visibleNodes && rankedNetworkCache.edges === visibleEdges) {
+      return rankedNetworkCache.stats;
+    }
+    const nodeById = new Map(visibleNodes.map((node) => [node.id, node]));
+    const relationshipAdjacency = new Map();
+    const orgPeople = new Map();
+    const orgAddresses = new Map();
+    const peopleOrgs = new Map();
+    const addressOrgs = new Map();
+    const ensureSet = (map, key) => {
+      if (!map.has(key)) map.set(key, new Set());
+      return map.get(key);
+    };
+    const addLink = (map, left, right) => ensureSet(map, left).add(right);
+    const isOrganisation = (node) => node?.kind === "organisation";
+    const isPerson = (node) => node?.kind === "person" || node?.kind === "seed_alias";
+    const isAddress = (node) => node?.kind === "address";
+
+    visibleEdges.forEach((edge) => {
+      if (edge.kind !== "role" && edge.kind !== "address_link") return;
+      const source = nodeById.get(edge.source);
+      const target = nodeById.get(edge.target);
+      if (!source || !target || source.id === target.id) return;
+      addLink(relationshipAdjacency, source.id, target.id);
+      addLink(relationshipAdjacency, target.id, source.id);
+      if (edge.kind === "role" && isOrganisation(source) && isPerson(target)) {
+        addLink(orgPeople, source.id, target.id);
+        addLink(peopleOrgs, target.id, source.id);
+      } else if (edge.kind === "role" && isOrganisation(target) && isPerson(source)) {
+        addLink(orgPeople, target.id, source.id);
+        addLink(peopleOrgs, source.id, target.id);
+      } else if (edge.kind === "address_link" && isOrganisation(source) && isAddress(target)) {
+        addLink(orgAddresses, source.id, target.id);
+        addLink(addressOrgs, target.id, source.id);
+      } else if (edge.kind === "address_link" && isOrganisation(target) && isAddress(source)) {
+        addLink(orgAddresses, target.id, source.id);
+        addLink(addressOrgs, source.id, target.id);
+      }
+    });
+
+    const stats = new Map();
+    visibleNodes.filter(isOrganisation).forEach((organisation) => {
+      const people = orgPeople.get(organisation.id) || new Set();
+      const addresses = orgAddresses.get(organisation.id) || new Set();
+      const peopleOverlap = new Set();
+      const addressOverlap = new Set();
+      people.forEach((personId) => (peopleOrgs.get(personId) || new Set()).forEach((id) => {
+        if (id !== organisation.id) peopleOverlap.add(id);
+      }));
+      addresses.forEach((addressId) => (addressOrgs.get(addressId) || new Set()).forEach((id) => {
+        if (id !== organisation.id) addressOverlap.add(id);
+      }));
+
+      const reachOrganisations = new Set();
+      const visited = new Set([organisation.id]);
+      const queue = [{ id: organisation.id, depth: 0 }];
+      while (queue.length) {
+        const current = queue.shift();
+        if (current.depth >= 4) continue;
+        (relationshipAdjacency.get(current.id) || new Set()).forEach((id) => {
+          if (visited.has(id)) return;
+          visited.add(id);
+          const next = nodeById.get(id);
+          if (isOrganisation(next) && id !== organisation.id) reachOrganisations.add(id);
+          queue.push({ id, depth: current.depth + 1 });
+        });
+      }
+      stats.set(organisation.id, {
+        peopleCount: people.size,
+        addressCount: addresses.size,
+        peopleOverlap,
+        addressOverlap,
+        overlapOrganisations: new Set([...peopleOverlap, ...addressOverlap]),
+        reachOrganisations,
+      });
+    });
+    rankedNetworkCache = { nodes: visibleNodes, edges: visibleEdges, stats };
+    return stats;
+  }
+
+  function rankedNodeScore(node, mode, edgeCounts, networkStats) {
+    if (mode === "network-overlap" || mode === "network-reach") {
+      const stats = networkStats.get(node.id);
+      if (!stats) return 0;
+      return mode === "network-overlap" ? stats.overlapOrganisations.size : stats.reachOrganisations.size;
+    }
+    if (mode === "people") return nodeRankScore(node);
     const visibleLinks = Number(edgeCounts.get(node.id) || 0);
     const seedRefs = Array.isArray(node.seed_names) ? node.seed_names.length : 0;
-    if (category === "orgs") {
+    if (mode === "orgs") {
       return (Number(node.people_count || 0) * 3.2)
         + (visibleLinks * 1.4)
         + (seedRefs * 0.8)
         + (node.shared ? 1.5 : 0);
     }
-    if (category === "addresses") {
+    if (mode === "addresses") {
       return (visibleLinks * 2)
         + (seedRefs * 0.8)
         + (node.shared ? 1.2 : 0);
@@ -3129,12 +3218,20 @@
     return 0;
   }
 
-  function rankedNodeMeta(node, category, edgeCounts) {
+  function rankedNodeMeta(node, mode, edgeCounts, networkStats) {
+    if (mode === "network-overlap" || mode === "network-reach") {
+      const stats = networkStats.get(node.id);
+      if (!stats) return "No visible relationship evidence";
+      if (mode === "network-overlap") {
+        return `${stats.overlapOrganisations.size} other institutions via overlap: ${stats.peopleOverlap.size} through people, ${stats.addressOverlap.size} through addresses`;
+      }
+      return `${stats.reachOrganisations.size} institutions within four links: ${stats.peopleCount} people, ${stats.addressCount} addresses`;
+    }
     const visibleLinks = Number(edgeCounts.get(node.id) || 0);
-    if (category === "people") {
+    if (mode === "people") {
       return `${Number(node.org_count || 0)} orgs, ${Number(node.role_count || 0)} roles`;
     }
-    if (category === "orgs") {
+    if (mode === "orgs") {
       const seedRefs = Array.isArray(node.seed_names) ? node.seed_names.length : 0;
       return `${Number(node.people_count || 0)} people, ${visibleLinks} visible links${seedRefs ? `, ${seedRefs} seeds` : ""}`;
     }
@@ -3146,42 +3243,59 @@
   }
 
   function renderScorePanel() {
-    const category = ["people", "orgs", "addresses"].includes(viewerState.rankedCategory)
-      ? viewerState.rankedCategory
-      : "people";
+    const validModes = ["network-overlap", "network-reach", "people", "orgs", "addresses"];
+    const mode = validModes.includes(viewerState.rankedMode) ? viewerState.rankedMode : "network-overlap";
     const edgeCounts = rankedEdgeCounts();
+    const networkStats = mode === "network-overlap" || mode === "network-reach" ? rankedNetworkStats() : new Map();
     const tabButtons = `
       <div class="score-type-tabs">
-        <button type="button" class="score-type-tab ${category === "people" ? "active" : ""}" data-ranked-type="people">People</button>
-        <button type="button" class="score-type-tab ${category === "orgs" ? "active" : ""}" data-ranked-type="orgs">Orgs</button>
-        <button type="button" class="score-type-tab ${category === "addresses" ? "active" : ""}" data-ranked-type="addresses">Addresses</button>
+        <button type="button" class="score-type-tab ${mode === "network-overlap" ? "active" : ""}" data-ranked-mode="network-overlap">Overlap</button>
+        <button type="button" class="score-type-tab ${mode === "network-reach" ? "active" : ""}" data-ranked-mode="network-reach">Reach</button>
+        <button type="button" class="score-type-tab ${mode === "people" ? "active" : ""}" data-ranked-mode="people">People</button>
+        <button type="button" class="score-type-tab ${mode === "orgs" ? "active" : ""}" data-ranked-mode="orgs">Orgs</button>
+        <button type="button" class="score-type-tab ${mode === "addresses" ? "active" : ""}" data-ranked-mode="addresses">Addresses</button>
       </div>
     `;
+    const isNetworkMode = mode === "network-overlap" || mode === "network-reach";
     const rankedNodes = visibleNodes
-      .filter((node) => rankedCategoryForNode(node) === category)
+      .filter((node) => isNetworkMode ? node.kind === "organisation" : rankedCategoryForNode(node) === mode)
       .sort((left, right) => {
-        const scoreDiff = rankedNodeScore(right, category, edgeCounts) - rankedNodeScore(left, category, edgeCounts);
+        const scoreDiff = rankedNodeScore(right, mode, edgeCounts, networkStats) - rankedNodeScore(left, mode, edgeCounts, networkStats);
         if (scoreDiff !== 0) return scoreDiff;
         return String(left.label || "").localeCompare(String(right.label || ""));
       })
       .slice(0, 12);
+    const panelTitle = mode === "network-overlap"
+      ? "Institutions by network overlap"
+      : mode === "network-reach"
+        ? "Institutions by network reach"
+        : "Top ranked on screen";
+    const panelDescription = mode === "network-overlap"
+      ? "Distinct institutions sharing visible people or registered addresses."
+      : mode === "network-reach"
+        ? "Distinct institutions reachable within four visible role or address links."
+        : "Ranking uses the currently visible graph.";
+    const emptyLabel = isNetworkMode
+      ? "institutions"
+      : mode === "orgs" ? "organisations" : mode;
     scorePanelEl.innerHTML = rankedNodes.length
       ? `
         ${tabButtons}
-        <h2>Top ranked on screen</h2>
+        <h2>${panelTitle}</h2>
+        <p>${panelDescription}</p>
         <div class="score-list">
           ${rankedNodes.map((node) => `
             <div class="score-item">
               <div class="score-item-title">
                 <strong>${escapeHtml(node.label || "Unknown")}</strong>
-                <span>${rankedNodeScore(node, category, edgeCounts).toFixed(2)}</span>
+                <span>${isNetworkMode ? rankedNodeScore(node, mode, edgeCounts, networkStats).toLocaleString() : rankedNodeScore(node, mode, edgeCounts, networkStats).toFixed(2)}</span>
               </div>
-              <div class="score-item-meta">${escapeHtml(rankedNodeMeta(node, category, edgeCounts))}</div>
+              <div class="score-item-meta">${escapeHtml(rankedNodeMeta(node, mode, edgeCounts, networkStats))}</div>
             </div>
           `).join("")}
         </div>
       `
-      : `${tabButtons}<div class="score-empty">No visible ${category === "orgs" ? "organisations" : category} are currently on screen.</div>`;
+      : `${tabButtons}<h2>${panelTitle}</h2><p>${panelDescription}</p><div class="score-empty">No visible ${emptyLabel} are currently on screen.</div>`;
   }
 
   async function ensureLowConfidenceLoaded() {
@@ -4876,12 +4990,13 @@
       if (event.target === detailsModalEl) closeDetailsModal();
     });
     scorePanelEl.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-ranked-type]");
+      const button = event.target.closest("[data-ranked-mode]");
       if (!button) return;
-      const nextCategory = String(button.dataset.rankedType || "");
-      if (!["people", "orgs", "addresses"].includes(nextCategory)) return;
-      if (viewerState.rankedCategory === nextCategory) return;
-      viewerState.rankedCategory = nextCategory;
+      const nextMode = String(button.dataset.rankedMode || "");
+      if (!["network-overlap", "network-reach", "people", "orgs", "addresses"].includes(nextMode)) return;
+      if (viewerState.rankedMode === nextMode) return;
+      viewerState.rankedMode = nextMode;
+      if (["people", "orgs", "addresses"].includes(nextMode)) viewerState.rankedCategory = nextMode;
       renderScorePanel();
     });
     resolutionPanelEl?.addEventListener("click", async (event) => {
