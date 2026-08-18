@@ -8,6 +8,8 @@ test("proxy allows only Istari investigation and generated graph routes", () => 
   assert.equal(_private.ALLOWED_TARGET.test("/api/investigations/abc123/events"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/investigations/abc123/clear"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/address-coordinates.json"), true);
+  assert.equal(_private.ALLOWED_TARGET.test("/generated-graphs/32-store-street/versions/v9/address-coordinates.json"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/generated-graphs/32-store-street"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/generated-graphs/32-store-street/enrich"), true);
   assert.equal(_private.ALLOWED_TARGET.test("/api/admin"), false);

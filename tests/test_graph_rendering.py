@@ -15,6 +15,14 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertNotIn('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet', html)
         self.assertIn("LEAFLET_SCRIPT_URL", html)
 
+    def test_generated_map_reports_coverage_and_preserves_merged_address_coordinates(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn('id="address-map-status"', html)
+        self.assertIn("function addressCoordinateForNode(node)", html)
+        self.assertIn("node?.merge_member_node_ids", html)
+        self.assertIn("plotted from registry addresses", html)
+
     def test_graph_records_are_parsed_as_data_not_javascript_source(self) -> None:
         html = render_html({"nodes": [{"id": "n1"}], "edges": [{"source": "n1", "target": "n2"}]})
 

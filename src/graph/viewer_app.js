@@ -109,6 +109,7 @@
   const sidebarPaneEls = [...document.querySelectorAll(".sidebar-pane")];
   const scorePanelEl = document.getElementById("score-panel");
   const resolutionPanelEl = document.getElementById("resolution-panel");
+  const addressMapStatusEl = document.getElementById("address-map-status");
   const graphExpansionStatusEl = document.getElementById("graph-expansion-status");
   const graphExpansionLabelEl = document.getElementById("graph-expansion-label");
   const graphExpansionProgressEl = document.getElementById("graph-expansion-progress");
@@ -4619,6 +4620,7 @@
                 lat: Number(item.lat),
                 lon: Number(item.lon),
                 label: String(item.label || ""),
+                basis: String(item.basis || ""),
               },
             ]),
         );
@@ -4640,12 +4642,20 @@
   function ensureAddressMarkers(nodes) {
     nodes.forEach((node) => {
       if (addressMarkerByNodeId.has(node.id)) return;
-      const point = addressCoordinateByNodeId.get(node.id);
+      const point = addressCoordinateForNode(node);
       if (!point) return;
       const marker = L.marker([point.lat, point.lon], { title: point.label || node.label || node.id });
       marker.bindPopup(`<strong>${escapeHtml(point.label || node.label || node.id)}</strong>`);
       addressMarkerByNodeId.set(node.id, marker);
     });
+  }
+
+  function addressCoordinateForNode(node) {
+    const nodeIds = uniqueValues([
+      String(node?.id || ""),
+      ...(Array.isArray(node?.merge_member_node_ids) ? node.merge_member_node_ids.map(String) : []),
+    ]);
+    return nodeIds.map((nodeId) => addressCoordinateByNodeId.get(nodeId)).find(Boolean) || null;
   }
 
   function mapAddressNodes() {
@@ -4665,6 +4675,12 @@
       if (marker) marker.addTo(addressMarkersLayer);
     });
     const markers = [...visibleAddressIds].map((nodeId) => addressMarkerByNodeId.get(nodeId)).filter(Boolean);
+    const unresolvedCount = Math.max(0, visibleAddressIds.size - markers.length);
+    if (addressMapStatusEl) {
+      addressMapStatusEl.textContent = unresolvedCount
+        ? `${markers.length.toLocaleString()} of ${visibleAddressIds.size.toLocaleString()} visible address locations plotted; ${unresolvedCount.toLocaleString()} could not be located.`
+        : `${markers.length.toLocaleString()} visible address ${markers.length === 1 ? "location" : "locations"} plotted from registry addresses.`;
+    }
     if (!markers.length) {
       addressMap.setView([20, 0], 2);
       return;
@@ -4681,6 +4697,7 @@
     if (!ok) {
       addressMarkersLayer.clearLayers();
       addressMap.setView([20, 0], 2);
+      if (addressMapStatusEl) addressMapStatusEl.textContent = "Address locations could not be loaded.";
       return;
     }
     const addressNodes = mapAddressNodes();

@@ -1,4 +1,4 @@
-const ALLOWED_TARGET = /^(?:\/health|\/api\/(?:nearby-addresses\/preview|investigations(?:\/draft|\/[a-f0-9]+(?:\/(?:start|resolutions|events|clear))?)?|generated-graphs(?:\/[a-z0-9-]+(?:\/(?:data|enrich))?)?)|\/generated-graphs\/[a-z0-9-]+(?:\/versions\/v\d+)?\/(?:graph-data\.json)?)$/;
+const ALLOWED_TARGET = /^(?:\/health|\/api\/(?:nearby-addresses\/preview|investigations(?:\/draft|\/[a-f0-9]+(?:\/(?:start|resolutions|events|clear))?)?|generated-graphs(?:\/[a-z0-9-]+(?:\/(?:data|enrich))?)?)|\/generated-graphs\/[a-z0-9-]+(?:\/versions\/v\d+)?\/(?:(?:graph-data|address-coordinates)\.json)?)$/;
 
 function response(statusCode, body, contentType = "application/json; charset=utf-8") {
   return { statusCode, headers: { "content-type": contentType, "cache-control": "no-store" }, body: typeof body === "string" ? body : JSON.stringify(body) };

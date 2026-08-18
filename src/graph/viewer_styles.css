@@ -1632,6 +1632,12 @@ body.builder-mode #compact-legend {{
   flex: 1;
   min-height: 0;
 }
+.address-map-status {{
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+}}
 .sidebar-pane {{
   display: none;
   flex-direction: column;
@@ -1677,7 +1683,7 @@ body.builder-mode #compact-legend {{
 }}
 #address-map {{
   flex: 1;
-  min-height: 520px;
+  min-height: 480px;
   border-radius: 12px;
   overflow: hidden;
 }}

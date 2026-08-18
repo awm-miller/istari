@@ -385,11 +385,11 @@ Current behavior:
 
 - visible address nodes are considered
 - addresses attached to currently visible organisations are also considered
-- coordinates are prefetched during `scripts/rebuild_graph.py`
-- the prefetched results are written to `output/address-coordinates.json`
-- the same file is copied to `netlify_graph_viewer/address-coordinates.json`
+- static graph coordinates are prefetched during `scripts/rebuild_graph.py`
+- generated graph coordinates are served by the discovery backend, using cached batched postcode lookups with full-address fallback
 - the browser fetches that coordinate payload once and then only shows or hides markers for the currently connected address set
 - the map refreshes automatically when the visible graph projection changes while the map tab is open
+- the map reports plotted and unresolved visible-address counts
 
 Address nodes can be merged across runs, so one map point may represent several equivalent address records.
 
