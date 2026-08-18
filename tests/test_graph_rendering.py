@@ -149,6 +149,13 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertNotIn('label: "Start merge"', html)
         self.assertNotIn('type: "merge_start"', html)
 
+    def test_graph_switcher_list_scrolls_within_the_viewport(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn("max-height: min(70vh, 560px)", html)
+        self.assertIn("overflow-y: auto", html)
+        self.assertIn(".graph-switcher-menu::-webkit-scrollbar", html)
+
     def test_beautiful_ui_primitives_are_scoped_and_self_host_fonts(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 

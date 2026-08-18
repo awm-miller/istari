@@ -1812,12 +1812,24 @@ svg text {{ font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }}
 .graph-switcher-menu {{
   top: calc(100% + 6px);
   min-width: 248px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--ink-3) var(--surface);
+  scrollbar-width: thin;
   padding: 4px;
   border: 0;
   border-radius: var(--radius-card);
   background: var(--surface);
   box-shadow: var(--shadow-overlay);
   backdrop-filter: none;
+}}
+.graph-switcher-menu::-webkit-scrollbar {{ width: 8px; }}
+.graph-switcher-menu::-webkit-scrollbar-track {{ background: var(--surface); }}
+.graph-switcher-menu::-webkit-scrollbar-thumb {{
+  border: 2px solid var(--surface);
+  border-radius: 8px;
+  background: var(--ink-3);
 }}
 .graph-switcher-option {{
   min-height: 32px;
