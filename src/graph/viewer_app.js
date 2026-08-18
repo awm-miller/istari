@@ -3415,13 +3415,17 @@
     if (!kind) return [];
     if (kind === "address") {
       return uniqueValues(
-        ([
+        [
           ...(Array.isArray(node.normalized_keys) ? node.normalized_keys : []),
           node.normalized_key,
         ]
           .map((value) => String(value || "").trim())
           .filter(Boolean)
-          .map((value) => `address:${value}`)),
+          .map((value) => `address:${value}`)
+          .concat([
+            `node-id:${String(node.id || "")}`,
+            String(node.label || "").trim() ? `address-label:${String(node.label).trim().toLowerCase()}` : "",
+          ]),
       );
     }
     if (kind === "organisation") {
@@ -3460,7 +3464,11 @@
         ]
           .map((value) => String(value || "").trim())
           .filter(Boolean)
-          .map((value) => `address:${value}`),
+          .map((value) => `address:${value}`)
+          .concat([
+            `node-id:${String(node.id || "")}`,
+            String(node.label || "").trim() ? `address-label:${String(node.label).trim().toLowerCase()}` : "",
+          ]),
       );
     }
     if (node.kind === "organisation") {

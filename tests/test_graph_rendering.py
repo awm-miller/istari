@@ -150,6 +150,7 @@ class GraphRenderingTests(unittest.TestCase):
 
         self.assertIn('id="graph-selection-merge"', html)
         self.assertIn("function selectedMergeAction()", html)
+        self.assertIn('`node-id:${String(node.id || "")}`', html)
         self.assertIn("The first selected node will remain visible", html)
         self.assertIn("merge_member_node_ids", html)
         self.assertIn("centralNodeIds,", html)
