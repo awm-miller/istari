@@ -146,7 +146,7 @@ async function testViewer(page) {
   await page.locator("#search").fill("");
 
   await page.locator('.sidebar-tab[data-tab="ranked"]').click();
-  assert.ok(await page.locator("#score-panel [data-ranked-type]").count(), "ranked view is empty");
+  assert.ok(await page.locator("#score-panel [data-ranked-mode]").count() >= 5, "ranked view is empty");
   await page.locator('.sidebar-tab[data-tab="legend"]').click();
   await page.locator("#show-companies").uncheck();
   assert.equal(await page.locator("#show-companies").isChecked(), false);
