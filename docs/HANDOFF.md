@@ -6,7 +6,7 @@
 - Discovery backend: `https://github.com/awm-miller/istari-juicer-sites`, branch `main`.
 - Production frontend: `https://projectistari.netlify.app`.
 - Production backend: `https://istari.168-144-192-99.sslip.io`.
-- Generated graph pages use `netlify_graph_viewer/generated-viewer-template.html`; copy that built template to the backend repository's `public/generated-viewer-template.html` before backend deployment.
+- Generated graph pages use `netlify_graph_viewer/generated-viewer-template.html`; pass `--backend-template ..\istari-juicer-sites\public\generated-viewer-template.html` when rebuilding before a backend deployment.
 
 The Netlify site is the only browser application surface. The backend API and
 generated graphs reject requests that do not include the server-side proxy token.
@@ -64,8 +64,8 @@ npx netlify deploy --prod --dir netlify_graph_viewer
 ```
 
 Generated graph pages are rendered by the backend. Before a coordinated
-release, copy the rebuilt `netlify_graph_viewer/generated-viewer-template.html`
-to `istari-juicer-sites/public/generated-viewer-template.html`, commit it in the
+release, pass `--backend-template ..\istari-juicer-sites\public\generated-viewer-template.html`
+to the viewer build, commit the generated backend template in the
 backend repository, and deploy the backend before Netlify.
 
 Backend:

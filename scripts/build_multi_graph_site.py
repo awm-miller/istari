@@ -597,6 +597,11 @@ def main() -> None:
         action="store_true",
         help="Refresh HTML shells from existing graph-data.json files without rebuilding databases.",
     )
+    parser.add_argument(
+        "--backend-template",
+        type=Path,
+        help="Also write the generated viewer template to a backend checkout.",
+    )
     args = parser.parse_args()
     NETLIFY_ROOT.mkdir(parents=True, exist_ok=True)
     for bundle in GRAPH_BUNDLES:
@@ -604,6 +609,9 @@ def main() -> None:
     write_redirects_file()
     write_root_redirect_index()
     write_generated_viewer_template()
+    if args.backend_template:
+        args.backend_template.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(GENERATED_TEMPLATE_PATH, args.backend_template)
     copy_static_assets()
     print("Finished building multi-graph Netlify site.", flush=True)
 
