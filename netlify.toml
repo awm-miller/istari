@@ -1,4 +1,5 @@
 [build]
+  publish = "netlify_graph_viewer"
   functions = "netlify/functions"
 
 [[redirects]]
