@@ -138,6 +138,13 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn("const promotedDifference = Number(!!right.promoted_to_seed) - Number(!!left.promoted_to_seed);", html)
         self.assertIn("viewerState.focusedNodeIds = new Set(promotedNodes.map((node) => node.id));", html)
 
+    def test_seed_restoration_removes_the_persisted_matching_identity_key(self) -> None:
+        html = render_html({"nodes": [], "edges": []})
+
+        self.assertIn("function promotedSeedKeyForNode(node, promotedKeys = promotedSeedKeys())", html)
+        self.assertIn("const promotedSeedKey = promotedSeedKeyForNode(node, promotedKeys);", html)
+        self.assertIn("nodeKey: isPromotedSeed ? promotedSeedKey : mergePrimaryKey", html)
+
     def test_ctrl_selection_merges_and_expands_all_merged_members(self) -> None:
         html = render_html({"nodes": [], "edges": []})
 

@@ -1295,10 +1295,14 @@
     return new Set(normalizeHiddenOverrideRows(mergeOverrides.seed).map((row) => row.nodeId));
   }
 
+  function promotedSeedKeyForNode(node, promotedKeys = promotedSeedKeys()) {
+    return nodeMergeStableKeys(node).find((key) => promotedKeys.has(key)) || "";
+  }
+
   function seedPromotionForNode(node, promotedKeys = promotedSeedKeys()) {
     if (mergeKindForNode(node) !== "name") return null;
     const nodeKey = nodeMergePrimaryKey(node);
-    if (!nodeKey || nodeMergeStableKeys(node).some((key) => promotedKeys.has(key))) return null;
+    if (!nodeKey || promotedSeedKeyForNode(node, promotedKeys)) return null;
     return { nodeKey, nodeLabel: String(node.label || node.id || "node") };
   }
 
@@ -4286,7 +4290,8 @@
     const mergePrimaryKey = nodeMergePrimaryKey(node);
     const hidePrimaryKey = nodeHidePrimaryKey(node);
     const promotedKeys = promotedSeedKeys();
-    const isPromotedSeed = nodeMergeStableKeys(node).some((key) => promotedKeys.has(key));
+    const promotedSeedKey = promotedSeedKeyForNode(node, promotedKeys);
+    const isPromotedSeed = !!promotedSeedKey;
     const undoActions = (Array.isArray(node.manual_merge_rows) ? node.manual_merge_rows : []).map((row) => ({
       label: `Undo merge with ${row.sourceLabel || row.sourceId}`,
       type: "merge_remove",
@@ -4336,7 +4341,7 @@
         ? {
             label: isPromotedSeed ? "Restore as person" : "Promote to seed",
             type: isPromotedSeed ? "seed_remove" : "seed_add",
-            nodeKey: mergePrimaryKey,
+            nodeKey: isPromotedSeed ? promotedSeedKey : mergePrimaryKey,
             nodeLabel: String(node.label || node.id || "node"),
           }
         : null,

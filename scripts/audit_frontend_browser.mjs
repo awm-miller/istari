@@ -27,6 +27,7 @@ let generatedGraphDeleted = false;
 let deleteConfirmation = "";
 let enrichmentRequest = null;
 let seedBatchRequest = null;
+let seedSingleRequest = null;
 let mergeOverrides = {
   address: [], name: [], organisation: [], seed: [], hidden: [],
   rejected: [{ sourceId: "label:akef mahmoud abdalla dr", targetId: "label:akef mahmoud", kind: "name", sourceLabel: "AKEF, Mahmoud Abdalla, Dr", targetLabel: "Mahmoud Akef", reason: "Reviewed as different people" }],
@@ -53,9 +54,21 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/.netlify/functions/merge-overrides") {
     if (request.method === "POST") {
       const body = await requestJson(request);
-      if (body.kind === "seed" && body.operation === "add_many") {
-        seedBatchRequest = body;
-        mergeOverrides.seed = body.rows.map((row) => ({ ...row, decidedAt: new Date().toISOString() }));
+      if (body.kind === "seed") {
+        if (body.operation === "add_many") {
+          seedBatchRequest = body;
+          mergeOverrides.seed = body.rows.map((row) => ({ ...row, decidedAt: new Date().toISOString() }));
+        } else {
+          seedSingleRequest = body;
+          if (body.operation === "remove") {
+            mergeOverrides.seed = mergeOverrides.seed.filter((row) => row.nodeId !== body.nodeId);
+          } else {
+            mergeOverrides.seed = [
+              ...mergeOverrides.seed.filter((row) => row.nodeId !== body.nodeId),
+              { nodeId: body.nodeId, label: body.label, decidedAt: new Date().toISOString() },
+            ];
+          }
+        }
       } else {
         mergeOverrides = { address: [], name: [], organisation: [], seed: mergeOverrides.seed, hidden: [], rejected: [], audit: mergeOverrides.audit };
       }
@@ -540,8 +553,18 @@ try {
   assert.equal(seedBatchRequest?.operation, "add_many");
   assert.equal(seedBatchRequest?.kind, "seed");
   assert.equal(seedBatchRequest?.rows.length, 2);
+  const restoreTargetId = await promotionTargets.nth(0).getAttribute("data-node-id");
+  const restoreTargetLabel = String(await promotionTargets.nth(0).textContent()).trim();
+  const persistedAliasKey = `label:${restoreTargetLabel.toLowerCase()}`;
+  mergeOverrides.seed = [{ nodeId: persistedAliasKey, label: restoreTargetLabel }];
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForSelector(".graph-node-label");
+  const restoreTarget = page.locator(`.graph-node-label[data-node-id="${restoreTargetId}"]`);
+  page.once("dialog", (dialog) => dialog.accept());
+  await chooseNodeAction(restoreTarget, "Restore as person");
+  assert.equal(seedSingleRequest?.operation, "remove");
+  assert.equal(seedSingleRequest?.nodeId, persistedAliasKey);
+  assert.equal(mergeOverrides.seed.length, 0);
 
   const directEnrichmentTarget = enrichmentTargets.nth(1);
   const stableTarget = page.locator('.graph-node-label[data-node-id*="address:"]').first();
